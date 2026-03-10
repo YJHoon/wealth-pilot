@@ -1,0 +1,6 @@
+reviews:
+  auto_review:
+    enabled: true
+    drafts: false          # 드래프트 PR은 리뷰 안 함
+  request_changes_workflow: false
+language: "ko" 
