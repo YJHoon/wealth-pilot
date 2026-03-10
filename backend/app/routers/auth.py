@@ -83,8 +83,10 @@ async def login(
             detail=f"로그인 시도가 너무 많습니다. {remaining}분 후에 다시 시도해주세요.",
         )
 
-    # 로그인 성공 → 실패 카운트 초기화
-    await reset_login_failures(db, user)
+    # 2FA 미사용 계정만 여기서 초기화.
+    # TOTP 사용 계정은 /2fa/verify 성공 시점에 초기화해야 잠금 우회를 막을 수 있다.
+    if not user.totp_enabled:
+        await reset_login_failures(db, user)
 
     # 세션 생성
     device_info = body.device_info or request.headers.get("user-agent", "Unknown")

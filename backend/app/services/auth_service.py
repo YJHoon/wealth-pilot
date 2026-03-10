@@ -60,8 +60,8 @@ async def verify_google_id_token(token: str) -> dict | None:
         검증된 payload 또는 None (실패 시)
     """
     if not settings.google_client_id:
-        # 개발 환경에서 GOOGLE_CLIENT_ID 미설정 시 스킵 (경고 로그)
-        return {"email": None, "skip_verification": True}
+        # GOOGLE_CLIENT_ID 미설정 시 인증 거부 (fail-closed 원칙)
+        return None
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
