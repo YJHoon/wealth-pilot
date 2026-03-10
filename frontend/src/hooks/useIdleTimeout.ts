@@ -14,7 +14,11 @@ const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as cons
 export function useIdleTimeout() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
+    // 로그아웃 시 서비스 워커 캐시 삭제 (인증된 페이지가 브라우저에 남지 않도록)
+    if ("caches" in window) {
+      await Promise.allSettled([caches.delete("pages"), caches.delete("start-url")]);
+    }
     signOut({ callbackUrl: "/login?error=30분 동안 활동이 없어 자동 로그아웃되었습니다." });
   }, []);
 
