@@ -6,9 +6,19 @@ import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
+// 에러 코드 → 사용자 메시지 매핑
+const ERROR_MESSAGES: Record<string, string> = {
+  idle_timeout: "30분 동안 활동이 없어 자동 로그아웃되었습니다.",
+  OAuthSignin: "Google 로그인 중 오류가 발생했습니다.",
+  OAuthCallback: "Google 인증 콜백 처리 중 오류가 발생했습니다.",
+  OAuthAccountNotLinked: "이미 다른 방식으로 가입된 이메일입니다.",
+  SessionRequired: "로그인이 필요합니다.",
+};
+
 function LoginContent() {
   const searchParams = useSearchParams();
-  const error = searchParams.get("error");
+  const errorCode = searchParams.get("error");
+  const error = errorCode ? (ERROR_MESSAGES[errorCode] ?? decodeURIComponent(errorCode)) : null;
 
   // Open Redirect 방지: 동일 도메인 상대 경로만 허용
   const rawCallbackUrl = searchParams.get("callbackUrl") || "/dashboard";

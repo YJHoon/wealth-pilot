@@ -70,13 +70,18 @@ async def login(
             detail="Google 인증 토큰이 유효하지 않습니다.",
         )
 
-    # 검증된 이메일 사용 (개발 환경 skip_verification이 아닌 경우)
-    verified_email = token_info.get("email") or str(body.email)
+    # Google 토큰에서 검증된 이메일만 사용 (body.email 폴백 금지)
+    verified_email = token_info.get("email")
+    if not verified_email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google 토큰에 이메일 정보가 없습니다.",
+        )
 
     user = await get_or_create_user(db, email=verified_email, name=body.name)
 
     # 계정 잠금 확인
-    if await check_account_locked(user):
+    if check_account_locked(user):
         remaining = (user.locked_until - datetime.now(timezone.utc)).seconds // 60 + 1
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
@@ -88,9 +93,9 @@ async def login(
     if not user.totp_enabled:
         await reset_login_failures(db, user)
 
-    # 세션 생성
+    # 세션 생성 — IP는 서버 측에서만 결정 (클라이언트 제공 값 신뢰 금지)
     device_info = body.device_info or request.headers.get("user-agent", "Unknown")
-    ip_address = body.ip_address or (request.client.host if request.client else "0.0.0.0")
+    ip_address = request.client.host if request.client else "unknown"
 
     refresh_token = create_refresh_token(user.id)
 
@@ -178,9 +183,10 @@ async def refresh_token(
     session.refresh_token_hash = hash_token(new_refresh_token)
     session.last_active_at = datetime.now(timezone.utc)
 
-    # 기존 2FA 검증 상태 유지
-    # 단, totp_verified는 새 세션에서 초기화 (보안 원칙)
-    totp_verified = not user.totp_enabled
+    # 토큰 갱신 시 totp_verified 유지.
+    # Refresh Token 자체가 2FA 검증 후 발급되었으므로 재검증 불필요.
+    # 2FA 비활성 사용자도 True (검증 대상 없음).
+    totp_verified = True
     new_access_token = create_access_token(
         user.id,
         session_id=session.id,

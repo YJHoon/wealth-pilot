@@ -108,8 +108,8 @@ async def get_or_create_user(
     return user
 
 
-async def check_account_locked(user: User) -> bool:
-    """계정 잠금 상태 확인"""
+def check_account_locked(user: User) -> bool:
+    """계정 잠금 상태 확인 (I/O 없음 → 동기 함수)"""
     if user.locked_until is None:
         return False
     if user.locked_until > datetime.now(timezone.utc):
