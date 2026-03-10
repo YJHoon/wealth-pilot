@@ -32,7 +32,7 @@ class GoogleLoginRequest(BaseModel):
     name: str = Field(..., description="Google 이름")
     google_id_token: str = Field(..., description="Google ID Token (서버 측 검증용)")
     device_info: str = Field(default="Unknown", description="기기 정보 (User-Agent)")
-    ip_address: str = Field(default="0.0.0.0", description="클라이언트 IP")
+    # ip_address는 서버 측에서 결정 (클라이언트 스푸핑 방지)
 
 
 class LoginResponse(BaseModel):
