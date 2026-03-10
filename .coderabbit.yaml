@@ -1,6 +1,10 @@
 reviews:
   auto_review:
     enabled: true
-    drafts: false          # 드래프트 PR은 리뷰 안 함
+    drafts: false 
+    base_branches:
+      - develop
+      - release/.*
+      - feature/.*
   request_changes_workflow: false
 language: "ko" 
