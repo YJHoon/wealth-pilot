@@ -1,0 +1,48 @@
+# 빌드 산출물
+node_modules/
+dist/
+build/
+.next/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 락 파일 (읽을 필요 없음)
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+poetry.lock
+
+# 번들/미니파이
+*.min.js
+*.min.css
+*.map
+*.bundle.js
+
+# 미디어/바이너리
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.woff
+*.woff2
+*.ttf
+
+# 테스트 커버리지
+coverage/
+.nyc_output/
+htmlcov/
+
+# 환경/설정
+.env
+.env.local
+.env.production
+.git/
+
+# 기타
+*.log
+.DS_Store
+.vercel/
+

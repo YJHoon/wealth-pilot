@@ -1,0 +1,80 @@
+# 환경변수 (절대 커밋 금지)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+backend/.env
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+
+# Python 가상환경 및 빌드 산출물
+backend/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+tsconfig.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+
+# PWA (빌드 산출물)
+frontend/public/sw.js
+frontend/public/workbox-*.js
+frontend/public/worker-*.js
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 로그
+*.log
+logs/
+backend/logs/
+
+# DB 관련 (로컬 SQLite 등)
+*.sqlite
+*.sqlite3
+*.db
+
+# Alembic 자동생성 외 로컬 DB 마이그레이션 임시파일
+backend/alembic/versions/*.pyc
+
+# Docker
+.dockerignore
+
+# 인증서 및 키 파일 (절대 커밋 금지)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# 테스트 커버리지 리포트
+coverage/
+frontend/coverage/
+
+# Sentry 설정 (토큰 포함 가능)
+.sentryclirc
