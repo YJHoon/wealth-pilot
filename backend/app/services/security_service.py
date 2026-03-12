@@ -96,15 +96,27 @@ async def check_rapid_login_attempts(db: AsyncSession, user_id: uuid.UUID) -> bo
 
 
 async def detect_anomalies(
-    db: AsyncSession, user_id: uuid.UUID, user_email: str, request: Request
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    user_email: str,
+    request: Request,
+    *,
+    device_info: str | None = None,
 ) -> bool:
-    """비정상 접근 탐지 — 새 기기 / 빠른 반복 로그인 시 텔레그램 알림 발송."""
+    """비정상 접근 탐지 — 새 기기 / 빠른 반복 로그인 시 텔레그램 알림 발송.
+
+    device_info: log_access에 전달한 device_info_override와 동일한 값을 넘겨야
+    저장된 이력과 조회 키가 일치합니다. None이면 User-Agent 헤더를 사용합니다.
+    """
     ip = request.client.host if request.client else "unknown"
-    device = request.headers.get("user-agent", "Unknown")
+    device = device_info or request.headers.get("user-agent", "Unknown")
     detected = False
 
     try:
-        is_new = await check_new_device(db, user_id, ip, device)
+        # no_autoflush: 같은 세션에서 log_access() 직후 호출 시
+        # 아직 플러시되지 않은 AccessLog가 count에 포함되는 것을 방지
+        async with db.no_autoflush:
+            is_new = await check_new_device(db, user_id, ip, device)
         if is_new:
             detected = True
             await send_security_alert("new_device_login", user_email, ip, device)
