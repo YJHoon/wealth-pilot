@@ -346,11 +346,18 @@ async def verify_2fa(
             # 세션 만료 시각 갱신 (새 refresh token TTL과 동기화)
             session_obj.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
-    # 2FA 최종 로그인 감사 로그 기록
-    await log_access(db, user.id, AccessAction.LOGIN, request)
+    # 2FA 최종 로그인 감사 로그 기록 (세션의 원본 device_info 사용)
+    session_device = session_obj.device_info if session_obj else None
+    await log_access(
+        db, user.id, AccessAction.LOGIN, request,
+        device_info_override=session_device,
+    )
 
     # 비정상 접근 탐지
-    await detect_anomalies(db, user.id, user.email, request)
+    await detect_anomalies(
+        db, user.id, user.email, request,
+        device_info=session_device,
+    )
 
     await db.commit()
 
