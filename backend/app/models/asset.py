@@ -7,6 +7,7 @@ DB에 AES-256 암호화된 문자열로 저장된다.
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -67,7 +68,7 @@ class Asset(Base):
     purchase_price: Mapped[str] = mapped_column(Text, nullable=False)   # encrypt_decimal
 
     # 현재가 (시세 API에서 갱신, 암호화 불필요 — 공개 정보)
-    current_price: Mapped[str | None] = mapped_column(Numeric(20, 4), nullable=True)
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 4), nullable=True)
 
     # 메타데이터 (은행명, 이율 등 유형별 추가 정보)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

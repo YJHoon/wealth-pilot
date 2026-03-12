@@ -54,7 +54,7 @@ class TotpSetupResponse(BaseModel):
 
 
 class TotpVerifyRequest(BaseModel):
-    code: str = Field(..., min_length=6, max_length=6, description="6자리 OTP 코드")
+    code: str = Field(..., pattern=r"^\d{6}$", description="6자리 숫자 OTP 코드")
 
 
 class TotpVerifyResponse(BaseModel):
