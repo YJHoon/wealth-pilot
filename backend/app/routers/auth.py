@@ -97,7 +97,9 @@ async def login(
     device_info = body.device_info or request.headers.get("user-agent", "Unknown")
     ip_address = request.client.host if request.client else "unknown"
 
-    refresh_token = create_refresh_token(user.id)
+    # 2FA 사용자: totp_verified=False (OTP 검증 전), 비사용자: True
+    # 리프레시 토큰에 totp_verified 포함 → /refresh에서 2FA 우회 불가
+    refresh_token = create_refresh_token(user.id, totp_verified=not user.totp_enabled)
 
     session = Session(
         user_id=user.id,
@@ -178,15 +180,28 @@ async def refresh_token(
             detail="사용자를 찾을 수 없습니다.",
         )
 
+    # 세션 만료 확인 (JWT 유효 기간과 별개로 DB 세션도 검증)
+    if session.expires_at <= datetime.now(timezone.utc):
+        await db.delete(session)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="세션이 만료되었습니다. 다시 로그인해주세요.",
+        )
+
+    # 리프레시 토큰의 totp_verified 클레임 유지 (2FA 우회 방지)
+    # 로그인 직후 발급된 refresh token(totp_verified=False)으로는 verified access token 획득 불가
+    prior_totp_verified = bool(payload.get("totp_verified", False))
+    # 2FA 비활성 사용자는 totp 검증 대상 없으므로 항상 True
+    totp_verified = prior_totp_verified or not user.totp_enabled
+
     # 토큰 로테이션: 새 Refresh Token 발급 + 세션 해시 업데이트
-    new_refresh_token = create_refresh_token(user.id)
+    new_refresh_token = create_refresh_token(user.id, totp_verified=totp_verified)
     session.refresh_token_hash = hash_token(new_refresh_token)
     session.last_active_at = datetime.now(timezone.utc)
+    # 세션 만료 시각 갱신 (리프레시 토큰 TTL과 동기화)
+    session.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
-    # 토큰 갱신 시 totp_verified 유지.
-    # Refresh Token 자체가 2FA 검증 후 발급되었으므로 재검증 불필요.
-    # 2FA 비활성 사용자도 True (검증 대상 없음).
-    totp_verified = True
     new_access_token = create_access_token(
         user.id,
         session_id=session.id,
@@ -217,12 +232,18 @@ async def setup_2fa(
 ):
     """2FA 설정 — QR 코드 생성
 
-    이미 2FA가 설정된 경우 재설정 가능 (기존 시크릿 덮어쓰기).
+    이미 2FA가 활성화된 경우: 기존 시크릿은 유지하고 pending_totp_secret에 임시 저장.
+    /2fa/verify 성공 시점에 실제 시크릿으로 교체 (설정 중 기존 2FA 유지).
     """
     secret = generate_totp_secret()
+    encrypted = encrypt_totp_secret(secret)
 
-    # 시크릿을 암호화하여 DB에 임시 저장 (verify 전까지 totp_enabled=False 유지)
-    user.totp_secret = encrypt_totp_secret(secret)
+    if user.totp_enabled:
+        # 재설정: 기존 시크릿(활성)을 유지하고 새 시크릿은 pending에 임시 저장
+        user.pending_totp_secret = encrypted
+    else:
+        # 최초 설정: totp_secret에 직접 저장 (아직 totp_enabled=False)
+        user.totp_secret = encrypted
     await db.commit()
 
     qr_base64, uri = generate_qr_code(secret, user.email)
@@ -243,20 +264,30 @@ async def verify_2fa(
 ):
     """2FA 코드 검증
 
-    - 설정 중: 검증 성공 시 totp_enabled=True로 변경
+    - 최초 설정 완료: totp_enabled=True로 변경
+    - 2FA 재설정 완료: pending_totp_secret → totp_secret으로 교체
     - 로그인 중: OTP 코드 검증 성공 시 totp_verified=True 토큰 발급
     """
-    if user.totp_secret is None:
+    # 계정 잠금 확인 (잠금 상태에서 OTP를 맞혀도 잠금 해제 불가)
+    if check_account_locked(user):
+        remaining = (user.locked_until - datetime.now(timezone.utc)).seconds // 60 + 1
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail=f"인증 시도가 너무 많습니다. {remaining}분 후에 다시 시도해주세요.",
+        )
+
+    # 검증 대상 시크릿 결정: pending(재설정 중) → totp_secret(활성) 순서
+    active_secret_field = user.pending_totp_secret or user.totp_secret
+    if active_secret_field is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="2FA 설정을 먼저 진행해주세요.",
         )
 
-    secret = decrypt_totp_secret(user.totp_secret)
+    secret = decrypt_totp_secret(active_secret_field)
     is_valid = verify_totp_code(secret, body.code)
 
     if not is_valid:
-        # 2FA 검증 실패도 실패 카운트에 포함
         locked = await record_login_failure(db, user)
         if locked:
             raise HTTPException(
@@ -268,19 +299,37 @@ async def verify_2fa(
             message="인증 코드가 올바르지 않습니다. 다시 확인해주세요.",
         )
 
-    # 검증 성공
+    # 검증 성공 — 실패 카운터 초기화
     await reset_login_failures(db, user)
 
-    if not user.totp_enabled:
+    if user.pending_totp_secret:
+        # 재설정 완료: pending → 활성 시크릿으로 교체
+        user.totp_secret = user.pending_totp_secret
+        user.pending_totp_secret = None
         user.totp_enabled = True
-        await db.commit()
+    elif not user.totp_enabled:
+        # 최초 설정 완료
+        user.totp_enabled = True
 
     # 기존 JWT에서 session_id 추출
     payload = verify_token(credentials.credentials, expected_type="access")
     session_id_str = payload.get("sid") if payload else None
     session_id = uuid.UUID(session_id_str) if session_id_str else None
 
-    # totp_verified=True 토큰 발급 (이제부터 보호된 API 접근 가능)
+    # Refresh Token 로테이션: totp_verified=True로 갱신 (2FA 우회 방지)
+    new_refresh_token: str | None = None
+    if session_id:
+        result = await db.execute(
+            select(Session).where(Session.id == session_id, Session.user_id == user.id)
+        )
+        session_obj = result.scalar_one_or_none()
+        if session_obj:
+            new_refresh_token = create_refresh_token(user.id, totp_verified=True)
+            session_obj.refresh_token_hash = hash_token(new_refresh_token)
+            session_obj.last_active_at = datetime.now(timezone.utc)
+
+    await db.commit()
+
     new_access_token = create_access_token(
         user.id,
         session_id=session_id,
@@ -291,6 +340,7 @@ async def verify_2fa(
         verified=True,
         message="2FA 인증이 완료되었습니다.",
         access_token=new_access_token,
+        refresh_token=new_refresh_token,
     )
 
 
@@ -299,10 +349,16 @@ async def verify_2fa(
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
+    credentials: HTTPAuthorizationCredentials = Depends(_security),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """활성 세션 목록 조회"""
+    # 현재 요청의 JWT에서 session_id 추출 → is_current 표시에 사용
+    payload = verify_token(credentials.credentials, expected_type="access")
+    current_sid_str = payload.get("sid") if payload else None
+    current_session_id = uuid.UUID(current_sid_str) if current_sid_str else None
+
     now = datetime.now(timezone.utc)
     result = await db.execute(
         select(Session)
@@ -311,8 +367,13 @@ async def list_sessions(
     )
     sessions = result.scalars().all()
 
+    def to_response(s: Session) -> SessionResponse:
+        data = SessionResponse.model_validate(s)
+        data.is_current = (current_session_id is not None and s.id == current_session_id)
+        return data
+
     return SessionListResponse(
-        sessions=[SessionResponse.model_validate(s) for s in sessions],
+        sessions=[to_response(s) for s in sessions],
         total=len(sessions),
     )
 

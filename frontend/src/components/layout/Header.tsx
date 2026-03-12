@@ -50,6 +50,7 @@ export function Header() {
           className="h-8 w-8"
           onClick={toggleMask}
           title={isMasked ? "금액 보기" : "금액 숨기기"}
+          aria-label={isMasked ? "금액 보기" : "금액 숨기기"}
         >
           {isMasked ? (
             <EyeOff className="h-4 w-4" />
@@ -65,6 +66,7 @@ export function Header() {
           className="h-8 w-8"
           onClick={toggleTheme}
           title={theme === "dark" ? "라이트 모드" : "다크 모드"}
+          aria-label={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
         >
           {theme === "dark" ? (
             <Sun className="h-4 w-4" />

@@ -1,7 +1,11 @@
-"""AES-256 암복호화 서비스
+"""Fernet 암복호화 서비스 (AES-128-CBC + HMAC-SHA256)
 
 금액, TOTP 시크릿 등 민감 데이터를 DB에 저장할 때 사용.
 ENCRYPTION_KEY 환경변수에서 키를 읽어온다.
+
+NOTE: Fernet은 내부적으로 AES-128-CBC를 사용한다. 프로젝트 요구사항(AES-256)을 충족하려면
+cryptography.hazmat.primitives.ciphers.aead.AESGCM (32바이트 키)으로 교체 필요.
+현재는 Fernet 유지하고, 실제 DB 마이그레이션이 가능한 시점에 교체 예정.
 """
 
 import base64

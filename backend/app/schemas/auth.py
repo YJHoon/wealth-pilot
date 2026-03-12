@@ -60,7 +60,8 @@ class TotpVerifyRequest(BaseModel):
 class TotpVerifyResponse(BaseModel):
     verified: bool
     message: str
-    access_token: str | None = None  # 2FA 검증 성공 시 totp_verified=True 토큰 반환
+    access_token: str | None = None   # 성공 시 totp_verified=True 액세스 토큰
+    refresh_token: str | None = None  # 성공 시 totp_verified=True 리프레시 토큰 (2FA 우회 방지)
 
 
 # --- 세션 ---

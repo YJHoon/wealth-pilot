@@ -18,7 +18,9 @@ const ERROR_MESSAGES: Record<string, string> = {
 function LoginContent() {
   const searchParams = useSearchParams();
   const errorCode = searchParams.get("error");
-  const error = errorCode ? (ERROR_MESSAGES[errorCode] ?? decodeURIComponent(errorCode)) : null;
+  // errorCode는 URL에서 자동으로 디코딩되므로 추가 decodeURIComponent 불필요
+  // (잘못된 인코딩으로 URIError 방지)
+  const error = errorCode ? (ERROR_MESSAGES[errorCode] ?? errorCode) : null;
 
   // Open Redirect 방지: 동일 도메인 상대 경로만 허용
   const rawCallbackUrl = searchParams.get("callbackUrl") || "/dashboard";
@@ -37,7 +39,7 @@ function LoginContent() {
         <CardContent className="space-y-4">
           {error && (
             <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
-              {decodeURIComponent(error)}
+              {error}
             </div>
           )}
 

@@ -35,6 +35,7 @@ class Currency(str, enum.Enum):
     EUR = "EUR"
     JPY = "JPY"
     BTC = "BTC"
+    ETH = "ETH"  # 프론트엔드 타입과 동기화
 
 
 class Asset(Base):

@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -41,13 +42,19 @@ def create_access_token(
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def create_refresh_token(user_id: uuid.UUID) -> str:
-    """Refresh Token 생성 (7일 만료)"""
+def create_refresh_token(user_id: uuid.UUID, totp_verified: bool = False) -> str:
+    """Refresh Token 생성 (7일 만료)
+
+    Args:
+        totp_verified: 2FA 검증 완료 여부 — /refresh에서 access token으로 전달됨
+    """
     expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
     payload = {
         "sub": str(user_id),
         "exp": expire,
         "type": "refresh",
+        "jti": str(uuid.uuid4()),   # 토큰 고유 ID (동시 발급 토큰 구별)
+        "totp_verified": totp_verified,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
@@ -95,15 +102,24 @@ async def get_or_create_user(
     email: str,
     name: str,
 ) -> User:
-    """Google OAuth 로그인 후 사용자 조회 또는 생성"""
+    """Google OAuth 로그인 후 사용자 조회 또는 생성
+
+    동시 요청으로 인한 IntegrityError(unique 위반) 발생 시 재조회하여 안전하게 처리.
+    """
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
 
     if user is None:
         user = User(email=email, name=name)
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        try:
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError:
+            # 동시 요청으로 이미 생성된 경우 — 롤백 후 재조회
+            await db.rollback()
+            result = await db.execute(select(User).where(User.email == email))
+            user = result.scalar_one()
 
     return user
 
@@ -118,15 +134,33 @@ def check_account_locked(user: User) -> bool:
 
 
 async def record_login_failure(db: AsyncSession, user: User) -> bool:
-    """로그인 실패 기록. 5회 도달 시 15분 잠금. 잠금되었으면 True 반환."""
-    user.failed_login_count += 1
-    locked = False
+    """로그인 실패 기록. 5회 도달 시 15분 잠금. 잠금되었으면 True 반환.
 
+    잠금이 이미 만료된 상태면 카운터를 초기화하고 1부터 새로 시작.
+    원자적 UPDATE로 동시 요청 경쟁 조건 방지.
+    """
+    now = datetime.now(timezone.utc)
+
+    # 만료된 잠금이면 카운터 초기화
+    if user.locked_until is not None and user.locked_until <= now:
+        user.failed_login_count = 0
+        user.locked_until = None
+
+    # 원자적 증가 (동시 요청에서 카운트 덮어쓰기 방지)
+    await db.execute(
+        update(User)
+        .where(User.id == user.id)
+        .values(failed_login_count=User.failed_login_count + 1)
+    )
+    await db.commit()
+    await db.refresh(user)
+
+    locked = False
     if user.failed_login_count >= 5:
-        user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+        user.locked_until = now + timedelta(minutes=15)
+        await db.commit()
         locked = True
 
-    await db.commit()
     return locked
 
 
