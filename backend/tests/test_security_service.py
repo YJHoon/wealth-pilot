@@ -24,6 +24,15 @@ def _make_request(ip: str = "127.0.0.1", user_agent: str = "TestAgent"):
     return request
 
 
+def _make_db_mock():
+    """no_autoflush 컨텍스트 매니저를 지원하는 DB mock 생성."""
+    db = AsyncMock()
+    db.no_autoflush = MagicMock()
+    db.no_autoflush.__aenter__ = AsyncMock(return_value=None)
+    db.no_autoflush.__aexit__ = AsyncMock(return_value=False)
+    return db
+
+
 class TestLogAccess:
     @pytest.mark.asyncio
     async def test_creates_access_log_with_correct_fields(self):
@@ -125,7 +134,7 @@ class TestDetectAnomalies:
             mock_rapid.return_value = False
 
             result = await detect_anomalies(
-                AsyncMock(), uuid.uuid4(), "user@test.com", _make_request()
+                _make_db_mock(), uuid.uuid4(), "user@test.com", _make_request()
             )
 
             assert result is True
@@ -145,7 +154,7 @@ class TestDetectAnomalies:
             mock_rapid.return_value = True
 
             result = await detect_anomalies(
-                AsyncMock(), uuid.uuid4(), "user@test.com", _make_request()
+                _make_db_mock(), uuid.uuid4(), "user@test.com", _make_request()
             )
 
             assert result is True
@@ -164,9 +173,33 @@ class TestDetectAnomalies:
             mock_rapid.return_value = False
 
             result = await detect_anomalies(
-                AsyncMock(), uuid.uuid4(), "user@test.com", _make_request()
+                _make_db_mock(), uuid.uuid4(), "user@test.com", _make_request()
             )
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_uses_device_info_override(self):
+        """device_info 파라미터가 User-Agent보다 우선."""
+        with (
+            patch("app.services.security_service.check_new_device", new_callable=AsyncMock) as mock_new,
+            patch("app.services.security_service.check_rapid_login_attempts", new_callable=AsyncMock) as mock_rapid,
+            patch("app.services.security_service.send_security_alert", new_callable=AsyncMock) as mock_alert,
+        ):
+            mock_new.return_value = True
+            mock_rapid.return_value = False
+
+            result = await detect_anomalies(
+                _make_db_mock(), uuid.uuid4(), "user@test.com", _make_request(),
+                device_info="CustomDevice",
+            )
+
+            assert result is True
+            # check_new_device에 CustomDevice가 전달되었는지 확인
+            call_args = mock_new.call_args
+            assert call_args[0][3] == "CustomDevice"
+            mock_alert.assert_called_once_with(
+                "new_device_login", "user@test.com", "127.0.0.1", "CustomDevice"
+            )
 
 
 class TestSecurityHeaders:

@@ -85,6 +85,7 @@ async def login(
     # 계정 잠금 확인
     if check_account_locked(user):
         await log_access(db, user.id, AccessAction.LOGIN_FAILURE, request, is_suspicious=True)
+        await detect_anomalies(db, user.id, user.email, request)
         await db.commit()
         remaining = (user.locked_until - datetime.now(timezone.utc)).seconds // 60 + 1
         raise HTTPException(
@@ -121,7 +122,7 @@ async def login(
     await log_access(db, user.id, action, request, device_info_override=device_info)
 
     # 비정상 접근 탐지 (새 기기, 빠른 반복 로그인 등)
-    await detect_anomalies(db, user.id, user.email, request)
+    await detect_anomalies(db, user.id, user.email, request, device_info=device_info)
 
     await db.commit()
 
@@ -302,6 +303,7 @@ async def verify_2fa(
     if not is_valid:
         locked = await record_login_failure(db, user)
         await log_access(db, user.id, AccessAction.LOGIN_FAILURE, request, is_suspicious=True)
+        await detect_anomalies(db, user.id, user.email, request)
         await db.commit()
         if locked:
             raise HTTPException(
