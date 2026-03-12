@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies.auth import get_current_user
-from app.models.access_log import AccessLog
+from app.middleware.rate_limit import limiter
 from app.models.session import Session
 from app.models.user import User
+from app.services.security_service import AccessAction, detect_anomalies, log_access
 from app.schemas.auth import (
     GoogleLoginRequest,
     LoginResponse,
@@ -52,6 +53,7 @@ _security = HTTPBearer()
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("10/minute")
 async def login(
     request: Request,
     body: GoogleLoginRequest,
@@ -113,14 +115,12 @@ async def login(
 
     # 액세스 로그 기록
     # 2FA 사용자는 OTP 검증 전이므로 login_challenge 로그, 완료 후 login 로그는 /2fa/verify에서 기록
-    log = AccessLog(
-        user_id=user.id,
-        action="login_challenge" if user.totp_enabled else "login",
-        ip_address=ip_address,
-        device_info=device_info,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=365),
-    )
-    db.add(log)
+    action = AccessAction.LOGIN_CHALLENGE if user.totp_enabled else AccessAction.LOGIN
+    await log_access(db, user.id, action, request, device_info_override=device_info)
+
+    # 비정상 접근 탐지 (새 기기, 빠른 반복 로그인 등)
+    await detect_anomalies(db, user.id, user.email, request)
+
     await db.commit()
 
     # 2FA 설정 완료된 계정은 totp_verified=False 토큰 발급 (OTP 검증 전)
@@ -340,16 +340,11 @@ async def verify_2fa(
             # 세션 만료 시각 갱신 (새 refresh token TTL과 동기화)
             session_obj.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
-    # 2FA 최종 로그인 감사 로그 기록 (서버 측 IP 사용)
-    login_ip = request.client.host if request.client else "unknown"
-    log = AccessLog(
-        user_id=user.id,
-        action="login",
-        ip_address=login_ip,
-        device_info=request.headers.get("user-agent", "Unknown"),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=365),
-    )
-    db.add(log)
+    # 2FA 최종 로그인 감사 로그 기록
+    await log_access(db, user.id, AccessAction.LOGIN, request)
+
+    # 비정상 접근 탐지
+    await detect_anomalies(db, user.id, user.email, request)
 
     await db.commit()
 
@@ -422,16 +417,11 @@ async def revoke_session(
 
     await db.delete(session)
 
-    # 요청자의 실제 IP 기록
-    ip_address = request.client.host if request.client else "0.0.0.0"
-    log = AccessLog(
-        user_id=user.id,
-        action="session_revoke",
-        ip_address=ip_address,
-        device_info=f"revoked session: {session_id}",
-        expires_at=datetime.now(timezone.utc) + timedelta(days=365),
+    # 액세스 로그 기록
+    await log_access(
+        db, user.id, AccessAction.SESSION_REVOKE, request,
+        device_info_override=f"revoked session: {session_id}",
     )
-    db.add(log)
     await db.commit()
 
 
@@ -443,7 +433,6 @@ async def logout(
     db: AsyncSession = Depends(get_db),
 ):
     """로그아웃 — JWT의 session_id로 특정 세션 삭제"""
-    ip_address = request.client.host if request.client else "0.0.0.0"
     device_info = request.headers.get("user-agent", "Unknown")
 
     # JWT에서 session_id 추출하여 해당 세션만 정확히 삭제
@@ -470,12 +459,5 @@ async def logout(
             await db.delete(s)
 
     # 액세스 로그
-    log = AccessLog(
-        user_id=user.id,
-        action="logout",
-        ip_address=ip_address,
-        device_info=device_info,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=365),
-    )
-    db.add(log)
+    await log_access(db, user.id, AccessAction.LOGOUT, request)
     await db.commit()
