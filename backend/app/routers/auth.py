@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -154,24 +154,7 @@ async def refresh_token(
         )
 
     user_id = uuid.UUID(payload["sub"])
-
-    # Refresh Token 해시로 세션 조회 (재사용 공격 방지)
-    token_hash = hash_token(body.refresh_token)
-    result = await db.execute(
-        select(Session).where(
-            Session.user_id == user_id,
-            Session.refresh_token_hash == token_hash,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if session is None:
-        # 유효하지 않은 Refresh Token — 탈취 가능성, 해당 사용자 세션 모두 무효화
-        await db.execute(delete(Session).where(Session.user_id == user_id))
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="유효하지 않은 리프레시 토큰입니다. 다시 로그인해주세요.",
-        )
+    now = datetime.now(timezone.utc)
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -181,35 +164,51 @@ async def refresh_token(
             detail="사용자를 찾을 수 없습니다.",
         )
 
-    # 세션 만료 확인 (JWT 유효 기간과 별개로 DB 세션도 검증)
-    if session.expires_at <= datetime.now(timezone.utc):
-        await db.delete(session)
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="세션이 만료되었습니다. 다시 로그인해주세요.",
-        )
-
     # 리프레시 토큰의 totp_verified 클레임 유지 (2FA 우회 방지)
-    # 로그인 직후 발급된 refresh token(totp_verified=False)으로는 verified access token 획득 불가
     prior_totp_verified = bool(payload.get("totp_verified", False))
-    # 2FA 비활성 사용자는 totp 검증 대상 없으므로 항상 True
     totp_verified = prior_totp_verified or not user.totp_enabled
 
-    # 토큰 로테이션: 새 Refresh Token 발급 + 세션 해시 업데이트
+    # 새 토큰 미리 생성 (CAS UPDATE에 사용)
     new_refresh_token = create_refresh_token(user.id, totp_verified=totp_verified)
-    session.refresh_token_hash = hash_token(new_refresh_token)
-    session.last_active_at = datetime.now(timezone.utc)
-    # 세션 만료 시각 갱신 (리프레시 토큰 TTL과 동기화)
-    session.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    old_hash = hash_token(body.refresh_token)
+    new_hash = hash_token(new_refresh_token)
 
-    new_access_token = create_access_token(
-        user.id,
-        session_id=session.id,
-        totp_verified=totp_verified,
+    # CAS(compare-and-swap) 방식 토큰 로테이션:
+    # old hash가 일치하는 세션만 원자적으로 갱신 → 동시 요청 레이스 컨디션 방지.
+    # SELECT + UPDATE 2단계 대신 단일 UPDATE WHERE로 처리하므로 TOCTOU 없음.
+    result = await db.execute(
+        update(Session)
+        .where(
+            Session.user_id == user_id,
+            Session.refresh_token_hash == old_hash,
+            Session.expires_at > now,
+        )
+        .values(
+            refresh_token_hash=new_hash,
+            last_active_at=now,
+            expires_at=now + timedelta(days=7),
+        )
+        .returning(Session.id)
     )
+    row = result.one_or_none()
+
+    if row is None:
+        # hash miss: 이미 다른 요청에서 갱신되었거나 세션 만료/탈취
+        # 즉시 전체 세션 폐기 대신 401 반환 (정상 동시 요청 오탐 방지)
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않은 리프레시 토큰입니다. 다시 로그인해주세요.",
+        )
 
     await db.commit()
+
+    session_id = row[0]
+    new_access_token = create_access_token(
+        user.id,
+        session_id=session_id,
+        totp_verified=totp_verified,
+    )
 
     return TokenResponse(
         access_token=new_access_token,

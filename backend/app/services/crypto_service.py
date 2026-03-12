@@ -23,11 +23,19 @@ _NONCE_SIZE = 12  # AES-GCM 표준 nonce 크기
 
 
 def _get_key() -> bytes:
-    """환경변수에서 AES-256 키(32바이트)를 추출."""
-    raw = base64.urlsafe_b64decode(settings.encryption_key + "==")
-    if len(raw) < 32:
-        raise ValueError("ENCRYPTION_KEY는 최소 32바이트여야 합니다.")
-    return raw[:32]
+    """환경변수에서 AES-256 키(32바이트)를 추출.
+
+    키가 정확히 32바이트가 아니면 즉시 실패 (묵시적 잘라내기 금지).
+    generate_encryption_key()로 생성한 키는 항상 정확히 32바이트.
+    """
+    padding = "=" * (-len(settings.encryption_key) % 4)
+    raw = base64.urlsafe_b64decode(settings.encryption_key + padding)
+    if len(raw) != 32:
+        raise ValueError(
+            f"ENCRYPTION_KEY는 정확히 32바이트여야 합니다. 현재: {len(raw)}바이트. "
+            "generate_encryption_key()로 새 키를 생성하세요."
+        )
+    return raw
 
 
 def encrypt_value(value: str) -> str:
