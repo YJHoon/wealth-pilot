@@ -12,6 +12,7 @@ pydantic[email]>=2.0,<3.0
 pydantic-settings==2.6.1
 
 # 인증
+# TODO: python-jose에 CVE-2024-33663, CVE-2024-33664, CVE-2025-61152 존재 — PyJWT 마이그레이션 필요
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.22

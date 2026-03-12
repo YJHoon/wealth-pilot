@@ -22,6 +22,8 @@ class User(Base):
     # 2FA (TOTP) — totp_secret은 암호화하여 저장
     totp_secret: Mapped[str | None] = mapped_column(String(500), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 2FA 재설정 시 기존 시크릿을 덮어쓰지 않고 임시 보관 (verify 전까지)
+    pending_totp_secret: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # 로그인 실패 추적 (5회 실패 시 15분 잠금)
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

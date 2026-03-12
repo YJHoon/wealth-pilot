@@ -47,6 +47,8 @@ export interface TotpSetupResponse {
 export interface TotpVerifyResponse {
   verified: boolean;
   message: string;
+  access_token?: string;   // 성공 시 totp_verified=True 액세스 토큰
+  refresh_token?: string;  // 성공 시 totp_verified=True 리프레시 토큰
 }
 
 export interface SessionItem {

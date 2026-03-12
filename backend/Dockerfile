@@ -16,4 +16,9 @@ COPY . .
 
 EXPOSE 8000
 
+# 비루트 사용자로 실행 (컨테이너 탈출 시 권한 최소화)
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

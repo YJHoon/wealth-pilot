@@ -36,12 +36,19 @@ export function useIdleTimeout() {
 
   useEffect(() => {
     // 다른 탭의 활동을 감지하여 타이머 리셋
+    // newValue는 다른 탭이 기록한 마지막 활동 시각(ms) — 늦게 처리되는 경우 잔여 시간 계산
     const handleStorage = (event: StorageEvent) => {
       if (event.key === LAST_ACTIVITY_KEY) {
         if (timerRef.current) {
           clearTimeout(timerRef.current);
         }
-        timerRef.current = setTimeout(handleLogout, IDLE_TIMEOUT_MS);
+        const lastActivity = Number(event.newValue) || Date.now();
+        const remainingMs = IDLE_TIMEOUT_MS - (Date.now() - lastActivity);
+        if (remainingMs <= 0) {
+          handleLogout();
+        } else {
+          timerRef.current = setTimeout(handleLogout, remainingMs);
+        }
       }
     };
 

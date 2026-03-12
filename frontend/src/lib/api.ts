@@ -21,13 +21,16 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const { accessToken, ...fetchOptions } = options;
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(fetchOptions.headers as Record<string, string>),
-  };
+  const headers = new Headers(fetchOptions.headers);
+
+  // FormData는 브라우저가 Content-Type(multipart/form-data; boundary=...)을 자동 설정
+  // body가 없거나 JSON인 경우에만 application/json을 기본값으로 설정
+  if (!(fetchOptions.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
 
   if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
+    headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
   const res = await fetch(`${API_BASE}${path}`, {
