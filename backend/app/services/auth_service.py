@@ -137,32 +137,35 @@ def check_account_locked(user: User) -> bool:
 async def record_login_failure(db: AsyncSession, user: User) -> bool:
     """로그인 실패 기록. 5회 도달 시 15분 잠금. 잠금되었으면 True 반환.
 
-    잠금이 이미 만료된 상태면 카운터를 초기화하고 1부터 새로 시작.
-    원자적 UPDATE로 동시 요청 경쟁 조건 방지.
+    SELECT FOR UPDATE로 행 잠금 → 카운터 증가 + 잠금 설정을 단일 트랜잭션으로 처리.
+    동시 요청에서 카운터 증가분 손실 및 잠금 우회를 방지.
     """
     now = datetime.now(timezone.utc)
+    lock_duration = timedelta(minutes=15)
+
+    # 행 잠금: 동시 요청이 동일 행을 동시에 수정하지 못하도록 직렬화
+    result = await db.execute(select(User).where(User.id == user.id).with_for_update())
+    current = result.scalar_one()
 
     # 만료된 잠금이면 카운터 초기화
-    if user.locked_until is not None and user.locked_until <= now:
-        user.failed_login_count = 0
-        user.locked_until = None
+    if current.locked_until is not None and current.locked_until <= now:
+        current.failed_login_count = 0
+        current.locked_until = None
 
-    # 원자적 증가 (동시 요청에서 카운트 덮어쓰기 방지)
-    await db.execute(
-        update(User)
-        .where(User.id == user.id)
-        .values(failed_login_count=User.failed_login_count + 1)
-    )
+    current.failed_login_count += 1
+
+    is_locked = False
+    if current.failed_login_count >= 5:
+        current.locked_until = now + lock_duration
+        is_locked = True
+
     await db.commit()
-    await db.refresh(user)
 
-    locked = False
-    if user.failed_login_count >= 5:
-        user.locked_until = now + timedelta(minutes=15)
-        await db.commit()
-        locked = True
+    # 호출자 객체도 최신 상태로 갱신
+    user.failed_login_count = current.failed_login_count
+    user.locked_until = current.locked_until
 
-    return locked
+    return is_locked
 
 
 async def reset_login_failures(db: AsyncSession, user: User) -> None:
