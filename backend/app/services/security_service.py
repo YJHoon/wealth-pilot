@@ -1,6 +1,7 @@
 """보안 서비스 — 액세스 로그 헬퍼 + 비정상 접근 탐지"""
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Request
@@ -31,7 +32,7 @@ class AccessAction:
 
 async def log_access(
     db: AsyncSession,
-    user_id,
+    user_id: uuid.UUID,
     action: str,
     request: Request,
     *,
@@ -55,7 +56,7 @@ async def log_access(
 
 
 async def check_new_device(
-    db: AsyncSession, user_id, ip: str, device_info: str
+    db: AsyncSession, user_id: uuid.UUID, ip: str, device_info: str
 ) -> bool:
     """과거 로그인 기록에서 IP+device 조합이 처음이면 True."""
     login_actions = (AccessAction.LOGIN, AccessAction.LOGIN_CHALLENGE)
@@ -73,7 +74,7 @@ async def check_new_device(
     return count == 0
 
 
-async def check_rapid_login_attempts(db: AsyncSession, user_id) -> bool:
+async def check_rapid_login_attempts(db: AsyncSession, user_id: uuid.UUID) -> bool:
     """5분 내 로그인 관련 액션이 3회 이상이면 True."""
     five_minutes_ago = datetime.now(timezone.utc) - timedelta(minutes=5)
     login_actions = (
@@ -95,7 +96,7 @@ async def check_rapid_login_attempts(db: AsyncSession, user_id) -> bool:
 
 
 async def detect_anomalies(
-    db: AsyncSession, user_id, user_email: str, request: Request
+    db: AsyncSession, user_id: uuid.UUID, user_email: str, request: Request
 ) -> bool:
     """비정상 접근 탐지 — 새 기기 / 빠른 반복 로그인 시 텔레그램 알림 발송."""
     ip = request.client.host if request.client else "unknown"

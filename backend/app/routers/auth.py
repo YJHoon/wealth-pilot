@@ -84,6 +84,8 @@ async def login(
 
     # 계정 잠금 확인
     if check_account_locked(user):
+        await log_access(db, user.id, AccessAction.LOGIN_FAILURE, request, is_suspicious=True)
+        await db.commit()
         remaining = (user.locked_until - datetime.now(timezone.utc)).seconds // 60 + 1
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
@@ -299,6 +301,8 @@ async def verify_2fa(
 
     if not is_valid:
         locked = await record_login_failure(db, user)
+        await log_access(db, user.id, AccessAction.LOGIN_FAILURE, request, is_suspicious=True)
+        await db.commit()
         if locked:
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
