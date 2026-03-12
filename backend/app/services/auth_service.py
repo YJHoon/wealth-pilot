@@ -5,7 +5,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +40,7 @@ def create_access_token(
     }
     if session_id:
         payload["sid"] = str(session_id)
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)  # type: ignore[arg-type]
 
 
 def create_refresh_token(user_id: uuid.UUID, totp_verified: bool = False) -> str:
@@ -56,7 +57,7 @@ def create_refresh_token(user_id: uuid.UUID, totp_verified: bool = False) -> str
         "jti": str(uuid.uuid4()),   # 토큰 고유 ID (동시 발급 토큰 구별)
         "totp_verified": totp_verified,
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)  # type: ignore[arg-type]
 
 
 async def verify_google_id_token(token: str) -> dict | None:
@@ -89,11 +90,11 @@ async def verify_google_id_token(token: str) -> dict | None:
 def verify_token(token: str, expected_type: str = "access") -> dict | None:
     """토큰 검증. 유효하면 payload 반환, 아니면 None."""
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])  # type: ignore[arg-type]
         if payload.get("type") != expected_type:
             return None
         return payload
-    except JWTError:
+    except InvalidTokenError:
         return None
 
 

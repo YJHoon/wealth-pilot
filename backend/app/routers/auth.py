@@ -112,9 +112,10 @@ async def login(
     await db.flush()  # session.id 확보
 
     # 액세스 로그 기록
+    # 2FA 사용자는 OTP 검증 전이므로 login_challenge 로그, 완료 후 login 로그는 /2fa/verify에서 기록
     log = AccessLog(
         user_id=user.id,
-        action="login",
+        action="login_challenge" if user.totp_enabled else "login",
         ip_address=ip_address,
         device_info=device_info,
         expires_at=datetime.now(timezone.utc) + timedelta(days=365),
@@ -227,19 +228,28 @@ async def get_me(user: User = Depends(get_current_user)):
 
 @router.post("/2fa/setup", response_model=TotpSetupResponse)
 async def setup_2fa(
+    credentials: HTTPAuthorizationCredentials = Depends(_security),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """2FA 설정 — QR 코드 생성
 
-    이미 2FA가 활성화된 경우: 기존 시크릿은 유지하고 pending_totp_secret에 임시 저장.
+    이미 2FA가 활성화된 경우: 기존 OTP 검증(totp_verified=True)이 완료된 세션에서만 재설정 허용.
+    기존 시크릿은 유지하고 pending_totp_secret에 임시 저장.
     /2fa/verify 성공 시점에 실제 시크릿으로 교체 (설정 중 기존 2FA 유지).
     """
     secret = generate_totp_secret()
     encrypted = encrypt_totp_secret(secret)
 
     if user.totp_enabled:
-        # 재설정: 기존 시크릿(활성)을 유지하고 새 시크릿은 pending에 임시 저장
+        # 재설정: 현재 OTP 검증 완료 여부 확인 (탈취된 1차 토큰으로 OTP 교체 방지)
+        payload = verify_token(credentials.credentials, expected_type="access")
+        if not payload or not payload.get("totp_verified", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="2FA 재설정을 위해 현재 OTP 인증이 필요합니다.",
+            )
+        # 기존 시크릿(활성)을 유지하고 새 시크릿은 pending에 임시 저장
         user.pending_totp_secret = encrypted
     else:
         # 최초 설정: totp_secret에 직접 저장 (아직 totp_enabled=False)
@@ -257,6 +267,7 @@ async def setup_2fa(
 
 @router.post("/2fa/verify", response_model=TotpVerifyResponse)
 async def verify_2fa(
+    request: Request,
     body: TotpVerifyRequest,
     credentials: HTTPAuthorizationCredentials = Depends(_security),
     user: User = Depends(get_current_user),
@@ -327,6 +338,19 @@ async def verify_2fa(
             new_refresh_token = create_refresh_token(user.id, totp_verified=True)
             session_obj.refresh_token_hash = hash_token(new_refresh_token)
             session_obj.last_active_at = datetime.now(timezone.utc)
+            # 세션 만료 시각 갱신 (새 refresh token TTL과 동기화)
+            session_obj.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+    # 2FA 최종 로그인 감사 로그 기록 (서버 측 IP 사용)
+    login_ip = request.client.host if request.client else "unknown"
+    log = AccessLog(
+        user_id=user.id,
+        action="login",
+        ip_address=login_ip,
+        device_info=request.headers.get("user-agent", "Unknown"),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=365),
+    )
+    db.add(log)
 
     await db.commit()
 

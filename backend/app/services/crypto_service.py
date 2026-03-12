@@ -1,44 +1,56 @@
-"""Fernet 암복호화 서비스 (AES-128-CBC + HMAC-SHA256)
+"""AES-256-GCM 암복호화 서비스
 
 금액, TOTP 시크릿 등 민감 데이터를 DB에 저장할 때 사용.
-ENCRYPTION_KEY 환경변수에서 키를 읽어온다.
+ENCRYPTION_KEY 환경변수에서 키를 읽어온다 (URL-safe base64, 32바이트 이상).
 
-NOTE: Fernet은 내부적으로 AES-128-CBC를 사용한다. 프로젝트 요구사항(AES-256)을 충족하려면
-cryptography.hazmat.primitives.ciphers.aead.AESGCM (32바이트 키)으로 교체 필요.
-현재는 Fernet 유지하고, 실제 DB 마이그레이션이 가능한 시점에 교체 예정.
+AES-256-GCM 특성:
+- 32바이트(256-bit) 키 사용
+- 12바이트 nonce (암호화마다 랜덤 생성)
+- 16바이트 인증 태그 내장 (무결성 검증)
+
+저장 형식: base64url(nonce[12] + ciphertext + auth_tag[16])
 """
 
 import base64
-import os
+import secrets
 from decimal import Decimal
 
-from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.config import settings
 
+_NONCE_SIZE = 12  # AES-GCM 표준 nonce 크기
 
-def _get_fernet() -> Fernet:
-    """환경변수의 ENCRYPTION_KEY로 Fernet 인스턴스 생성."""
-    key = settings.encryption_key.encode()
-    return Fernet(key)
+
+def _get_key() -> bytes:
+    """환경변수에서 AES-256 키(32바이트)를 추출."""
+    raw = base64.urlsafe_b64decode(settings.encryption_key + "==")
+    if len(raw) < 32:
+        raise ValueError("ENCRYPTION_KEY는 최소 32바이트여야 합니다.")
+    return raw[:32]
 
 
 def encrypt_value(value: str) -> str:
-    """문자열을 암호화하여 base64 인코딩된 문자열로 반환."""
-    f = _get_fernet()
-    encrypted = f.encrypt(value.encode())
-    return encrypted.decode()
+    """문자열을 AES-256-GCM으로 암호화 → URL-safe base64 반환."""
+    key = _get_key()
+    aesgcm = AESGCM(key)
+    nonce = secrets.token_bytes(_NONCE_SIZE)
+    ciphertext = aesgcm.encrypt(nonce, value.encode(), None)
+    return base64.urlsafe_b64encode(nonce + ciphertext).decode()
 
 
 def decrypt_value(encrypted_value: str) -> str:
-    """암호화된 문자열을 복호화."""
-    f = _get_fernet()
-    decrypted = f.decrypt(encrypted_value.encode())
-    return decrypted.decode()
+    """AES-256-GCM 암호문 복호화."""
+    key = _get_key()
+    aesgcm = AESGCM(key)
+    raw = base64.urlsafe_b64decode(encrypted_value + "==")
+    nonce, ciphertext = raw[:_NONCE_SIZE], raw[_NONCE_SIZE:]
+    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+    return plaintext.decode()
 
 
 def encrypt_decimal(value: Decimal) -> str:
-    """Decimal 값을 문자열로 변환 후 암호화."""
+    """Decimal 값을 문자열로 변환 후 AES-256-GCM 암호화."""
     return encrypt_value(str(value))
 
 
@@ -76,5 +88,5 @@ def decrypt_decimal_optional(encrypted_value: str | None) -> Decimal | None:
 
 
 def generate_encryption_key() -> str:
-    """새 Fernet 호환 암호화 키 생성 (설정 시 1회 사용)."""
-    return Fernet.generate_key().decode()
+    """AES-256용 새 암호화 키 생성 (32바이트, URL-safe base64 인코딩)."""
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
