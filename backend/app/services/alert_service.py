@@ -1,6 +1,7 @@
 """텔레그램 알림 서비스 — 보안 알림 전송"""
 
 import logging
+from html import escape
 
 import httpx
 
@@ -50,5 +51,9 @@ async def send_security_alert(
         logger.warning("Unknown alert type: %s", alert_type)
         return False
 
-    message = template.format(user_email=user_email, ip=ip, device=device)
+    message = template.format(
+        user_email=escape(user_email),
+        ip=escape(ip),
+        device=escape(device),
+    )
     return await send_telegram_message(message)
