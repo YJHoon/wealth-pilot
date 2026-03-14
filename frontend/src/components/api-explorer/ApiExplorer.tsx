@@ -168,7 +168,9 @@ export function ApiExplorer() {
       }) ?? []
     : [];
 
-  const totalCount = Object.values(groups).reduce((sum, arr) => sum + arr.length, 0);
+  const totalCount = new Set(
+    Object.values(groups).flat().map((e) => `${e.method}:${e.path}`)
+  ).size;
 
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-100 font-sans">

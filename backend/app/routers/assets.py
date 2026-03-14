@@ -1,5 +1,7 @@
 """자산 관리 CRUD 라우터"""
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,11 +26,25 @@ from app.services.security_service import AccessAction, log_access
 router = APIRouter(prefix="/api/assets", tags=["자산"])
 
 
+async def validate_group_ownership(
+    db: AsyncSession, group_id: UUID, user_id: UUID
+) -> None:
+    """그룹 소유권 검증. 그룹이 존재하지 않거나 소유자가 아니면 HTTPException 발생."""
+    group_result = await db.execute(
+        select(PortfolioGroup).where(
+            PortfolioGroup.id == group_id,
+            PortfolioGroup.user_id == user_id,
+        )
+    )
+    if group_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="그룹을 찾을 수 없습니다.")
+
+
 @router.get("", response_model=AssetListResponse)
 async def list_assets(
     asset_type: AssetType | None = Query(default=None, alias="type"),
     status_filter: AssetStatus | None = None,
-    group_id: str | None = None,
+    group_id: UUID | None = None,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -60,16 +76,8 @@ async def create_asset(
     db: AsyncSession = Depends(get_db),
 ):
     """새 자산 등록."""
-    # group_id 소유권 검증
     if body.group_id is not None:
-        group_result = await db.execute(
-            select(PortfolioGroup).where(
-                PortfolioGroup.id == body.group_id,
-                PortfolioGroup.user_id == user.id,
-            )
-        )
-        if group_result.scalar_one_or_none() is None:
-            raise HTTPException(status_code=404, detail="그룹을 찾을 수 없습니다.")
+        await validate_group_ownership(db, body.group_id, user.id)
 
     asset = Asset(
         user_id=user.id,
@@ -94,7 +102,7 @@ async def create_asset(
 
 @router.put("/{asset_id}", response_model=AssetResponse)
 async def update_asset(
-    asset_id: str,
+    asset_id: UUID,
     body: AssetUpdate,
     request: Request,
     user: User = Depends(get_current_active_user),
@@ -117,14 +125,7 @@ async def update_asset(
 
     # group_id 소유권 검증
     if "group_id" in update_data and update_data["group_id"] is not None:
-        group_result = await db.execute(
-            select(PortfolioGroup).where(
-                PortfolioGroup.id == update_data["group_id"],
-                PortfolioGroup.user_id == user.id,
-            )
-        )
-        if group_result.scalar_one_or_none() is None:
-            raise HTTPException(status_code=404, detail="그룹을 찾을 수 없습니다.")
+        await validate_group_ownership(db, update_data["group_id"], user.id)
 
     # 암호화 필드 처리
     encrypted_fields = {"quantity", "purchase_price"}
@@ -143,7 +144,7 @@ async def update_asset(
 
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_asset(
-    asset_id: str,
+    asset_id: UUID,
     request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -168,7 +169,7 @@ async def delete_asset(
 
 @router.post("/{asset_id}/sell", response_model=AssetResponse)
 async def sell_asset(
-    asset_id: str,
+    asset_id: UUID,
     body: SellRequest,
     request: Request,
     user: User = Depends(get_current_active_user),
@@ -182,12 +183,12 @@ async def sell_asset(
     """
     try:
         asset = await process_asset_sale(
-            db, user, asset_id, body.sold_price, request
+            db, user, str(asset_id), body.sold_price, request
         )
     except ValueError as e:
         detail = str(e)
         if "찾을 수 없습니다" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        raise HTTPException(status_code=403, detail=detail)
+            raise HTTPException(status_code=404, detail=detail) from None
+        raise HTTPException(status_code=403, detail=detail) from None
 
     return asset_to_response(asset)

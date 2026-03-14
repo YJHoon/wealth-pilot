@@ -4,7 +4,10 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.access_log import AccessLog
 from app.models.asset import Asset, AssetType, Currency
 from app.models.portfolio_group import PortfolioGroup
 from app.models.user import User
@@ -66,6 +69,22 @@ class TestCreateGroup:
         resp = await auth_client.post("/api/groups", json={"name": "a" * 101})
         assert resp.status_code == 422
 
+    async def test_audit_log_created(
+        self, auth_client: AsyncClient, mock_user: User, db_session: AsyncSession
+    ):
+        """그룹 생성 시 AccessLog에 group_create 액션이 기록된다."""
+        resp = await auth_client.post("/api/groups", json={"name": "로그 테스트"})
+        assert resp.status_code == 201
+
+        result = await db_session.execute(
+            select(AccessLog).where(
+                AccessLog.user_id == mock_user.id,
+                AccessLog.action == "group_create",
+            )
+        )
+        logs = result.scalars().all()
+        assert len(logs) >= 1
+
 
 @pytest.mark.asyncio
 class TestUpdateGroup:
@@ -84,6 +103,25 @@ class TestUpdateGroup:
         fake_id = str(uuid.uuid4())
         resp = await auth_client.put(f"/api/groups/{fake_id}", json={"name": "x"})
         assert resp.status_code == 404
+
+    async def test_audit_log_created(
+        self, auth_client: AsyncClient, mock_user: User, db_session: AsyncSession
+    ):
+        """그룹 수정 시 AccessLog에 group_update 액션이 기록된다."""
+        resp = await auth_client.post("/api/groups", json={"name": "수정 전"})
+        group_id = resp.json()["id"]
+
+        resp = await auth_client.put(f"/api/groups/{group_id}", json={"name": "수정 후"})
+        assert resp.status_code == 200
+
+        result = await db_session.execute(
+            select(AccessLog).where(
+                AccessLog.user_id == mock_user.id,
+                AccessLog.action == "group_update",
+            )
+        )
+        logs = result.scalars().all()
+        assert len(logs) >= 1
 
 
 @pytest.mark.asyncio
@@ -130,6 +168,25 @@ class TestDeleteGroup:
         import uuid
         resp = await auth_client.delete(f"/api/groups/{uuid.uuid4()}")
         assert resp.status_code == 404
+
+    async def test_audit_log_created(
+        self, auth_client: AsyncClient, mock_user: User, db_session: AsyncSession
+    ):
+        """그룹 삭제 시 AccessLog에 group_delete 액션이 기록된다."""
+        resp = await auth_client.post("/api/groups", json={"name": "삭제 대상 로그"})
+        group_id = resp.json()["id"]
+
+        resp = await auth_client.delete(f"/api/groups/{group_id}")
+        assert resp.status_code == 204
+
+        result = await db_session.execute(
+            select(AccessLog).where(
+                AccessLog.user_id == mock_user.id,
+                AccessLog.action == "group_delete",
+            )
+        )
+        logs = result.scalars().all()
+        assert len(logs) >= 1
 
 
 @pytest.mark.asyncio
