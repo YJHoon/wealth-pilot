@@ -25,7 +25,9 @@
 - JWT 인증 미들웨어
 - 사용자 소유권 검증 (본인 데이터만 접근 가능)
 - 액세스 로그 기록 (로그인, 자산 변경 등)
-- Rate Limiting: 100 req/min per user
+- Rate Limiting:
+  - 기본 API: 100 req/min per user
+  - 로그인 엔드포인트: 10 req/min per user (강화된 제한)
 
 ## 절대 금지
 

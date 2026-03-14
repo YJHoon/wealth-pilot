@@ -22,7 +22,7 @@ WealthPilot은 개인 자산 관리 플랫폼이다. Next.js 프론트엔드 + F
 
 ## 디렉토리 구조
 
-```
+```text
 wealthpilot/
 ├── frontend/src/
 │   ├── app/            # App Router
