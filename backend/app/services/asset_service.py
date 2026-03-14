@@ -1,6 +1,7 @@
 """자산 매도 비즈니스 로직 서비스"""
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from fastapi import Request
 from sqlalchemy import select
@@ -16,7 +17,7 @@ async def process_asset_sale(
     db: AsyncSession,
     user: User,
     asset_id: str,
-    sold_price,
+    sold_price: Decimal,
     request: Request,
 ) -> Asset:
     """자산 매도 처리 (단일 트랜잭션, 원자적).
@@ -58,14 +59,16 @@ async def process_asset_sale(
     # 총 매도 대금
     total_proceeds = sold_price * quantity
 
-    # 같은 통화의 활성 현금 자산 검색
+    # 같은 통화의 활성 현금 자산 검색 (행 잠금으로 동시성 보호)
     cash_result = await db.execute(
-        select(Asset).where(
+        select(Asset)
+        .where(
             Asset.user_id == user.id,
             Asset.type == AssetType.CASH,
             Asset.status == AssetStatus.ACTIVE,
             Asset.currency == asset.currency,
         )
+        .with_for_update()
     )
     cash_asset = cash_result.scalar_one_or_none()
 

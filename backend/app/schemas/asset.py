@@ -31,7 +31,7 @@ class AssetCreate(BaseModel):
 class AssetUpdate(BaseModel):
     type: AssetType | None = None
     name: str | None = Field(default=None, max_length=200)
-    ticker: str | None = None
+    ticker: str | None = Field(default=None, max_length=20)
     currency: Currency | None = None
     quantity: Decimal | None = Field(default=None, gt=0)
     purchase_price: Decimal | None = Field(default=None, ge=0)

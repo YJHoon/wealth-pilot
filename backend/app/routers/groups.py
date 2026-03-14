@@ -1,13 +1,12 @@
 """포트폴리오 그룹 CRUD 라우터"""
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies.auth import get_current_active_user
-from app.models.asset import Asset
-from app.models.portfolio_group import PortfolioGroup
 from app.models.user import User
 from app.schemas.group import (
     GroupCreate,
@@ -15,7 +14,12 @@ from app.schemas.group import (
     GroupResponse,
     GroupUpdate,
 )
-from app.services.security_service import AccessAction, log_access
+from app.services.group_service import (
+    create_group as svc_create_group,
+    delete_group as svc_delete_group,
+    list_groups as svc_list_groups,
+    update_group as svc_update_group,
+)
 
 router = APIRouter(prefix="/api/groups", tags=["포트폴리오 그룹"])
 
@@ -26,33 +30,7 @@ async def list_groups(
     db: AsyncSession = Depends(get_db),
 ):
     """사용자의 포트폴리오 그룹 목록 조회."""
-    # asset_count 서브쿼리
-    asset_count_subq = (
-        select(func.count(Asset.id))
-        .where(Asset.group_id == PortfolioGroup.id)
-        .correlate(PortfolioGroup)
-        .scalar_subquery()
-    )
-
-    result = await db.execute(
-        select(PortfolioGroup, asset_count_subq.label("asset_count"))
-        .where(PortfolioGroup.user_id == user.id)
-        .order_by(PortfolioGroup.sort_order)
-    )
-    rows = result.all()
-
-    groups = [
-        GroupResponse(
-            id=group.id,
-            name=group.name,
-            description=group.description,
-            sort_order=group.sort_order,
-            created_at=group.created_at,
-            asset_count=count,
-        )
-        for group, count in rows
-    ]
-    return GroupListResponse(groups=groups, total=len(groups))
+    return await svc_list_groups(db, user)
 
 
 @router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
@@ -63,93 +41,32 @@ async def create_group(
     db: AsyncSession = Depends(get_db),
 ):
     """새 포트폴리오 그룹 생성."""
-    group = PortfolioGroup(
-        user_id=user.id,
-        name=body.name,
-        description=body.description,
-        sort_order=body.sort_order,
-    )
-    db.add(group)
-    await log_access(db, user.id, AccessAction.GROUP_CREATE, request)
-    await db.commit()
-    await db.refresh(group)
-
-    return GroupResponse(
-        id=group.id,
-        name=group.name,
-        description=group.description,
-        sort_order=group.sort_order,
-        created_at=group.created_at,
-        asset_count=0,
-    )
+    return await svc_create_group(db, user, body, request)
 
 
 @router.put("/{group_id}", response_model=GroupResponse)
 async def update_group(
-    group_id: str,
+    group_id: UUID,
     body: GroupUpdate,
     request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """포트폴리오 그룹 수정 (부분 업데이트)."""
-    result = await db.execute(
-        select(PortfolioGroup).where(
-            PortfolioGroup.id == group_id,
-            PortfolioGroup.user_id == user.id,
-        )
-    )
-    group = result.scalar_one_or_none()
-    if group is None:
+    result = await svc_update_group(db, user, group_id, body, request)
+    if result is None:
         raise HTTPException(status_code=404, detail="그룹을 찾을 수 없습니다.")
-
-    update_data = body.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(group, key, value)
-
-    await log_access(db, user.id, AccessAction.GROUP_UPDATE, request)
-    await db.commit()
-    await db.refresh(group)
-
-    # asset_count 계산
-    count_result = await db.execute(
-        select(func.count(Asset.id)).where(Asset.group_id == group.id)
-    )
-    asset_count = count_result.scalar_one()
-
-    return GroupResponse(
-        id=group.id,
-        name=group.name,
-        description=group.description,
-        sort_order=group.sort_order,
-        created_at=group.created_at,
-        asset_count=asset_count,
-    )
+    return result
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
-    group_id: str,
+    group_id: UUID,
     request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """포트폴리오 그룹 삭제 (소속 자산의 group_id는 null로)."""
-    result = await db.execute(
-        select(PortfolioGroup).where(
-            PortfolioGroup.id == group_id,
-            PortfolioGroup.user_id == user.id,
-        )
-    )
-    group = result.scalar_one_or_none()
-    if group is None:
+    deleted = await svc_delete_group(db, user, group_id, request)
+    if not deleted:
         raise HTTPException(status_code=404, detail="그룹을 찾을 수 없습니다.")
-
-    # 소속 자산의 group_id를 null로 업데이트
-    await db.execute(
-        update(Asset).where(Asset.group_id == group.id).values(group_id=None)
-    )
-
-    await log_access(db, user.id, AccessAction.GROUP_DELETE, request)
-    await db.delete(group)
-    await db.commit()

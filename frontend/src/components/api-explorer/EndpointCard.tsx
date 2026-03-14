@@ -40,7 +40,7 @@ export function EndpointCard({ endpoint, schemas }: Props) {
     else if (hasParams) setActiveTab("params");
   }, [hasResponses, hasBody, hasParams, endpoint.method, endpoint.path]);
 
-  const requiresAuth = (item.security ?? []).length > 0 || item.security === undefined;
+  const requiresAuth = item.security !== undefined && item.security.length > 0;
 
   // path param 하이라이트
   const formattedPath = endpoint.path.replace(/\{([^}]+)\}/g, (_, p) => `{${p}}`);

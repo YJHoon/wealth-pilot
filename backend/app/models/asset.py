@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Numeric, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,6 +41,14 @@ class Currency(str, enum.Enum):
 
 class Asset(Base):
     __tablename__ = "assets"
+    __table_args__ = (
+        Index(
+            'uq_asset_cash_per_currency',
+            'user_id', 'status', 'currency',
+            unique=True,
+            postgresql_where=text("type = 'cash'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
