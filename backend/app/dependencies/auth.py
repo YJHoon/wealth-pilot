@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ security = HTTPBearer()
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -48,10 +49,14 @@ async def get_current_user(
             detail="사용자를 찾을 수 없습니다.",
         )
 
+    # Rate limiter에서 사용자별 제한에 활용
+    request.state.rate_limit_user_id = str(user.id)
+
     return user
 
 
 async def get_current_active_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -94,5 +99,8 @@ async def get_current_active_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="2FA 인증이 필요합니다.",
         )
+
+    # Rate limiter에서 사용자별 제한에 활용
+    request.state.rate_limit_user_id = str(user.id)
 
     return user
