@@ -176,3 +176,8 @@ docker compose up -d                # 로컬 PostgreSQL (개발용)
 - PRD: `docs/PRD.md`
 - API 명세: `docs/API.md`
 - 배포 가이드: `docs/DEPLOYMENT.md`
+
+## Agent Workflow
+
+복잡한 작업은 `.claude/orchestrator.md`의 워크플로우를 따른다.
+명시적으로 요청 시에만 실행한다.
