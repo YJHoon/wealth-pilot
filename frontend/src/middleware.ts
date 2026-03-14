@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 
 // 인증 없이 접근 가능한 경로
-const PUBLIC_PATHS = ["/login", "/api/auth"];
+const PUBLIC_PATHS = ["/login", "/api/auth", "/api-docs"];
 
 // 2FA 관련 경로 (인증 후 접근 허용)
 const TWO_FA_PATHS = ["/security/2fa"];
