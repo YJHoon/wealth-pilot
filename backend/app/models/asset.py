@@ -53,14 +53,21 @@ class Asset(Base):
     )
 
     # 자산 기본 정보
-    type: Mapped[AssetType] = mapped_column(Enum(AssetType), nullable=False)
+    type: Mapped[AssetType] = mapped_column(
+        Enum(AssetType, values_callable=lambda e: [x.value for x in e]),
+        nullable=False,
+    )
     status: Mapped[AssetStatus] = mapped_column(
-        Enum(AssetStatus), default=AssetStatus.ACTIVE, nullable=False
+        Enum(AssetStatus, values_callable=lambda e: [x.value for x in e]),
+        default=AssetStatus.ACTIVE,
+        nullable=False,
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     ticker: Mapped[str | None] = mapped_column(String(20), nullable=True)
     currency: Mapped[Currency] = mapped_column(
-        Enum(Currency), default=Currency.KRW, nullable=False
+        Enum(Currency, values_callable=lambda e: [x.value for x in e]),
+        default=Currency.KRW,
+        nullable=False,
     )
 
     # 암호화 저장 필드 (문자열로 저장, 앱 레벨에서 암복호화)
