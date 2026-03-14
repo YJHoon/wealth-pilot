@@ -154,12 +154,10 @@ export function ApiExplorer() {
   const groups = groupByTag(spec.paths);
   const tagNames = Object.keys(groups);
 
-  if (!selectedTag && tagNames.length > 0) {
-    setSelectedTag(tagNames[0]);
-  }
+  const effectiveSelectedTag = selectedTag && groups[selectedTag] ? selectedTag : (tagNames[0] ?? null);
 
-  const filteredEndpoints = selectedTag
-    ? groups[selectedTag]?.filter((e) => {
+  const filteredEndpoints = effectiveSelectedTag
+    ? groups[effectiveSelectedTag]?.filter((e) => {
         if (!searchQuery) return true;
         const q = searchQuery.toLowerCase();
         return (
@@ -200,7 +198,7 @@ export function ApiExplorer() {
               key={tag}
               onClick={() => { setSelectedTag(tag); setSearchQuery(""); }}
               className={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-all text-left group ${
-                selectedTag === tag
+                effectiveSelectedTag === tag
                   ? "bg-indigo-500/15 text-indigo-300 border border-indigo-500/20"
                   : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 border border-transparent"
               }`}
@@ -208,7 +206,7 @@ export function ApiExplorer() {
               <span className="truncate">{tag}</span>
               <span
                 className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                  selectedTag === tag
+                  effectiveSelectedTag === tag
                     ? "bg-indigo-500/25 text-indigo-400"
                     : "bg-zinc-800 text-zinc-500 group-hover:bg-zinc-700"
                 }`}
@@ -243,7 +241,7 @@ export function ApiExplorer() {
         {/* 상단 바 */}
         <header className="flex items-center gap-3 px-6 py-4 border-b border-zinc-800/60 flex-shrink-0">
           <div className="flex-1">
-            <h1 className="text-base font-semibold text-zinc-100">{selectedTag}</h1>
+            <h1 className="text-base font-semibold text-zinc-100">{effectiveSelectedTag}</h1>
             <p className="text-xs text-zinc-500 mt-0.5">{filteredEndpoints.length}개 엔드포인트</p>
           </div>
           <div className="relative w-64">

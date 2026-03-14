@@ -125,6 +125,7 @@ Google OAuth 로그인. Google ID Token을 서버에서 검증 후 JWT 발급.
 ```
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `401` | Google 토큰 검증 실패 / 이메일 없음 |
@@ -164,6 +165,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 ```
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `401` | 토큰 만료 / 무효 / 이미 로테이션됨 |
@@ -219,6 +221,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 ```
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `403` | 2FA 재설정 시 현재 OTP 검증 미완료 |
@@ -266,6 +269,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 ```
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `400` | 2FA 미설정 상태 |
@@ -321,6 +325,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 **응답**: `204 No Content`
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `404` | 세션 없음 또는 본인 소유 아님 |
@@ -354,6 +359,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 | Rate Limit | 전역 (100/min) |
 
 **쿼리 파라미터**:
+
 | 파라미터 | 타입 | 설명 |
 |---------|------|------|
 | `type` | AssetType | `cash`, `domestic_stock`, `foreign_stock`, `crypto`, `real_estate` |
@@ -418,6 +424,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 **응답** `201`: `AssetResponse` (위 목록 응답의 단일 객체)
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `404` | 존재하지 않는 그룹 ID |
@@ -446,6 +453,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 **응답** `200`: `AssetResponse`
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `403` | 매도된 자산은 수정 불가 |
@@ -466,6 +474,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 **응답**: `204 No Content`
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `403` | 매도된 자산은 삭제 불가 |
@@ -493,6 +502,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 **응답** `200`: `AssetResponse` (status=sold, realized_pnl 포함)
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `403` | 이미 매도된 자산 |
@@ -559,6 +569,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 **응답** `201`: `GroupResponse` (asset_count=0)
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `422` | name 누락 또는 100자 초과 |
@@ -577,6 +588,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 **응답** `200`: `GroupResponse`
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `404` | 그룹 없음 또는 본인 소유 아님 |
@@ -595,6 +607,7 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 **응답**: `204 No Content`
 
 **에러**:
+
 | 코드 | 설명 |
 |------|------|
 | `404` | 그룹 없음 또는 본인 소유 아님 |

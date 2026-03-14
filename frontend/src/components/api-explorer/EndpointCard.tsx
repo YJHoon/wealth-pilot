@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { EndpointInfo, SchemaObject } from "./ApiExplorer";
 import { SchemaViewer } from "./SchemaViewer";
 
@@ -33,6 +33,13 @@ export function EndpointCard({ endpoint, schemas }: Props) {
   const hasParams = (item.parameters?.length ?? 0) > 0;
   const hasBody = !!item.requestBody;
   const hasResponses = !!item.responses && Object.keys(item.responses).length > 0;
+
+  useEffect(() => {
+    if (hasResponses) setActiveTab("responses");
+    else if (hasBody) setActiveTab("body");
+    else if (hasParams) setActiveTab("params");
+  }, [hasResponses, hasBody, hasParams, endpoint.method, endpoint.path]);
+
   const requiresAuth = (item.security ?? []).length > 0 || item.security === undefined;
 
   // path param 하이라이트

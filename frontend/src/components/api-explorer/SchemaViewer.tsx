@@ -26,7 +26,21 @@ function resolveSchema(schema: SchemaObject, schemas: Record<string, SchemaObjec
     if (nonNull) return resolveSchema(nonNull, schemas);
   }
   if (schema.allOf?.length) {
-    return resolveSchema(schema.allOf[0], schemas);
+    const merged = schema.allOf
+      .map((s) => resolveSchema(s, schemas))
+      .reduce<SchemaObject>(
+        (acc, cur) => ({
+          ...acc,
+          ...cur,
+          properties: {
+            ...(acc.properties ?? {}),
+            ...(cur.properties ?? {}),
+          },
+          required: Array.from(new Set([...(acc.required ?? []), ...(cur.required ?? [])])),
+        }),
+        {}
+      );
+    return merged;
   }
   return schema;
 }
@@ -146,7 +160,7 @@ export function SchemaViewer({ schema, schemas, depth, fieldName, required }: Pr
       )}
       {resolved.enum && (
         <span className="text-[10px] text-zinc-600 ml-1">
-          [{resolved.enum.map((v) => `"${v}"`).join(", ")}]
+          [{resolved.enum.map((v) => JSON.stringify(v)).join(", ")}]
         </span>
       )}
       {resolved.default !== undefined && (

@@ -26,6 +26,9 @@ class AccessAction:
     ASSET_UPDATE = "asset_update"
     ASSET_DELETE = "asset_delete"
     ASSET_SELL = "asset_sell"
+    GROUP_CREATE = "group_create"
+    GROUP_UPDATE = "group_update"
+    GROUP_DELETE = "group_delete"
     TOTP_SETUP = "totp_setup"
     TOTP_VERIFY = "totp_verify"
 

@@ -4,7 +4,6 @@ import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, AsyncSessionLocal
@@ -45,7 +44,7 @@ async def mock_user(db_session: AsyncSession):
     await db_session.refresh(user)
     yield user
     # cleanup
-    await db_session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user.id})
+    await db_session.delete(user)
     await db_session.commit()
 
 
@@ -62,7 +61,7 @@ async def other_user(db_session: AsyncSession):
     await db_session.commit()
     await db_session.refresh(user)
     yield user
-    await db_session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user.id})
+    await db_session.delete(user)
     await db_session.commit()
 
 
