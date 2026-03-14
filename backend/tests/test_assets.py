@@ -241,6 +241,29 @@ class TestSellAsset:
         # (60000 - 50000) * 10 = 100000
         assert Decimal(data["realized_pnl"]) == Decimal("100000")
 
+    async def test_sell_fields_db_encryption(self, auth_client: AsyncClient, db_session):
+        """매도 후 sold_price, realized_pnl이 DB에 암호화되어 저장되는지 확인."""
+        resp = await auth_client.post("/api/assets", json={
+            "type": "domestic_stock", "name": "매도 암호화 테스트", "currency": "KRW",
+            "quantity": "10", "purchase_price": "50000",
+        })
+        asset_id = resp.json()["id"]
+
+        resp = await auth_client.post(f"/api/assets/{asset_id}/sell", json={
+            "sold_price": "60000",
+        })
+        assert resp.status_code == 200
+
+        from sqlalchemy import text
+        result = await db_session.execute(
+            text("SELECT sold_price, realized_pnl FROM assets WHERE id = :id"),
+            {"id": asset_id},
+        )
+        row = result.one()
+        # DB 값은 평문 숫자가 아니라 base64 암호문이어야 함
+        assert row[0] != "60000"
+        assert row[1] != "100000"
+
     async def test_cash_asset_created(self, auth_client: AsyncClient):
         """매도 시 현금 자산이 자동 생성되어야 함."""
         resp = await auth_client.post("/api/assets", json={

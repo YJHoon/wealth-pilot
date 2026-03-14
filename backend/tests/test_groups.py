@@ -1,9 +1,12 @@
 """포트폴리오 그룹 CRUD API 테스트"""
 
+import uuid
+
 import pytest
 from httpx import AsyncClient
 
 from app.models.asset import Asset, AssetType, Currency
+from app.models.portfolio_group import PortfolioGroup
 from app.models.user import User
 from app.services.crypto_service import encrypt_decimal
 
@@ -126,4 +129,32 @@ class TestDeleteGroup:
     async def test_not_found(self, auth_client: AsyncClient):
         import uuid
         resp = await auth_client.delete(f"/api/groups/{uuid.uuid4()}")
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestGroupOwnership:
+    """타 유저의 그룹에 대한 접근 차단 테스트."""
+
+    async def test_other_user_cannot_update_or_delete_group(
+        self, auth_client: AsyncClient, other_user: User, db_session
+    ):
+        """다른 유저의 그룹을 수정/삭제하려 하면 404 반환."""
+        # other_user 소유 그룹을 DB에 직접 생성
+        group = PortfolioGroup(
+            user_id=other_user.id,
+            name="다른 유저의 그룹",
+        )
+        db_session.add(group)
+        await db_session.commit()
+        await db_session.refresh(group)
+
+        # auth_client(mock_user)로 수정 시도 → 404
+        resp = await auth_client.put(
+            f"/api/groups/{group.id}", json={"name": "탈취"}
+        )
+        assert resp.status_code == 404
+
+        # auth_client(mock_user)로 삭제 시도 → 404
+        resp = await auth_client.delete(f"/api/groups/{group.id}")
         assert resp.status_code == 404

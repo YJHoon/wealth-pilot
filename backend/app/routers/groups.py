@@ -1,7 +1,7 @@
 """포트폴리오 그룹 CRUD 라우터"""
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -15,6 +15,7 @@ from app.schemas.group import (
     GroupResponse,
     GroupUpdate,
 )
+from app.services.security_service import AccessAction, log_access
 
 router = APIRouter(prefix="/api/groups", tags=["포트폴리오 그룹"])
 
@@ -57,6 +58,7 @@ async def list_groups(
 @router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_group(
     body: GroupCreate,
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -68,6 +70,7 @@ async def create_group(
         sort_order=body.sort_order,
     )
     db.add(group)
+    await log_access(db, user.id, AccessAction.GROUP_CREATE, request)
     await db.commit()
     await db.refresh(group)
 
@@ -85,6 +88,7 @@ async def create_group(
 async def update_group(
     group_id: str,
     body: GroupUpdate,
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -103,6 +107,7 @@ async def update_group(
     for key, value in update_data.items():
         setattr(group, key, value)
 
+    await log_access(db, user.id, AccessAction.GROUP_UPDATE, request)
     await db.commit()
     await db.refresh(group)
 
@@ -125,6 +130,7 @@ async def update_group(
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: str,
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -140,11 +146,10 @@ async def delete_group(
         raise HTTPException(status_code=404, detail="그룹을 찾을 수 없습니다.")
 
     # 소속 자산의 group_id를 null로 업데이트
-    from sqlalchemy import update
-
     await db.execute(
         update(Asset).where(Asset.group_id == group.id).values(group_id=None)
     )
 
+    await log_access(db, user.id, AccessAction.GROUP_DELETE, request)
     await db.delete(group)
     await db.commit()

@@ -1,13 +1,19 @@
 """자산 스키마 — Pydantic v2"""
 
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from app.models.asset import AssetStatus, AssetType, Currency
 from app.services.crypto_service import decrypt_decimal, decrypt_decimal_optional
+
+if TYPE_CHECKING:
+    from app.models.asset import Asset as AssetModel
 
 
 class AssetCreate(BaseModel):
@@ -63,7 +69,7 @@ class AssetListResponse(BaseModel):
     total: int
 
 
-def asset_to_response(asset) -> AssetResponse:
+def asset_to_response(asset: AssetModel) -> AssetResponse:
     """Asset 모델 → AssetResponse 변환 (암호화 필드 복호화)."""
     return AssetResponse(
         id=asset.id,

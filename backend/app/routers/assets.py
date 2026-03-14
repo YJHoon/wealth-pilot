@@ -1,15 +1,12 @@
 """자산 관리 CRUD 라우터"""
 
-from datetime import datetime, timezone
-from decimal import Decimal
-
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies.auth import get_current_active_user
-from app.models.asset import Asset, AssetStatus, AssetType, Currency
+from app.models.asset import Asset, AssetStatus, AssetType
 from app.models.portfolio_group import PortfolioGroup
 from app.models.user import User
 from app.schemas.asset import (
@@ -20,11 +17,8 @@ from app.schemas.asset import (
     SellRequest,
     asset_to_response,
 )
-from app.services.crypto_service import (
-    decrypt_decimal,
-    encrypt_decimal,
-    encrypt_decimal_optional,
-)
+from app.services.asset_service import process_asset_sale
+from app.services.crypto_service import encrypt_decimal
 from app.services.security_service import AccessAction, log_access
 
 router = APIRouter(prefix="/api/assets", tags=["자산"])
@@ -32,7 +26,7 @@ router = APIRouter(prefix="/api/assets", tags=["자산"])
 
 @router.get("", response_model=AssetListResponse)
 async def list_assets(
-    type: AssetType | None = None,
+    asset_type: AssetType | None = Query(default=None, alias="type"),
     status_filter: AssetStatus | None = None,
     group_id: str | None = None,
     user: User = Depends(get_current_active_user),
@@ -41,8 +35,8 @@ async def list_assets(
     """사용자의 자산 목록 조회 (필터 지원)."""
     query = select(Asset).where(Asset.user_id == user.id)
 
-    if type is not None:
-        query = query.where(Asset.type == type)
+    if asset_type is not None:
+        query = query.where(Asset.type == asset_type)
     if status_filter is not None:
         query = query.where(Asset.status == status_filter)
     if group_id is not None:
@@ -186,64 +180,14 @@ async def sell_asset(
     - realized_pnl 계산: (sold_price - purchase_price) * quantity
     - 같은 통화의 활성 현금 자산에 매도 대금 합산 (없으면 생성)
     """
-    result = await db.execute(
-        select(Asset).where(Asset.id == asset_id, Asset.user_id == user.id)
-    )
-    asset = result.scalar_one_or_none()
-    if asset is None:
-        raise HTTPException(status_code=404, detail="자산을 찾을 수 없습니다.")
-
-    if asset.status == AssetStatus.SOLD:
-        raise HTTPException(status_code=403, detail="이미 매도된 자산입니다.")
-
-    # 기존 값 복호화
-    quantity = decrypt_decimal(asset.quantity)
-    purchase_price = decrypt_decimal(asset.purchase_price)
-    sold_price = body.sold_price
-
-    # 매도 처리
-    asset.status = AssetStatus.SOLD
-    asset.sold_at = datetime.now(timezone.utc)
-    asset.sold_price = encrypt_decimal(sold_price)
-
-    # realized_pnl = (단가 차이) * 수량
-    realized_pnl = (sold_price - purchase_price) * quantity
-    asset.realized_pnl = encrypt_decimal(realized_pnl)
-
-    # 총 매도 대금
-    total_proceeds = sold_price * quantity
-
-    # 같은 통화의 활성 현금 자산 검색
-    cash_result = await db.execute(
-        select(Asset).where(
-            Asset.user_id == user.id,
-            Asset.type == AssetType.CASH,
-            Asset.status == AssetStatus.ACTIVE,
-            Asset.currency == asset.currency,
+    try:
+        asset = await process_asset_sale(
+            db, user, asset_id, body.sold_price, request
         )
-    )
-    cash_asset = cash_result.scalar_one_or_none()
-
-    if cash_asset is not None:
-        # 기존 현금에 합산
-        existing_quantity = decrypt_decimal(cash_asset.quantity)
-        cash_asset.quantity = encrypt_decimal(existing_quantity + total_proceeds)
-    else:
-        # 새 현금 자산 생성
-        cash_asset = Asset(
-            user_id=user.id,
-            type=AssetType.CASH,
-            name="매도 수익금",
-            currency=asset.currency,
-            quantity=encrypt_decimal(total_proceeds),
-            purchase_price=encrypt_decimal(total_proceeds),
-        )
-        db.add(cash_asset)
-
-    await log_access(db, user.id, AccessAction.ASSET_SELL, request)
-
-    # 단일 commit — 원자성 보장
-    await db.commit()
-    await db.refresh(asset)
+    except ValueError as e:
+        detail = str(e)
+        if "찾을 수 없습니다" in detail:
+            raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=403, detail=detail)
 
     return asset_to_response(asset)
