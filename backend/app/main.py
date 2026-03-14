@@ -3,12 +3,13 @@ from contextlib import asynccontextmanager
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.database import engine
+from app.middleware.rate_limit import limiter
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routers import auth
 
 
@@ -31,8 +32,7 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-# Rate Limiter 설정
-limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
+# Rate Limiter 설정 (인스턴스는 middleware/rate_limit.py에서 import)
 
 app = FastAPI(
     title="WealthPilot API",
@@ -54,6 +54,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 보안 헤더 미들웨어
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # 라우터 등록
