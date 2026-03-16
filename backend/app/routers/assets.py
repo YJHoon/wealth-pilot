@@ -54,8 +54,11 @@ async def list_assets(
     result = await db.execute(query)
     assets = result.scalars().all()
 
-    await log_access(db, user.id, AccessAction.ASSET_VIEW, request)
-    await db.commit()
+    try:
+        await log_access(db, user.id, AccessAction.ASSET_VIEW, request)
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
     return AssetListResponse(
         assets=[asset_to_response(a) for a in assets],
