@@ -33,8 +33,11 @@ async def list_groups(
 ):
     """사용자의 포트폴리오 그룹 목록 조회."""
     result = await svc_list_groups(db, user)
-    await log_access(db, user.id, AccessAction.GROUP_VIEW, request)
-    await db.commit()
+    try:
+        await log_access(db, user.id, AccessAction.GROUP_VIEW, request)
+        await db.commit()
+    except Exception:
+        await db.rollback()
     return result
 
 

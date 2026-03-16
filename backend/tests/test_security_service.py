@@ -73,6 +73,42 @@ class TestLogAccess:
         assert log.device_info == "revoked session: abc"
 
 
+class TestAccessActionConstants:
+    def test_asset_view_constant(self):
+        """ASSET_VIEW 상수가 올바른 값을 갖는지 검증."""
+        assert AccessAction.ASSET_VIEW == "asset_view"
+
+    def test_group_view_constant(self):
+        """GROUP_VIEW 상수가 올바른 값을 갖는지 검증."""
+        assert AccessAction.GROUP_VIEW == "group_view"
+
+    @pytest.mark.asyncio
+    async def test_log_access_with_asset_view(self):
+        """ASSET_VIEW 액션으로 로그가 생성되는지 검증."""
+        db = AsyncMock()
+        user_id = uuid.uuid4()
+        request = _make_request()
+
+        log = await log_access(db, user_id, AccessAction.ASSET_VIEW, request)
+
+        assert isinstance(log, AccessLog)
+        assert log.action == "asset_view"
+        db.add.assert_called_once_with(log)
+
+    @pytest.mark.asyncio
+    async def test_log_access_with_group_view(self):
+        """GROUP_VIEW 액션으로 로그가 생성되는지 검증."""
+        db = AsyncMock()
+        user_id = uuid.uuid4()
+        request = _make_request()
+
+        log = await log_access(db, user_id, AccessAction.GROUP_VIEW, request)
+
+        assert isinstance(log, AccessLog)
+        assert log.action == "group_view"
+        db.add.assert_called_once_with(log)
+
+
 class TestCheckNewDevice:
     @pytest.mark.asyncio
     async def test_returns_true_for_new_device(self):
