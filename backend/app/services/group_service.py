@@ -94,6 +94,21 @@ async def get_asset_count(db: AsyncSession, group_id: uuid.UUID) -> int:
     return result.scalar_one()
 
 
+async def get_asset_counts_batch(
+    db: AsyncSession, group_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, int]:
+    """여러 그룹의 자산 수를 한 번의 쿼리로 조회 (N+1 방지)."""
+    if not group_ids:
+        return {}
+    result = await db.execute(
+        select(Asset.group_id, func.count())
+        .where(Asset.group_id.in_(group_ids))
+        .group_by(Asset.group_id)
+    )
+    counts = {row[0]: row[1] for row in result.all()}
+    return {gid: counts.get(gid, 0) for gid in group_ids}
+
+
 async def group_to_response(db: AsyncSession, group: PortfolioGroup) -> GroupResponse:
     """ORM 모델 → GroupResponse 변환 (asset_count 포함)."""
     count = await get_asset_count(db, group.id)
@@ -106,3 +121,25 @@ async def group_to_response(db: AsyncSession, group: PortfolioGroup) -> GroupRes
         created_at=group.created_at,
         asset_count=count,
     )
+
+
+async def groups_to_responses(
+    db: AsyncSession, groups: list[PortfolioGroup]
+) -> list[GroupResponse]:
+    """여러 그룹을 batch 쿼리로 변환 (N+1 방지)."""
+    if not groups:
+        return []
+    group_ids = [g.id for g in groups]
+    counts = await get_asset_counts_batch(db, group_ids)
+    return [
+        GroupResponse(
+            id=g.id,
+            user_id=g.user_id,
+            name=g.name,
+            description=g.description,
+            sort_order=g.sort_order,
+            created_at=g.created_at,
+            asset_count=counts.get(g.id, 0),
+        )
+        for g in groups
+    ]

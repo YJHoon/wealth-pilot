@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from app.database import get_db
@@ -74,29 +75,40 @@ async def auth_client():
     app.dependency_overrides[get_current_active_user] = lambda: mock_user
     app.dependency_overrides[get_db] = lambda: mock_db
 
-    async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as ac:
-            ac._mock_db = mock_db  # 테스트에서 DB mock 접근용
-            ac._mock_user = mock_user
-            yield ac
+    with patch("app.main.engine") as mock_engine:
+        mock_conn = AsyncMock()
+        mock_engine.begin.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_engine.begin.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_engine.dispose = AsyncMock()
 
-    app.dependency_overrides.clear()
+        async with LifespanManager(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as ac:
+                ac._mock_db = mock_db  # 테스트에서 DB mock 접근용
+                ac._mock_user = mock_user
+                yield ac
+
+    app.dependency_overrides.pop(get_current_active_user, None)
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest_asyncio.fixture
 async def unauth_client():
     """인증 없는 테스트 클라이언트 (의존성 오버라이드 없음)."""
-    async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as ac:
-            yield ac
+    with patch("app.main.engine") as mock_engine:
+        mock_conn = AsyncMock()
+        mock_engine.begin.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_engine.begin.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_engine.dispose = AsyncMock()
 
-    app.dependency_overrides.clear()
+        async with LifespanManager(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as ac:
+                yield ac
 
 
 # --- 인증 테스트 ---
@@ -171,7 +183,7 @@ class TestAssetService:
 
         with (
             patch("app.services.asset_service.encrypt_decimal"),
-            pytest.raises(Exception) as exc_info,
+            pytest.raises(HTTPException) as exc_info,
         ):
             await create_asset(db, TEST_USER_ID, body)
         assert exc_info.value.status_code == 404
@@ -186,7 +198,7 @@ class TestAssetService:
         mock_result.scalar_one_or_none.return_value = None
         db.execute.return_value = mock_result
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await get_asset_by_id(db, TEST_USER_ID, uuid.uuid4())
         assert exc_info.value.status_code == 404
 
@@ -201,7 +213,7 @@ class TestAssetService:
         mock_result.scalar_one_or_none.return_value = asset
         db.execute.return_value = mock_result
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await get_asset_by_id(db, TEST_USER_ID, asset.id)
         assert exc_info.value.status_code == 403
 
@@ -219,7 +231,7 @@ class TestAssetService:
 
         body = AssetUpdateRequest(name="변경된 이름")
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await update_asset(db, TEST_USER_ID, asset.id, body)
         assert exc_info.value.status_code == 400
 
@@ -234,7 +246,7 @@ class TestAssetService:
         mock_result.scalar_one_or_none.return_value = asset
         db.execute.return_value = mock_result
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await delete_asset(db, TEST_USER_ID, asset.id)
         assert exc_info.value.status_code == 400
 
@@ -281,7 +293,7 @@ class TestAssetService:
 
         body = AssetSellRequest(sold_price=Decimal("60000"))
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await sell_asset(db, TEST_USER_ID, asset.id, body)
         assert exc_info.value.status_code == 400
 
@@ -305,6 +317,8 @@ class TestAssetService:
 
         # setattr로 암호화된 값이 설정되었는지 확인
         assert mock_enc.call_count == 2
+        assert asset.quantity == "enc_20"
+        assert asset.purchase_price == "enc_45000"
 
 
 class TestAssetToResponse:

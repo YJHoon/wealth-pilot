@@ -48,6 +48,8 @@ async def list_assets(
         asset_status=status_filter,
         group_id=group_id,
     )
+    await log_access(db, user.id, AccessAction.ASSET_VIEW, request)
+    await db.commit()
     return AssetListResponse(
         assets=[asset_to_response(a) for a in assets],
         total=len(assets),
@@ -79,6 +81,8 @@ async def get_asset(
 ):
     """자산 단건 조회"""
     asset = await get_asset_by_id(db, user.id, asset_id)
+    await log_access(db, user.id, AccessAction.ASSET_VIEW, request)
+    await db.commit()
     return asset_to_response(asset)
 
 

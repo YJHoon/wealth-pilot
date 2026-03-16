@@ -21,6 +21,7 @@ from app.services.group_service import (
     get_group_by_id,
     get_user_groups,
     group_to_response,
+    groups_to_responses,
     update_group,
 )
 from app.services.security_service import AccessAction, log_access
@@ -37,7 +38,9 @@ async def list_groups(
 ):
     """그룹 목록 조회"""
     groups = await get_user_groups(db, user.id)
-    responses = [await group_to_response(db, g) for g in groups]
+    responses = await groups_to_responses(db, groups)
+    await log_access(db, user.id, AccessAction.GROUP_VIEW, request)
+    await db.commit()
     return GroupListResponse(groups=responses, total=len(responses))
 
 
@@ -66,6 +69,8 @@ async def get_group(
 ):
     """그룹 단건 조회"""
     group = await get_group_by_id(db, user.id, group_id)
+    await log_access(db, user.id, AccessAction.GROUP_VIEW, request)
+    await db.commit()
     return await group_to_response(db, group)
 
 

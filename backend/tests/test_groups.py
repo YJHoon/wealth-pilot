@@ -4,9 +4,12 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+from unittest.mock import patch
+
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from app.database import get_db
@@ -53,29 +56,40 @@ async def auth_client():
     app.dependency_overrides[get_current_active_user] = lambda: mock_user
     app.dependency_overrides[get_db] = lambda: mock_db
 
-    async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as ac:
-            ac._mock_db = mock_db
-            ac._mock_user = mock_user
-            yield ac
+    with patch("app.main.engine") as mock_engine:
+        mock_conn = AsyncMock()
+        mock_engine.begin.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_engine.begin.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_engine.dispose = AsyncMock()
 
-    app.dependency_overrides.clear()
+        async with LifespanManager(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as ac:
+                ac._mock_db = mock_db
+                ac._mock_user = mock_user
+                yield ac
+
+    app.dependency_overrides.pop(get_current_active_user, None)
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest_asyncio.fixture
 async def unauth_client():
     """인증 없는 테스트 클라이언트."""
-    async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as ac:
-            yield ac
+    with patch("app.main.engine") as mock_engine:
+        mock_conn = AsyncMock()
+        mock_engine.begin.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_engine.begin.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_engine.dispose = AsyncMock()
 
-    app.dependency_overrides.clear()
+        async with LifespanManager(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as ac:
+                yield ac
 
 
 # --- 인증 테스트 ---
@@ -127,7 +141,7 @@ class TestGroupService:
         mock_result.scalar_one_or_none.return_value = None
         db.execute.return_value = mock_result
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await get_group_by_id(db, TEST_USER_ID, uuid.uuid4())
         assert exc_info.value.status_code == 404
 
@@ -142,7 +156,7 @@ class TestGroupService:
         mock_result.scalar_one_or_none.return_value = group
         db.execute.return_value = mock_result
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await get_group_by_id(db, TEST_USER_ID, group.id)
         assert exc_info.value.status_code == 403
 

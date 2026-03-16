@@ -16,18 +16,18 @@ class AssetCreateRequest(BaseModel):
     currency: Currency = Currency.KRW
     quantity: Decimal = Field(..., gt=0)
     purchase_price: Decimal = Field(..., gt=0)
-    current_price: Decimal | None = None
+    current_price: Decimal | None = Field(None, ge=0)
     group_id: uuid.UUID | None = None
     metadata_json: dict | None = None
 
 
 class AssetUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
-    ticker: str | None = None
+    ticker: str | None = Field(None, max_length=20)
     currency: Currency | None = None
     quantity: Decimal | None = Field(None, gt=0)
     purchase_price: Decimal | None = Field(None, gt=0)
-    current_price: Decimal | None = None
+    current_price: Decimal | None = Field(None, ge=0)
     group_id: uuid.UUID | None = None
     metadata_json: dict | None = None
 

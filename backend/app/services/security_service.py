@@ -28,9 +28,11 @@ class AccessAction:
     ASSET_SELL = "asset_sell"
     TOTP_SETUP = "totp_setup"
     TOTP_VERIFY = "totp_verify"
+    ASSET_VIEW = "asset_view"
     GROUP_CREATE = "group_create"
     GROUP_UPDATE = "group_update"
     GROUP_DELETE = "group_delete"
+    GROUP_VIEW = "group_view"
 
 
 async def log_access(
