@@ -3,14 +3,19 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import logging
+
 from fastapi import Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import Asset, AssetStatus, AssetType
 from app.models.user import User
 from app.services.crypto_service import decrypt_decimal, encrypt_decimal
 from app.services.security_service import AccessAction, log_access
+
+logger = logging.getLogger(__name__)
 
 
 class AssetNotFoundError(Exception):
@@ -41,9 +46,12 @@ async def process_asset_sale(
         AssetNotFoundError: 자산을 찾을 수 없는 경우
         AssetForbiddenError: 이미 매도된 자산인 경우
     """
+    # rollback 시 expired 객체 접근 방지를 위해 스칼라 값 캐시
+    user_id = user.id
+
     # 자산 조회 + 소유권 검증
     result = await db.execute(
-        select(Asset).where(Asset.id == asset_id, Asset.user_id == user.id)
+        select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id)
     )
     asset = result.scalar_one_or_none()
     if asset is None:
@@ -55,6 +63,7 @@ async def process_asset_sale(
     # 기존 값 복호화
     quantity = decrypt_decimal(asset.quantity)
     purchase_price = decrypt_decimal(asset.purchase_price)
+    currency = asset.currency
 
     # 매도 처리
     asset.status = AssetStatus.SOLD
@@ -72,10 +81,10 @@ async def process_asset_sale(
     cash_result = await db.execute(
         select(Asset)
         .where(
-            Asset.user_id == user.id,
+            Asset.user_id == user_id,
             Asset.type == AssetType.CASH,
             Asset.status == AssetStatus.ACTIVE,
-            Asset.currency == asset.currency,
+            Asset.currency == currency,
         )
         .with_for_update()
     )
@@ -88,19 +97,65 @@ async def process_asset_sale(
     else:
         # 새 현금 자산 생성
         cash_asset = Asset(
-            user_id=user.id,
+            user_id=user_id,
             type=AssetType.CASH,
             name="매도 수익금",
-            currency=asset.currency,
+            currency=currency,
             quantity=encrypt_decimal(total_proceeds),
             purchase_price=encrypt_decimal(total_proceeds),
         )
         db.add(cash_asset)
 
-    await log_access(db, user.id, AccessAction.ASSET_SELL, request)
+    await log_access(db, user_id, AccessAction.ASSET_SELL, request)
 
     # 단일 commit — 원자성 보장
-    await db.commit()
+    # 동시 매도 요청 시 현금 자산 INSERT 충돌(IntegrityError) 처리
+    try:
+        await db.commit()
+    except IntegrityError:
+        logger.warning(
+            "Cash asset IntegrityError during sale, retrying with existing row. "
+            "user_id=%s asset_id=%s",
+            user_id,
+            asset_id,
+        )
+        await db.rollback()
+
+        # 충돌 후 기존 현금 자산 re-query (행 잠금)
+        cash_result = await db.execute(
+            select(Asset)
+            .where(
+                Asset.user_id == user_id,
+                Asset.type == AssetType.CASH,
+                Asset.status == AssetStatus.ACTIVE,
+                Asset.currency == currency,
+            )
+            .with_for_update()
+        )
+        cash_asset = cash_result.scalar_one_or_none()
+        if cash_asset is None:
+            # 현금 자산이 없다면 재시도 불가 — 상위에서 409로 처리
+            raise
+
+        # rollback으로 매도 상태가 초기화되었으므로 다시 적용
+        result = await db.execute(
+            select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id)
+        )
+        asset = result.scalar_one_or_none()
+        if asset is None:
+            raise AssetNotFoundError("자산을 찾을 수 없습니다.")
+
+        asset.status = AssetStatus.SOLD
+        asset.sold_at = datetime.now(timezone.utc)
+        asset.sold_price = encrypt_decimal(sold_price)
+        asset.realized_pnl = encrypt_decimal(realized_pnl)
+
+        existing_quantity = decrypt_decimal(cash_asset.quantity)
+        cash_asset.quantity = encrypt_decimal(existing_quantity + total_proceeds)
+
+        await log_access(db, user_id, AccessAction.ASSET_SELL, request)
+        await db.commit()
+
     await db.refresh(asset)
 
     return asset

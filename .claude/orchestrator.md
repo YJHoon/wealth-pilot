@@ -22,12 +22,10 @@ git diff HEAD --stat
 - backend/**   → cd backend && pytest -x -q --tb=short
 - 양쪽 모두   → 둘 다 실행
 
-### Step 4: Reviewer 실행
-`.claude/agents/reviewer.md` 지침으로 서브에이전트를 spawn한다.
-전달 내용:
-- 작업 설명
-- git diff (변경 파일만: git diff HEAD -- [파일목록])
-- 테스트 결과 (pass/fail + 실패 로그)
+### Step 4: 테스트 결과 판정
+- 테스트 PASS → 사용자에게 완료 보고. PR 올리면 CodeRabbit이 리뷰.
+- 테스트 FAIL → worker에게 실패 로그 전달 후 Step 1부터 반복
+- 3회 반복 후에도 FAIL → 남은 이슈 목록과 함께 사용자에게 보고
 
 ### Step 5: 판정
 - APPROVED → 사용자에게 완료 보고. git push 절대 하지 않음.

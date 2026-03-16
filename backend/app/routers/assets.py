@@ -194,5 +194,11 @@ async def sell_asset(
         raise HTTPException(status_code=404, detail=str(e)) from None
     except AssetForbiddenError as e:
         raise HTTPException(status_code=403, detail=str(e)) from None
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="현금 자산 처리 중 충돌이 발생했습니다. 다시 시도해 주세요.",
+        ) from None
 
     return asset_to_response(asset)
