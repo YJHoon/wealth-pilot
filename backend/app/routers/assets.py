@@ -4,12 +4,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies.auth import get_current_active_user
 from app.models.asset import Asset, AssetStatus, AssetType
-from app.models.portfolio_group import PortfolioGroup
 from app.models.user import User
 from app.schemas.asset import (
     AssetCreate,
@@ -19,25 +19,16 @@ from app.schemas.asset import (
     SellRequest,
     asset_to_response,
 )
-from app.services.asset_service import process_asset_sale
+from app.services.asset_service import (
+    AssetForbiddenError,
+    AssetNotFoundError,
+    process_asset_sale,
+)
 from app.services.crypto_service import encrypt_decimal
+from app.services.group_service import GroupNotFoundError, ensure_group_owned_by
 from app.services.security_service import AccessAction, log_access
 
 router = APIRouter(prefix="/api/assets", tags=["자산"])
-
-
-async def validate_group_ownership(
-    db: AsyncSession, group_id: UUID, user_id: UUID
-) -> None:
-    """그룹 소유권 검증. 그룹이 존재하지 않거나 소유자가 아니면 HTTPException 발생."""
-    group_result = await db.execute(
-        select(PortfolioGroup).where(
-            PortfolioGroup.id == group_id,
-            PortfolioGroup.user_id == user_id,
-        )
-    )
-    if group_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="그룹을 찾을 수 없습니다.")
 
 
 @router.get("", response_model=AssetListResponse)
@@ -77,7 +68,10 @@ async def create_asset(
 ):
     """새 자산 등록."""
     if body.group_id is not None:
-        await validate_group_ownership(db, body.group_id, user.id)
+        try:
+            await ensure_group_owned_by(db, body.group_id, user.id)
+        except GroupNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from None
 
     asset = Asset(
         user_id=user.id,
@@ -94,7 +88,11 @@ async def create_asset(
     db.add(asset)
 
     await log_access(db, user.id, AccessAction.ASSET_CREATE, request)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="같은 통화의 활성 현금 자산은 하나만 가질 수 있습니다.") from None
     await db.refresh(asset)
 
     return asset_to_response(asset)
@@ -125,7 +123,10 @@ async def update_asset(
 
     # group_id 소유권 검증
     if "group_id" in update_data and update_data["group_id"] is not None:
-        await validate_group_ownership(db, update_data["group_id"], user.id)
+        try:
+            await ensure_group_owned_by(db, update_data["group_id"], user.id)
+        except GroupNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from None
 
     # 암호화 필드 처리
     encrypted_fields = {"quantity", "purchase_price"}
@@ -136,7 +137,11 @@ async def update_asset(
             setattr(asset, key, value)
 
     await log_access(db, user.id, AccessAction.ASSET_UPDATE, request)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="같은 통화의 활성 현금 자산은 하나만 가질 수 있습니다.") from None
     await db.refresh(asset)
 
     return asset_to_response(asset)
@@ -185,10 +190,9 @@ async def sell_asset(
         asset = await process_asset_sale(
             db, user, str(asset_id), body.sold_price, request
         )
-    except ValueError as e:
-        detail = str(e)
-        if "찾을 수 없습니다" in detail:
-            raise HTTPException(status_code=404, detail=detail) from None
-        raise HTTPException(status_code=403, detail=detail) from None
+    except AssetNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    except AssetForbiddenError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from None
 
     return asset_to_response(asset)
