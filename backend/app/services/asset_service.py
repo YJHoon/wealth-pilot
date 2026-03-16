@@ -13,6 +13,14 @@ from app.services.crypto_service import decrypt_decimal, encrypt_decimal
 from app.services.security_service import AccessAction, log_access
 
 
+class AssetNotFoundError(Exception):
+    pass
+
+
+class AssetForbiddenError(Exception):
+    pass
+
+
 async def process_asset_sale(
     db: AsyncSession,
     user: User,
@@ -30,7 +38,8 @@ async def process_asset_sale(
         매도 처리된 Asset 객체 (commit/refresh 완료)
 
     Raises:
-        ValueError: 자산을 찾을 수 없거나 이미 매도된 경우
+        AssetNotFoundError: 자산을 찾을 수 없는 경우
+        AssetForbiddenError: 이미 매도된 자산인 경우
     """
     # 자산 조회 + 소유권 검증
     result = await db.execute(
@@ -38,10 +47,10 @@ async def process_asset_sale(
     )
     asset = result.scalar_one_or_none()
     if asset is None:
-        raise ValueError("자산을 찾을 수 없습니다.")
+        raise AssetNotFoundError("자산을 찾을 수 없습니다.")
 
     if asset.status == AssetStatus.SOLD:
-        raise ValueError("이미 매도된 자산입니다.")
+        raise AssetForbiddenError("이미 매도된 자산입니다.")
 
     # 기존 값 복호화
     quantity = decrypt_decimal(asset.quantity)

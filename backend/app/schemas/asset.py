@@ -23,7 +23,7 @@ class AssetCreate(BaseModel):
     currency: Currency = Currency.KRW
     quantity: Decimal = Field(gt=0)
     purchase_price: Decimal = Field(ge=0)
-    current_price: Decimal | None = None
+    current_price: Decimal | None = Field(default=None, ge=0)
     group_id: UUID | None = None
     metadata_json: dict | None = None
 
@@ -35,7 +35,7 @@ class AssetUpdate(BaseModel):
     currency: Currency | None = None
     quantity: Decimal | None = Field(default=None, gt=0)
     purchase_price: Decimal | None = Field(default=None, ge=0)
-    current_price: Decimal | None = None
+    current_price: Decimal | None = Field(default=None, ge=0)
     group_id: UUID | None = None
     metadata_json: dict | None = None
 
@@ -46,7 +46,6 @@ class SellRequest(BaseModel):
 
 class AssetResponse(BaseModel):
     id: UUID
-    user_id: UUID
     group_id: UUID | None
     type: AssetType
     status: AssetStatus
@@ -73,7 +72,6 @@ def asset_to_response(asset: AssetModel) -> AssetResponse:
     """Asset 모델 → AssetResponse 변환 (암호화 필드 복호화)."""
     return AssetResponse(
         id=asset.id,
-        user_id=asset.user_id,
         group_id=asset.group_id,
         type=asset.type,
         status=asset.status,
