@@ -15,7 +15,6 @@ export type Currency = "KRW" | "USD" | "EUR" | "JPY" | "BTC" | "ETH";
 // 자산
 export interface Asset {
   id: string;
-  userId: string;
   groupId: string | null;
   type: AssetType;
   status: AssetStatus;

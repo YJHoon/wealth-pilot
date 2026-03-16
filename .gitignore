@@ -78,3 +78,6 @@ frontend/coverage/
 
 # Sentry 설정 (토큰 포함 가능)
 .sentryclirc
+
+# Claude Code (개인 설정)
+.claude/settings.local.json
