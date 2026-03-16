@@ -33,6 +33,7 @@ router = APIRouter(prefix="/api/assets", tags=["자산"])
 
 @router.get("", response_model=AssetListResponse)
 async def list_assets(
+    request: Request,
     asset_type: AssetType | None = Query(default=None, alias="type"),
     status_filter: AssetStatus | None = None,
     group_id: UUID | None = None,
@@ -52,6 +53,9 @@ async def list_assets(
     query = query.order_by(Asset.created_at.desc())
     result = await db.execute(query)
     assets = result.scalars().all()
+
+    await log_access(db, user.id, AccessAction.ASSET_VIEW, request)
+    await db.commit()
 
     return AssetListResponse(
         assets=[asset_to_response(a) for a in assets],

@@ -20,17 +20,22 @@ from app.services.group_service import (
     list_groups as svc_list_groups,
     update_group as svc_update_group,
 )
+from app.services.security_service import AccessAction, log_access
 
 router = APIRouter(prefix="/api/groups", tags=["포트폴리오 그룹"])
 
 
 @router.get("", response_model=GroupListResponse)
 async def list_groups(
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """사용자의 포트폴리오 그룹 목록 조회."""
-    return await svc_list_groups(db, user)
+    result = await svc_list_groups(db, user)
+    await log_access(db, user.id, AccessAction.GROUP_VIEW, request)
+    await db.commit()
+    return result
 
 
 @router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
