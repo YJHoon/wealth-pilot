@@ -1,5 +1,6 @@
 """포트폴리오 그룹 CRUD 라우터"""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -22,6 +23,8 @@ from app.services.group_service import (
 )
 from app.services.security_service import AccessAction, log_access
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/groups", tags=["포트폴리오 그룹"])
 
 
@@ -38,6 +41,11 @@ async def list_groups(
         await db.commit()
     except Exception:
         await db.rollback()
+        logger.warning(
+            "GROUP_VIEW access logging failed",
+            exc_info=True,
+            extra={"user_id": str(user.id)},
+        )
     return result
 
 

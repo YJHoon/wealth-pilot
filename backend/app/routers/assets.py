@@ -1,5 +1,6 @@
 """자산 관리 CRUD 라우터"""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -27,6 +28,8 @@ from app.services.asset_service import (
 from app.services.crypto_service import encrypt_decimal
 from app.services.group_service import GroupNotFoundError, ensure_group_owned_by
 from app.services.security_service import AccessAction, log_access
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/assets", tags=["자산"])
 
@@ -59,6 +62,11 @@ async def list_assets(
         await db.commit()
     except Exception:
         await db.rollback()
+        logger.warning(
+            "ASSET_VIEW access logging failed",
+            exc_info=True,
+            extra={"user_id": str(user.id)},
+        )
 
     return AssetListResponse(
         assets=[asset_to_response(a) for a in assets],
