@@ -23,6 +23,30 @@ class TestListGroups:
         assert data["groups"] == []
         assert data["total"] == 0
 
+    async def test_audit_log_created(
+        self, auth_client: AsyncClient, mock_user: User, db_session: AsyncSession
+    ):
+        """그룹 목록 조회 시 AccessLog에 group_view 액션이 기록된다."""
+        before_result = await db_session.execute(
+            select(AccessLog).where(
+                AccessLog.user_id == mock_user.id,
+                AccessLog.action == "group_view",
+            )
+        )
+        before_count = len(before_result.scalars().all())
+
+        resp = await auth_client.get("/api/groups")
+        assert resp.status_code == 200
+
+        after_result = await db_session.execute(
+            select(AccessLog).where(
+                AccessLog.user_id == mock_user.id,
+                AccessLog.action == "group_view",
+            )
+        )
+        after_count = len(after_result.scalars().all())
+        assert after_count == before_count + 1
+
     async def test_asset_count(self, auth_client: AsyncClient, mock_user: User, db_session):
         # 그룹 생성
         resp = await auth_client.post("/api/groups", json={"name": "주식"})

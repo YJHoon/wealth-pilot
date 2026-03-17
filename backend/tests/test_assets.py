@@ -5,7 +5,10 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.access_log import AccessLog
 from app.models.user import User
 
 
@@ -33,6 +36,30 @@ class TestListAssets:
         assert resp.status_code == 200
         assert resp.json()["total"] == 1
         assert resp.json()["assets"][0]["type"] == "cash"
+
+    async def test_audit_log_created(
+        self, auth_client: AsyncClient, mock_user: User, db_session: AsyncSession
+    ):
+        """자산 목록 조회 시 AccessLog에 asset_view 액션이 기록된다."""
+        before_result = await db_session.execute(
+            select(AccessLog).where(
+                AccessLog.user_id == mock_user.id,
+                AccessLog.action == "asset_view",
+            )
+        )
+        before_count = len(before_result.scalars().all())
+
+        resp = await auth_client.get("/api/assets")
+        assert resp.status_code == 200
+
+        after_result = await db_session.execute(
+            select(AccessLog).where(
+                AccessLog.user_id == mock_user.id,
+                AccessLog.action == "asset_view",
+            )
+        )
+        after_count = len(after_result.scalars().all())
+        assert after_count == before_count + 1
 
     async def test_filter_by_status(self, auth_client: AsyncClient):
         resp = await auth_client.get("/api/assets", params={"status_filter": "sold"})

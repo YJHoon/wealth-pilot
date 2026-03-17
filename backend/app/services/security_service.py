@@ -29,6 +29,8 @@ class AccessAction:
     GROUP_CREATE = "group_create"
     GROUP_UPDATE = "group_update"
     GROUP_DELETE = "group_delete"
+    ASSET_VIEW = "asset_view"
+    GROUP_VIEW = "group_view"
     TOTP_SETUP = "totp_setup"
     TOTP_VERIFY = "totp_verify"
 
