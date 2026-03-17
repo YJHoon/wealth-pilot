@@ -1,5 +1,6 @@
 """포트폴리오 그룹 CRUD 라우터"""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -20,17 +21,32 @@ from app.services.group_service import (
     list_groups as svc_list_groups,
     update_group as svc_update_group,
 )
+from app.services.security_service import AccessAction, log_access
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/groups", tags=["포트폴리오 그룹"])
 
 
 @router.get("", response_model=GroupListResponse)
 async def list_groups(
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """사용자의 포트폴리오 그룹 목록 조회."""
-    return await svc_list_groups(db, user)
+    result = await svc_list_groups(db, user)
+    try:
+        await log_access(db, user.id, AccessAction.GROUP_VIEW, request)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning(
+            "GROUP_VIEW access logging failed",
+            exc_info=True,
+            extra={"user_id": str(user.id)},
+        )
+    return result
 
 
 @router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
