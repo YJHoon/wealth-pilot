@@ -41,17 +41,25 @@ class TestListAssets:
         self, auth_client: AsyncClient, mock_user: User, db_session: AsyncSession
     ):
         """자산 목록 조회 시 AccessLog에 asset_view 액션이 기록된다."""
-        resp = await auth_client.get("/api/assets")
-        assert resp.status_code == 200
-
-        result = await db_session.execute(
+        before_result = await db_session.execute(
             select(AccessLog).where(
                 AccessLog.user_id == mock_user.id,
                 AccessLog.action == "asset_view",
             )
         )
-        logs = result.scalars().all()
-        assert len(logs) >= 1
+        before_count = len(before_result.scalars().all())
+
+        resp = await auth_client.get("/api/assets")
+        assert resp.status_code == 200
+
+        after_result = await db_session.execute(
+            select(AccessLog).where(
+                AccessLog.user_id == mock_user.id,
+                AccessLog.action == "asset_view",
+            )
+        )
+        after_count = len(after_result.scalars().all())
+        assert after_count == before_count + 1
 
     async def test_filter_by_status(self, auth_client: AsyncClient):
         resp = await auth_client.get("/api/assets", params={"status_filter": "sold"})
