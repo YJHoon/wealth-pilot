@@ -84,7 +84,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
         body: JSON.stringify(data),
         accessToken,
       });
-      await fetchAssets();
+      await fetchAssets().catch(() => {});
       return toAsset(res);
     },
     [accessToken, fetchAssets],
@@ -98,7 +98,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
         body: JSON.stringify(data),
         accessToken,
       });
-      await fetchAssets();
+      await fetchAssets().catch(() => {});
       return toAsset(res);
     },
     [accessToken, fetchAssets],
@@ -111,7 +111,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
         method: "DELETE",
         accessToken,
       });
-      await fetchAssets();
+      await fetchAssets().catch(() => {});
     },
     [accessToken, fetchAssets],
   );
@@ -124,7 +124,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
         body: JSON.stringify(data),
         accessToken,
       });
-      await fetchAssets();
+      await fetchAssets().catch(() => {});
       return toAsset(res);
     },
     [accessToken, fetchAssets],
