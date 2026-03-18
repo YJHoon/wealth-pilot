@@ -93,6 +93,16 @@ class TestAnomaly:
         # 50% 하락 — 임계값 정확히
         assert svc._detect_anomaly("stock:AAPL", Decimal("50")) is True
 
+    def test_no_anomaly_just_below_threshold_drop(self, svc: PriceService):
+        svc._set_cache("stock:AAPL", Decimal("100"), "USD")
+        # 49% 하락 — 임계값 미만
+        assert svc._detect_anomaly("stock:AAPL", Decimal("51")) is False
+
+    def test_no_anomaly_just_below_threshold_rise(self, svc: PriceService):
+        svc._set_cache("stock:AAPL", Decimal("100"), "USD")
+        # 49% 상승 — 임계값 미만
+        assert svc._detect_anomaly("stock:AAPL", Decimal("149")) is False
+
 
 # ── 주식 시세 (yfinance mock) ────────────────────────────────
 

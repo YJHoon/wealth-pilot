@@ -32,11 +32,11 @@ async def get_stock_price(
     """주식 시세 조회."""
     try:
         cached = await price_service.fetch_stock_price(ticker)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"주식 시세를 조회할 수 없습니다: {ticker}",
-        )
+        ) from exc
     return PriceResponse(
         ticker=ticker,
         price=cached.price,
@@ -56,11 +56,11 @@ async def get_crypto_price(
     """암호화폐 시세 조회."""
     try:
         cached = await price_service.fetch_crypto_price(symbol)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"암호화폐 시세를 조회할 수 없습니다: {symbol}",
-        )
+        ) from exc
     return PriceResponse(
         ticker=symbol,
         price=cached.price,
@@ -83,11 +83,11 @@ async def get_exchange_rate(
         cached = await price_service.fetch_exchange_rate(
             from_currency, to_currency,
         )
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"환율을 조회할 수 없습니다: {from_currency} → {to_currency}",
-        )
+        ) from exc
     return ExchangeRateResponse(
         from_currency=from_currency,
         to_currency=to_currency,
