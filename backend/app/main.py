@@ -10,7 +10,7 @@ from app.config import settings
 from app.database import engine
 from app.middleware.rate_limit import limiter
 from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.routers import assets, auth, groups
+from app.routers import assets, auth, groups, prices
 
 
 # Sentry 초기화 (DSN이 설정된 경우에만)
@@ -63,6 +63,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(auth.router)
 app.include_router(assets.router)
 app.include_router(groups.router)
+app.include_router(prices.router)
 
 
 @app.get("/health")
