@@ -71,17 +71,17 @@ class PriceService:
     # 캐시
     # ------------------------------------------------------------------
 
-    def _ttl_seconds(self) -> int:
-        return _TTL_MAP[self.mode]
+    def _ttl_seconds(self, user_id: UUID | None = None) -> int:
+        return _TTL_MAP[self.get_mode(user_id)]
 
-    def _is_cache_valid(self, key: str) -> bool:
+    def _is_cache_valid(self, key: str, *, user_id: UUID | None = None) -> bool:
         entry = self._cache.get(key)
         if entry is None:
             return False
         if entry.anomaly_flag:
             return False
         elapsed = (datetime.now(timezone.utc) - entry.fetched_at).total_seconds()
-        return elapsed < self._ttl_seconds()
+        return elapsed < self._ttl_seconds(user_id)
 
     def get_cached(self, key: str) -> CachedPrice | None:
         return self._cache.get(key)
@@ -93,7 +93,6 @@ class PriceService:
         currency: str,
         *,
         is_stale: bool = False,
-        anomaly_flag: bool = False,
     ) -> CachedPrice:
         previous = self._cache.get(key)
         entry = CachedPrice(
@@ -101,7 +100,6 @@ class PriceService:
             currency=currency,
             fetched_at=datetime.now(timezone.utc),
             is_stale=is_stale,
-            anomaly_flag=anomaly_flag,
             previous_price=previous.price if previous else None,
         )
         self._cache[key] = entry
@@ -129,11 +127,13 @@ class PriceService:
     # 주식 시세 (yfinance)
     # ------------------------------------------------------------------
 
-    async def fetch_stock_price(self, ticker: str) -> CachedPrice:
+    async def fetch_stock_price(
+        self, ticker: str, *, user_id: UUID | None = None,
+    ) -> CachedPrice:
         """yfinance로 주식 현재가 조회. 캐시 유효하면 즉시 반환."""
         cache_key = f"stock:{ticker}"
 
-        if self._is_cache_valid(cache_key):
+        if self._is_cache_valid(cache_key, user_id=user_id):
             return self._cache[cache_key]
 
         try:
@@ -149,9 +149,19 @@ class PriceService:
             price, currency = await asyncio.to_thread(_fetch_yf)
 
             anomaly = self._detect_anomaly(cache_key, price)
-            return self._set_cache(
-                cache_key, price, currency, anomaly_flag=anomaly,
-            )
+            if anomaly:
+                logger.warning(
+                    "Rejecting anomalous stock price for %s: %s",
+                    ticker, price,
+                )
+                return CachedPrice(
+                    price=price, currency=currency,
+                    fetched_at=datetime.now(timezone.utc),
+                    anomaly_flag=True,
+                    previous_price=(self._cache[cache_key].price
+                                    if cache_key in self._cache else None),
+                )
+            return self._set_cache(cache_key, price, currency)
         except Exception as exc:
             logger.error("Failed to fetch stock price for %s: %s", ticker, exc)
             sentry_sdk.capture_exception(exc)
@@ -169,11 +179,13 @@ class PriceService:
     # 암호화폐 시세 (CoinGecko)
     # ------------------------------------------------------------------
 
-    async def fetch_crypto_price(self, symbol: str) -> CachedPrice:
+    async def fetch_crypto_price(
+        self, symbol: str, *, user_id: UUID | None = None,
+    ) -> CachedPrice:
         """CoinGecko 무료 API로 암호화폐 시세 조회."""
         cache_key = f"crypto:{symbol}"
 
-        if self._is_cache_valid(cache_key):
+        if self._is_cache_valid(cache_key, user_id=user_id):
             return self._cache[cache_key]
 
         url = "https://api.coingecko.com/api/v3/simple/price"
@@ -190,9 +202,19 @@ class PriceService:
 
             price = Decimal(str(data[symbol]["krw"]))
             anomaly = self._detect_anomaly(cache_key, price)
-            return self._set_cache(
-                cache_key, price, "KRW", anomaly_flag=anomaly,
-            )
+            if anomaly:
+                logger.warning(
+                    "Rejecting anomalous crypto price for %s: %s",
+                    symbol, price,
+                )
+                return CachedPrice(
+                    price=price, currency="KRW",
+                    fetched_at=datetime.now(timezone.utc),
+                    anomaly_flag=True,
+                    previous_price=(self._cache[cache_key].price
+                                    if cache_key in self._cache else None),
+                )
+            return self._set_cache(cache_key, price, "KRW")
         except Exception as exc:
             logger.error("Failed to fetch crypto price for %s: %s", symbol, exc)
             sentry_sdk.capture_exception(exc)
@@ -211,11 +233,12 @@ class PriceService:
 
     async def fetch_exchange_rate(
         self, from_currency: str, to_currency: str,
+        *, user_id: UUID | None = None,
     ) -> CachedPrice:
         """ExchangeRate-API로 환율 조회."""
         cache_key = f"fx:{from_currency}:{to_currency}"
 
-        if self._is_cache_valid(cache_key):
+        if self._is_cache_valid(cache_key, user_id=user_id):
             return self._cache[cache_key]
 
         url = f"https://open.er-api.com/v6/latest/{from_currency}"
@@ -234,9 +257,19 @@ class PriceService:
 
             rate = Decimal(str(rates[to_currency]))
             anomaly = self._detect_anomaly(cache_key, rate)
-            return self._set_cache(
-                cache_key, rate, to_currency, anomaly_flag=anomaly,
-            )
+            if anomaly:
+                logger.warning(
+                    "Rejecting anomalous exchange rate for %s->%s: %s",
+                    from_currency, to_currency, rate,
+                )
+                return CachedPrice(
+                    price=rate, currency=to_currency,
+                    fetched_at=datetime.now(timezone.utc),
+                    anomaly_flag=True,
+                    previous_price=(self._cache[cache_key].price
+                                    if cache_key in self._cache else None),
+                )
+            return self._set_cache(cache_key, rate, to_currency)
         except Exception as exc:
             logger.error(
                 "Failed to fetch exchange rate %s->%s: %s",
