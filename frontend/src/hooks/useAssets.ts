@@ -45,6 +45,8 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
   const fetchAssets = useCallback(async () => {
     if (!accessToken) {
       setAssets([]);
+      setTotal(0);
+      setError(null);
       setLoading(false);
       return;
     }

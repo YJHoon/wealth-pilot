@@ -77,9 +77,9 @@ export default function AssetsPage() {
             name: values.name,
             ticker: values.ticker || null,
             currency: values.currency,
-            quantity: values.quantity,
+            quantity: values.quantity!,
             purchase_price:
-              values.type === "cash" ? values.quantity : values.purchase_price,
+              values.type === "cash" ? values.quantity! : values.purchase_price!,
             current_price: values.current_price ?? null,
             group_id: values.group_id || null,
             metadata_json: Object.keys(metadata).length > 0 ? metadata : null,
@@ -92,9 +92,9 @@ export default function AssetsPage() {
             name: values.name,
             ticker: values.ticker || null,
             currency: values.currency,
-            quantity: values.quantity,
+            quantity: values.quantity!,
             purchase_price:
-              values.type === "cash" ? values.quantity : values.purchase_price,
+              values.type === "cash" ? values.quantity! : values.purchase_price!,
             current_price: values.current_price ?? null,
             group_id: values.group_id || null,
             metadata_json: Object.keys(metadata).length > 0 ? metadata : null,
