@@ -35,7 +35,7 @@ export interface Asset {
 // 포트폴리오 그룹
 export interface PortfolioGroup {
   id: string;
-  userId: string;
+  userId?: string;
   name: string;
   description: string | null;
   sortOrder: number;
@@ -72,6 +72,7 @@ export interface AssetListApiResponse {
 
 export interface GroupApiResponse {
   id: string;
+  user_id?: string;
   name: string;
   description: string | null;
   sort_order: number;
@@ -137,7 +138,7 @@ export function toAsset(api: AssetApiResponse): Asset {
 export function toGroup(api: GroupApiResponse): PortfolioGroup {
   return {
     id: api.id,
-    userId: "",
+    userId: api.user_id,
     name: api.name,
     description: api.description,
     sortOrder: api.sort_order,

@@ -17,12 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Asset } from "@/types";
 import { formatAmount } from "@/lib/format";
-
-const toNumber = (val: unknown) => {
-  if (val === "" || val === undefined || val === null) return undefined;
-  const n = Number(val);
-  return isNaN(n) ? val : n;
-};
+import { toNumber } from "@/lib/form-utils";
 
 const sellSchema = z.object({
   sold_price: z.preprocess(toNumber, z.number({ message: "매도가를 입력해주세요" }).min(0, "매도가는 0 이상이어야 합니다")),

@@ -1,4 +1,4 @@
-import type { Currency } from "@/types";
+import type { Currency, AssetType, AssetStatus } from "@/types";
 
 const MASK = "●●●●●●";
 
@@ -17,7 +17,7 @@ export function formatAmount(
   currency: Currency,
   isMasked: boolean,
 ): string {
-  if (isMasked) return `${MASK}${currency === "KRW" ? "원" : ""}`;
+  if (isMasked) return `${MASK}원`;
   if (value == null) return "-";
 
   const config = currencyConfig[currency];
@@ -38,7 +38,7 @@ export function formatDualCurrency(
   krwValue: number | null | undefined,
   isMasked: boolean,
 ): string {
-  if (isMasked) return `${MASK}${currency === "KRW" ? "원" : ""}`;
+  if (isMasked) return `${MASK}원`;
   if (currency === "KRW") return formatAmount(value, currency, false);
   const foreign = formatAmount(value, currency, false);
   const krw = krwValue != null ? formatAmount(krwValue, "KRW", false) : "";
@@ -66,14 +66,14 @@ export function formatPnl(
   currency: Currency,
   isMasked: boolean,
 ): string {
-  if (isMasked) return MASK;
+  if (isMasked) return `${MASK}원`;
   if (value == null) return "-";
   const sign = value >= 0 ? "+" : "";
   return `${sign}${formatAmount(value, currency, false)}`;
 }
 
 /** 자산 유형 한국어 라벨 */
-export const assetTypeLabels: Record<string, string> = {
+export const assetTypeLabels: Record<AssetType, string> = {
   cash: "현금/예적금",
   domestic_stock: "국내주식",
   foreign_stock: "해외주식/ETF",
@@ -82,7 +82,7 @@ export const assetTypeLabels: Record<string, string> = {
 };
 
 /** 자산 상태 한국어 라벨 */
-export const assetStatusLabels: Record<string, string> = {
+export const assetStatusLabels: Record<AssetStatus, string> = {
   active: "보유중",
   sold: "매도완료",
   delisted: "상장폐지",

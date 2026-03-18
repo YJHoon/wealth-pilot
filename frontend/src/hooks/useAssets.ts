@@ -43,7 +43,11 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
   const accessToken = (session as { accessToken?: string } | null)?.accessToken;
 
   const fetchAssets = useCallback(async () => {
-    if (!accessToken) return;
+    if (!accessToken) {
+      setAssets([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {

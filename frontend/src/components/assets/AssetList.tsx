@@ -289,7 +289,7 @@ export function AssetList({
                   {/* 평가손익 */}
                   <TableCell className="text-right font-mono">
                     {isMasked ? (
-                      "●●●●●●"
+                      "●●●●●●원"
                     ) : pnl != null ? (
                       <span className={pnl >= 0 ? "text-emerald-500" : "text-red-500"}>
                         {formatPnl(pnl, asset.currency, false)}
@@ -302,7 +302,7 @@ export function AssetList({
                   {/* 수익률 */}
                   <TableCell className="text-right font-mono">
                     {isMasked ? (
-                      "●●●●"
+                      "●●●●%"
                     ) : rate != null ? (
                       <span className={rate >= 0 ? "text-emerald-500" : "text-red-500"}>
                         {rate >= 0 ? "+" : ""}{rate.toFixed(2)}%
