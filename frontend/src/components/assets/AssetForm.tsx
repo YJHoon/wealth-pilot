@@ -266,7 +266,7 @@ export function AssetForm({
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="purchase_price">
+              <Label htmlFor={showCashFields ? "interest_rate" : "purchase_price"}>
                 {showCashFields ? "이율 (%)" : "매입가"}
               </Label>
               {showCashFields ? (
