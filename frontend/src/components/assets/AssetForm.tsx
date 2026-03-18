@@ -33,8 +33,8 @@ interface AssetFormValues {
   name: string;
   ticker?: string;
   currency: Currency;
-  quantity: number;
-  purchase_price: number;
+  quantity: number | undefined;
+  purchase_price: number | undefined;
   current_price?: number;
   group_id?: string;
   bank_name?: string;
@@ -102,8 +102,8 @@ export function AssetForm({
       name: "",
       ticker: "",
       currency: "KRW",
-      quantity: undefined as unknown as number,
-      purchase_price: undefined as unknown as number,
+      quantity: undefined,
+      purchase_price: undefined,
       current_price: undefined,
       group_id: "",
       bank_name: "",
@@ -134,8 +134,8 @@ export function AssetForm({
         name: "",
         ticker: "",
         currency: "KRW",
-        quantity: undefined as unknown as number,
-        purchase_price: undefined as unknown as number,
+        quantity: undefined,
+        purchase_price: undefined,
         current_price: undefined,
         group_id: "",
         bank_name: "",
