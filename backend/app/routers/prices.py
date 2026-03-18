@@ -120,8 +120,8 @@ async def get_price_mode(
     request: Request,
     user: User = Depends(get_current_active_user),
 ):
-    """현재 시세 모드 조회."""
-    return PriceModeResponse(current_mode=price_service.mode)
+    """현재 시세 모드 조회 (유저별)."""
+    return PriceModeResponse(current_mode=price_service.get_mode(user.id))
 
 
 @router.put("/mode", response_model=PriceModeResponse)
@@ -130,7 +130,7 @@ async def update_price_mode(
     body: PriceModeUpdate,
     user: User = Depends(get_current_active_user),
 ):
-    """시세 모드 변경."""
-    price_service.mode = body.mode
+    """시세 모드 변경 (유저별)."""
+    price_service.set_mode(body.mode, user.id)
     logger.info("Price mode changed to %s by user %s", body.mode, user.id)
-    return PriceModeResponse(current_mode=price_service.mode)
+    return PriceModeResponse(current_mode=price_service.get_mode(user.id))

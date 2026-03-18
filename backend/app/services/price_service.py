@@ -1,14 +1,17 @@
 """시세 조회 서비스 — 3모드(batch/delayed/realtime) 캐시 + 외부 API"""
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from uuid import UUID
 
 import httpx
 import sentry_sdk
 import yfinance as yf
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import Asset, AssetStatus, AssetType
@@ -40,8 +43,29 @@ class CachedPrice:
 class PriceService:
     """시세 조회 서비스 — 싱글톤으로 사용."""
 
-    mode: PriceMode = PriceMode.BATCH
+    _default_mode: PriceMode = PriceMode.BATCH
+    _user_modes: dict[UUID, PriceMode] = field(default_factory=dict)
     _cache: dict[str, CachedPrice] = field(default_factory=dict)
+
+    @property
+    def mode(self) -> PriceMode:
+        """기본 모드 반환 (하위 호환)."""
+        return self._default_mode
+
+    @mode.setter
+    def mode(self, value: PriceMode) -> None:
+        self._default_mode = value
+
+    def get_mode(self, user_id: UUID | None = None) -> PriceMode:
+        if user_id is None:
+            return self._default_mode
+        return self._user_modes.get(user_id, self._default_mode)
+
+    def set_mode(self, mode: PriceMode, user_id: UUID | None = None) -> None:
+        if user_id is None:
+            self._default_mode = mode
+        else:
+            self._user_modes[user_id] = mode
 
     # ------------------------------------------------------------------
     # 캐시
@@ -111,11 +135,16 @@ class PriceService:
             return self._cache[cache_key]
 
         try:
-            # yfinance는 동기 라이브러리이므로 직접 호출
-            tk = yf.Ticker(ticker)
-            info = tk.fast_info
-            price = Decimal(str(info.last_price))
-            currency = getattr(info, "currency", "KRW") or "KRW"
+            # yfinance는 동기 라이브러리 → 이벤트 루프 차단 방지
+            def _fetch_yf() -> tuple[Decimal, str]:
+                tk = yf.Ticker(ticker)
+                info = tk.fast_info
+                return (
+                    Decimal(str(info.last_price)),
+                    getattr(info, "currency", "KRW") or "KRW",
+                )
+
+            price, currency = await asyncio.to_thread(_fetch_yf)
 
             anomaly = self._detect_anomaly(cache_key, price)
             return self._set_cache(
@@ -260,6 +289,19 @@ class PriceService:
                     # cash, real_estate 등은 시세 조회 불필요
                     continue
 
+                if cached.anomaly_flag:
+                    logger.warning(
+                        "Skipping DB update for %s due to anomaly flag",
+                        asset.ticker,
+                    )
+                    details.append(RefreshDetail(
+                        ticker=asset.ticker,
+                        success=False,
+                        error="anomaly detected — price not updated",
+                    ))
+                    fail_count += 1
+                    continue
+
                 asset.current_price = cached.price
                 details.append(RefreshDetail(
                     ticker=asset.ticker,
@@ -292,27 +334,22 @@ class PriceService:
             try:
                 cached = await self.fetch_exchange_rate(from_cur, to_cur)
 
-                # upsert
-                result = await db.execute(
-                    select(ExchangeRate).where(
-                        ExchangeRate.from_currency == from_cur,
-                        ExchangeRate.to_currency == to_cur,
-                    )
+                # atomic upsert (INSERT ... ON CONFLICT DO UPDATE)
+                stmt = pg_insert(ExchangeRate).values(
+                    from_currency=from_cur,
+                    to_currency=to_cur,
+                    rate=cached.price,
+                    fetched_at=cached.fetched_at,
+                    source="exchangerate-api",
+                ).on_conflict_do_update(
+                    index_elements=["from_currency", "to_currency"],
+                    set_={
+                        "rate": cached.price,
+                        "fetched_at": cached.fetched_at,
+                        "source": "exchangerate-api",
+                    },
                 )
-                existing = result.scalar_one_or_none()
-
-                if existing:
-                    existing.rate = cached.price
-                    existing.fetched_at = cached.fetched_at
-                    existing.source = "exchangerate-api"
-                else:
-                    db.add(ExchangeRate(
-                        from_currency=from_cur,
-                        to_currency=to_cur,
-                        rate=cached.price,
-                        fetched_at=cached.fetched_at,
-                        source="exchangerate-api",
-                    ))
+                await db.execute(stmt)
             except Exception as exc:
                 logger.error(
                     "Failed to refresh exchange rate %s->%s: %s",
