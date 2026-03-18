@@ -314,12 +314,16 @@ class PriceService:
         for asset in assets:
             try:
                 if asset.type == AssetType.CRYPTO:
-                    cached = await self.fetch_crypto_price(asset.ticker)
+                    cached = await self.fetch_crypto_price(
+                        asset.ticker, user_id=user_id,
+                    )
                 elif asset.type in (
                     AssetType.DOMESTIC_STOCK,
                     AssetType.FOREIGN_STOCK,
                 ):
-                    cached = await self.fetch_stock_price(asset.ticker)
+                    cached = await self.fetch_stock_price(
+                        asset.ticker, user_id=user_id,
+                    )
                 else:
                     # cash, real_estate 등은 시세 조회 불필요
                     continue

@@ -349,7 +349,7 @@ class TestRefreshAll:
         mock_db.commit = AsyncMock()
 
         # crypto 성공 mock
-        async def mock_fetch_crypto(symbol):
+        async def mock_fetch_crypto(symbol, *, user_id=None):
             return CachedPrice(
                 price=Decimal("95000000"),
                 currency="KRW",
@@ -357,7 +357,7 @@ class TestRefreshAll:
             )
 
         # stock 실패 mock
-        async def mock_fetch_stock(ticker):
+        async def mock_fetch_stock(ticker, *, user_id=None):
             raise Exception("API down")
 
         with patch.object(svc, "fetch_crypto_price", side_effect=mock_fetch_crypto):

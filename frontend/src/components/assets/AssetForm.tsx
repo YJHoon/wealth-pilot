@@ -251,6 +251,8 @@ export function AssetForm({
                   <SelectItem value="EUR">EUR (€)</SelectItem>
                   <SelectItem value="JPY">JPY (¥)</SelectItem>
                   <SelectItem value="KRW">KRW (₩)</SelectItem>
+                  <SelectItem value="BTC">BTC</SelectItem>
+                  <SelectItem value="ETH">ETH</SelectItem>
                 </SelectContent>
               </Select>
             </div>
