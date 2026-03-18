@@ -25,7 +25,11 @@ export function useGroups(): UseGroupsReturn {
   const accessToken = (session as { accessToken?: string } | null)?.accessToken;
 
   const fetchGroups = useCallback(async () => {
-    if (!accessToken) return;
+    if (!accessToken) {
+      setGroups([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {

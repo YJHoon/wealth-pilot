@@ -77,7 +77,7 @@ export default function AssetsPage() {
             name: values.name,
             ticker: values.ticker || null,
             currency: values.currency,
-            quantity: values.type === "cash" ? values.quantity : values.quantity,
+            quantity: values.quantity,
             purchase_price:
               values.type === "cash" ? values.quantity : values.purchase_price,
             current_price: values.current_price ?? null,
@@ -92,7 +92,7 @@ export default function AssetsPage() {
             name: values.name,
             ticker: values.ticker || null,
             currency: values.currency,
-            quantity: values.type === "cash" ? values.quantity : values.quantity,
+            quantity: values.quantity,
             purchase_price:
               values.type === "cash" ? values.quantity : values.purchase_price,
             current_price: values.current_price ?? null,

@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import type { Asset, AssetType, Currency, PortfolioGroup } from "@/types";
 import { assetTypeLabels } from "@/lib/format";
+import { toNumber as toNum } from "@/lib/form-utils";
 
 // ── 폼 값 타입 (Zod 스키마와 별도 정의하여 타입 안정성 확보) ──
 
@@ -42,23 +43,25 @@ interface AssetFormValues {
 
 // ── Zod 검증 스키마 ──
 
-const toNum = (v: unknown) => {
-  if (v === "" || v === undefined || v === null) return undefined;
-  const n = Number(v);
-  return isNaN(n) ? v : n;
-};
-
 const assetFormSchema = z.object({
   type: z.enum(["cash", "domestic_stock", "foreign_stock", "crypto", "real_estate"]),
   name: z.string().min(1, "자산명을 입력해주세요").max(200),
   ticker: z.string().max(20).optional(),
   currency: z.enum(["KRW", "USD", "EUR", "JPY", "BTC", "ETH"]),
   quantity: z.preprocess(toNum, z.number({ message: "숫자를 입력해주세요" }).positive("수량은 0보다 커야 합니다")),
-  purchase_price: z.preprocess(toNum, z.number({ message: "숫자를 입력해주세요" }).min(0, "매입가는 0 이상이어야 합니다")),
+  purchase_price: z.preprocess(toNum, z.number({ message: "숫자를 입력해주세요" }).min(0, "매입가는 0 이상이어야 합니다").optional()),
   current_price: z.preprocess(toNum, z.number().min(0).optional()),
   group_id: z.string().optional(),
   bank_name: z.string().optional(),
   interest_rate: z.preprocess(toNum, z.number().min(0).optional()),
+}).superRefine((data, ctx) => {
+  if (data.type !== "cash" && (data.purchase_price == null || data.purchase_price === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "매입가를 입력해주세요",
+      path: ["purchase_price"],
+    });
+  }
 });
 
 // ── 유형별 기본 통화 ──
