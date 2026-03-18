@@ -35,11 +35,116 @@ export interface Asset {
 // 포트폴리오 그룹
 export interface PortfolioGroup {
   id: string;
-  userId: string;
+  userId?: string;
   name: string;
   description: string | null;
   sortOrder: number;
   createdAt: string;
+  assetCount?: number;
+}
+
+// ── API 요청/응답 타입 (백엔드 스키마 매칭) ──
+
+// 백엔드 snake_case → 프론트 camelCase 변환 전 원본 타입
+export interface AssetApiResponse {
+  id: string;
+  group_id: string | null;
+  type: AssetType;
+  status: AssetStatus;
+  name: string;
+  ticker: string | null;
+  currency: Currency;
+  quantity: number;
+  purchase_price: number;
+  current_price: number | null;
+  metadata_json: Record<string, unknown> | null;
+  sold_at: string | null;
+  sold_price: number | null;
+  realized_pnl: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssetListApiResponse {
+  assets: AssetApiResponse[];
+  total: number;
+}
+
+export interface GroupApiResponse {
+  id: string;
+  user_id?: string;
+  name: string;
+  description: string | null;
+  sort_order: number;
+  created_at: string;
+  asset_count: number;
+}
+
+export interface GroupListApiResponse {
+  groups: GroupApiResponse[];
+  total: number;
+}
+
+export interface AssetCreateRequest {
+  type: AssetType;
+  name: string;
+  ticker?: string | null;
+  currency: Currency;
+  quantity: number;
+  purchase_price: number;
+  current_price?: number | null;
+  group_id?: string | null;
+  metadata_json?: Record<string, unknown> | null;
+}
+
+export interface AssetUpdateRequest {
+  type?: AssetType;
+  name?: string;
+  ticker?: string | null;
+  currency?: Currency;
+  quantity?: number;
+  purchase_price?: number;
+  current_price?: number | null;
+  group_id?: string | null;
+  metadata_json?: Record<string, unknown> | null;
+}
+
+export interface SellRequest {
+  sold_price: number;
+}
+
+// API → 프론트 변환 헬퍼
+export function toAsset(api: AssetApiResponse): Asset {
+  return {
+    id: api.id,
+    groupId: api.group_id,
+    type: api.type,
+    status: api.status,
+    name: api.name,
+    ticker: api.ticker,
+    quantity: api.quantity,
+    purchasePrice: api.purchase_price,
+    currentPrice: api.current_price,
+    currency: api.currency,
+    metadata: api.metadata_json ?? {},
+    soldAt: api.sold_at,
+    soldPrice: api.sold_price,
+    realizedPnl: api.realized_pnl,
+    createdAt: api.created_at,
+    updatedAt: api.updated_at,
+  };
+}
+
+export function toGroup(api: GroupApiResponse): PortfolioGroup {
+  return {
+    id: api.id,
+    userId: api.user_id,
+    name: api.name,
+    description: api.description,
+    sortOrder: api.sort_order,
+    createdAt: api.created_at,
+    assetCount: api.asset_count,
+  };
 }
 
 // 대시보드 요약
