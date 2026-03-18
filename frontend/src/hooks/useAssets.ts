@@ -66,17 +66,19 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
       setTotal(res.total);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "자산 목록을 불러오는데 실패했습니다.");
+      throw err;
     } finally {
       setLoading(false);
     }
   }, [accessToken, options.type, options.status, options.groupId]);
 
   useEffect(() => {
-    fetchAssets();
+    fetchAssets().catch(() => {});
   }, [fetchAssets]);
 
   const createAsset = useCallback(
     async (data: AssetCreateRequest): Promise<Asset> => {
+      if (!accessToken) throw new Error("인증이 필요합니다.");
       const res = await apiFetch<AssetApiResponse>("/api/assets", {
         method: "POST",
         body: JSON.stringify(data),
@@ -90,6 +92,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
 
   const updateAsset = useCallback(
     async (id: string, data: AssetUpdateRequest): Promise<Asset> => {
+      if (!accessToken) throw new Error("인증이 필요합니다.");
       const res = await apiFetch<AssetApiResponse>(`/api/assets/${id}`, {
         method: "PUT",
         body: JSON.stringify(data),
@@ -103,6 +106,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
 
   const deleteAsset = useCallback(
     async (id: string): Promise<void> => {
+      if (!accessToken) throw new Error("인증이 필요합니다.");
       await apiFetch<void>(`/api/assets/${id}`, {
         method: "DELETE",
         accessToken,
@@ -114,6 +118,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
 
   const sellAsset = useCallback(
     async (id: string, data: SellRequest): Promise<Asset> => {
+      if (!accessToken) throw new Error("인증이 필요합니다.");
       const res = await apiFetch<AssetApiResponse>(`/api/assets/${id}/sell`, {
         method: "POST",
         body: JSON.stringify(data),
