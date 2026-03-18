@@ -31,7 +31,7 @@ async def get_stock_price(
 ):
     """주식 시세 조회."""
     try:
-        cached = await price_service.fetch_stock_price(ticker)
+        cached = await price_service.fetch_stock_price(ticker, user_id=user.id)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -55,7 +55,7 @@ async def get_crypto_price(
 ):
     """암호화폐 시세 조회."""
     try:
-        cached = await price_service.fetch_crypto_price(symbol)
+        cached = await price_service.fetch_crypto_price(symbol, user_id=user.id)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -81,7 +81,7 @@ async def get_exchange_rate(
     """환율 조회."""
     try:
         cached = await price_service.fetch_exchange_rate(
-            from_currency, to_currency,
+            from_currency, to_currency, user_id=user.id,
         )
     except Exception as exc:
         raise HTTPException(

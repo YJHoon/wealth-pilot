@@ -33,6 +33,22 @@ def _reset_global_price_service():
     price_service._cache = original_cache
 
 
+@pytest.fixture
+def mock_httpx_client():
+    """httpx.AsyncClient mock factory."""
+    def _create(response_data: dict):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = response_data
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        return mock_client
+    return _create
+
+
 # ── 캐시 히트/미스 ──────────────────────────────────────────────
 
 
@@ -70,6 +86,21 @@ class TestCache:
         ) - timedelta(minutes=2)
         assert svc._is_cache_valid("stock:AAPL") is False
 
+    def test_per_user_mode_ttl(self, svc: PriceService):
+        """유저별 모드에 따라 TTL이 다르게 적용되는지 확인."""
+        user_a = uuid.uuid4()
+        user_b = uuid.uuid4()
+        svc.set_mode(PriceMode.BATCH, user_a)
+        svc.set_mode(PriceMode.REALTIME, user_b)
+
+        svc._set_cache("stock:AAPL", Decimal("150"), "USD")
+        # 2분 전 → batch에서는 유효, realtime에서는 만료
+        svc._cache["stock:AAPL"].fetched_at = datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=2)
+        assert svc._is_cache_valid("stock:AAPL", user_id=user_a) is True
+        assert svc._is_cache_valid("stock:AAPL", user_id=user_b) is False
+
 
 # ── 이상치 탐지 ──────────────────────────────────────────────
 
@@ -102,6 +133,30 @@ class TestAnomaly:
         svc._set_cache("stock:AAPL", Decimal("100"), "USD")
         # 49% 상승 — 임계값 미만
         assert svc._detect_anomaly("stock:AAPL", Decimal("149")) is False
+
+    @pytest.mark.asyncio
+    async def test_anomaly_does_not_overwrite_cache(self, svc: PriceService):
+        """이상치 감지 시 기존 캐시가 보존되는지 확인."""
+        svc._set_cache("stock:TEST", Decimal("100"), "USD")
+        original_cached = svc._cache["stock:TEST"]
+        # 캐시 만료시켜서 재조회 유도
+        original_cached.fetched_at = datetime.now(timezone.utc) - timedelta(hours=25)
+
+        mock_info = MagicMock()
+        mock_info.last_price = 200.0  # 100% 상승 → 이상치
+        mock_info.currency = "USD"
+        mock_ticker = MagicMock()
+        mock_ticker.fast_info = mock_info
+
+        with patch("app.services.price_service.yf.Ticker", return_value=mock_ticker):
+            result = await svc.fetch_stock_price("TEST")
+
+        # 반환값은 anomaly_flag=True
+        assert result.anomaly_flag is True
+        assert result.price == Decimal("200.0")
+        # 캐시는 기존 정상 가격 유지
+        assert svc._cache["stock:TEST"].price == Decimal("100")
+        assert svc._cache["stock:TEST"] is original_cached
 
 
 # ── 주식 시세 (yfinance mock) ────────────────────────────────
@@ -169,38 +224,20 @@ class TestStockPrice:
 
 class TestCryptoPrice:
     @pytest.mark.asyncio
-    async def test_fetch_crypto_price_success(self, svc: PriceService):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"bitcoin": {"krw": 95000000}}
+    async def test_fetch_crypto_price_success(self, svc: PriceService, mock_httpx_client):
+        mock_client = mock_httpx_client({"bitcoin": {"krw": 95000000}})
 
-        with patch("app.services.price_service.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
+        with patch("app.services.price_service.httpx.AsyncClient", return_value=mock_client):
             result = await svc.fetch_crypto_price("bitcoin")
 
         assert result.price == Decimal("95000000")
         assert result.currency == "KRW"
 
     @pytest.mark.asyncio
-    async def test_fetch_crypto_price_invalid_symbol(self, svc: PriceService):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {}
+    async def test_fetch_crypto_price_invalid_symbol(self, svc: PriceService, mock_httpx_client):
+        mock_client = mock_httpx_client({})
 
-        with patch("app.services.price_service.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
+        with patch("app.services.price_service.httpx.AsyncClient", return_value=mock_client):
             with patch("app.services.price_service.send_telegram_message", new_callable=AsyncMock):
                 with pytest.raises(ValueError, match="CoinGecko returned no data"):
                     await svc.fetch_crypto_price("invalidcoin")
@@ -211,41 +248,20 @@ class TestCryptoPrice:
 
 class TestExchangeRate:
     @pytest.mark.asyncio
-    async def test_fetch_exchange_rate_success(self, svc: PriceService):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "result": "success",
-            "rates": {"KRW": 1350.5},
-        }
+    async def test_fetch_exchange_rate_success(self, svc: PriceService, mock_httpx_client):
+        mock_client = mock_httpx_client({"result": "success", "rates": {"KRW": 1350.5}})
 
-        with patch("app.services.price_service.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
+        with patch("app.services.price_service.httpx.AsyncClient", return_value=mock_client):
             result = await svc.fetch_exchange_rate("USD", "KRW")
 
         assert result.price == Decimal("1350.5")
         assert result.currency == "KRW"
 
     @pytest.mark.asyncio
-    async def test_fetch_exchange_rate_missing_target(self, svc: PriceService):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"rates": {"EUR": 0.92}}
+    async def test_fetch_exchange_rate_missing_target(self, svc: PriceService, mock_httpx_client):
+        mock_client = mock_httpx_client({"rates": {"EUR": 0.92}})
 
-        with patch("app.services.price_service.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
+        with patch("app.services.price_service.httpx.AsyncClient", return_value=mock_client):
             with patch("app.services.price_service.send_telegram_message", new_callable=AsyncMock):
                 with pytest.raises(ValueError, match="Exchange rate not found"):
                     await svc.fetch_exchange_rate("USD", "KRW")
@@ -378,18 +394,10 @@ class TestPriceEndpoints:
         assert Decimal(data["price"]) == Decimal("72500.0")
 
     @pytest.mark.asyncio
-    async def test_get_crypto_price_endpoint(self, auth_client):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"bitcoin": {"krw": 95000000}}
+    async def test_get_crypto_price_endpoint(self, auth_client, mock_httpx_client):
+        mock_client = mock_httpx_client({"bitcoin": {"krw": 95000000}})
 
-        with patch("app.services.price_service.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_client
-
+        with patch("app.services.price_service.httpx.AsyncClient", return_value=mock_client):
             resp = await auth_client.get("/api/prices/crypto/bitcoin")
 
         assert resp.status_code == 200
@@ -397,18 +405,10 @@ class TestPriceEndpoints:
         assert data["ticker"] == "bitcoin"
 
     @pytest.mark.asyncio
-    async def test_get_exchange_rate_endpoint(self, auth_client):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"rates": {"KRW": 1350.5}}
+    async def test_get_exchange_rate_endpoint(self, auth_client, mock_httpx_client):
+        mock_client = mock_httpx_client({"rates": {"KRW": 1350.5}})
 
-        with patch("app.services.price_service.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_client
-
+        with patch("app.services.price_service.httpx.AsyncClient", return_value=mock_client):
             resp = await auth_client.get(
                 "/api/prices/exchange-rate",
                 params={"from": "USD", "to": "KRW"},

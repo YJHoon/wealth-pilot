@@ -74,6 +74,15 @@ const defaultCurrencyByType: Record<AssetType, Currency> = {
   real_estate: "KRW",
 };
 
+const currencyDisplayLabels: Record<string, string> = {
+  KRW: "KRW (₩)",
+  USD: "USD ($)",
+  EUR: "EUR (€)",
+  JPY: "JPY (¥)",
+  BTC: "BTC",
+  ETH: "ETH",
+};
+
 // ── Props ──
 
 interface AssetFormProps {
@@ -179,7 +188,7 @@ export function AssetForm({
               disabled={isEditing}
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="유형 선택" />
+                <span>{assetTypeLabels[watchType] ?? "유형 선택"}</span>
               </SelectTrigger>
               <SelectContent>
                 {Object.entries(assetTypeLabels).map(([value, label]) => (
@@ -235,7 +244,7 @@ export function AssetForm({
                 onValueChange={(val) => { if (val) form.setValue("currency", val as Currency); }}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue />
+                  <span>{currencyDisplayLabels[form.watch("currency")] ?? form.watch("currency")}</span>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="USD">USD ($)</SelectItem>
@@ -330,7 +339,7 @@ export function AssetForm({
               onValueChange={(val) => form.setValue("group_id", !val || val === "__none__" ? "" : val)}
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="그룹 선택" />
+                <span>{groups.find((g) => g.id === form.watch("group_id"))?.name ?? "그룹 없음"}</span>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">그룹 없음</SelectItem>
