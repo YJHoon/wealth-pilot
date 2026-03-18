@@ -78,6 +78,8 @@ class PriceService:
         entry = self._cache.get(key)
         if entry is None:
             return False
+        if entry.anomaly_flag:
+            return False
         elapsed = (datetime.now(timezone.utc) - entry.fetched_at).total_seconds()
         return elapsed < self._ttl_seconds()
 
@@ -255,7 +257,7 @@ class PriceService:
     # ------------------------------------------------------------------
 
     async def refresh_all_prices(
-        self, db: AsyncSession, user_id,
+        self, db: AsyncSession, user_id: UUID,
     ) -> tuple[int, int, list[RefreshDetail]]:
         """사용자의 active 자산 전체 시세 갱신.
 
