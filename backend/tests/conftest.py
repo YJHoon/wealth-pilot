@@ -6,7 +6,7 @@ from asgi_lifespan import LifespanManager
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, AsyncSessionLocal
+from app.database import engine, get_db, AsyncSessionLocal
 from app.dependencies.auth import get_current_active_user
 from app.main import app
 from app.models.user import User
@@ -25,7 +25,8 @@ async def client():
 
 @pytest_asyncio.fixture
 async def db_session():
-    """테스트용 DB 세션."""
+    """테스트용 DB 세션 — 이전 이벤트 루프에 바인딩된 커넥션 풀 정리."""
+    await engine.dispose()
     async with AsyncSessionLocal() as session:
         yield session
 

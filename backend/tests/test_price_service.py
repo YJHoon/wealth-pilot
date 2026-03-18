@@ -12,13 +12,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import Asset, AssetStatus, AssetType, Currency
 from app.schemas.price import PriceMode
-from app.services.price_service import CachedPrice, PriceService
+from app.services.price_service import CachedPrice, PriceService, price_service
 
 
 @pytest.fixture
 def svc():
     """매 테스트마다 새 PriceService 인스턴스."""
     return PriceService()
+
+
+@pytest.fixture(autouse=True)
+def _reset_global_price_service():
+    """글로벌 price_service 상태를 매 테스트마다 초기화."""
+    original_mode = price_service._default_mode
+    original_user_modes = price_service._user_modes.copy()
+    original_cache = price_service._cache.copy()
+    yield
+    price_service._default_mode = original_mode
+    price_service._user_modes = original_user_modes
+    price_service._cache = original_cache
 
 
 # ── 캐시 히트/미스 ──────────────────────────────────────────────
@@ -180,7 +192,7 @@ class TestCryptoPrice:
             mock_client_cls.return_value = mock_client
 
             with patch("app.services.price_service.send_telegram_message", new_callable=AsyncMock):
-                with pytest.raises(Exception):
+                with pytest.raises(ValueError, match="CoinGecko returned no data"):
                     await svc.fetch_crypto_price("invalidcoin")
 
 
@@ -225,7 +237,7 @@ class TestExchangeRate:
             mock_client_cls.return_value = mock_client
 
             with patch("app.services.price_service.send_telegram_message", new_callable=AsyncMock):
-                with pytest.raises(Exception):
+                with pytest.raises(ValueError, match="Exchange rate not found"):
                     await svc.fetch_exchange_rate("USD", "KRW")
 
 
@@ -411,6 +423,43 @@ class TestPriceEndpoints:
         )
         assert resp.status_code == 200
         assert resp.json()["current_mode"] == "delayed"
+
+    @pytest.mark.asyncio
+    async def test_refresh_endpoint_success(self, auth_client):
+        with patch.object(
+            price_service,
+            "refresh_all_prices",
+            new_callable=AsyncMock,
+            return_value=(2, 0, [
+                {"ticker": "005930.KS", "success": True, "price": "72500.0"},
+                {"ticker": "bitcoin", "success": True, "price": "95000000"},
+            ]),
+        ):
+            resp = await auth_client.post("/api/prices/refresh")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success_count"] == 2
+        assert data["fail_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_refresh_endpoint_partial_failure(self, auth_client):
+        with patch.object(
+            price_service,
+            "refresh_all_prices",
+            new_callable=AsyncMock,
+            return_value=(1, 1, [
+                {"ticker": "005930.KS", "success": True, "price": "72500.0"},
+                {"ticker": "BADTICKER", "success": False, "error": "API down"},
+            ]),
+        ):
+            resp = await auth_client.post("/api/prices/refresh")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success_count"] == 1
+        assert data["fail_count"] == 1
+        assert len(data["details"]) == 2
 
     @pytest.mark.asyncio
     async def test_stock_price_api_failure_returns_502(self, auth_client):
