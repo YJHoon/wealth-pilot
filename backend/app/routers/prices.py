@@ -4,12 +4,15 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies.auth import get_current_active_user
+from app.models.exchange_rate import ExchangeRate
 from app.models.user import User
 from app.schemas.price import (
+    ExchangeRateInfo,
     ExchangeRateResponse,
     PriceModeResponse,
     PriceModeUpdate,
@@ -104,15 +107,37 @@ async def refresh_all_prices(
     db: AsyncSession = Depends(get_db),
 ):
     """보유 종목 전체 시세 일괄 갱신."""
-    success_count, fail_count, details = await price_service.refresh_all_prices(
-        db, user.id,
+    success_count, fail_count, details, exchange_rates = (
+        await price_service.refresh_all_prices(db, user.id)
     )
     return RefreshResponse(
         success_count=success_count,
         fail_count=fail_count,
         refreshed_at=datetime.now(timezone.utc),
         details=details,
+        exchange_rates=exchange_rates,
     )
+
+
+@router.get("/exchange-rates", response_model=list[ExchangeRateInfo])
+async def get_all_exchange_rates(
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """DB에 저장된 모든 환율 조회."""
+    result = await db.execute(select(ExchangeRate))
+    rows = result.scalars().all()
+    return [
+        ExchangeRateInfo(
+            from_currency=r.from_currency,
+            to_currency=r.to_currency,
+            rate=r.rate,
+            fetched_at=r.fetched_at,
+            source=r.source,
+        )
+        for r in rows
+    ]
 
 
 @router.get("/mode", response_model=PriceModeResponse)

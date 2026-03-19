@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import Asset, AssetStatus, AssetType
 from app.models.exchange_rate import ExchangeRate
-from app.schemas.price import PriceMode, RefreshDetail
+from app.schemas.price import ExchangeRateInfo, PriceMode, RefreshDetail
 from app.services.alert_service import send_telegram_message
 
 logger = logging.getLogger(__name__)
@@ -291,11 +291,11 @@ class PriceService:
 
     async def refresh_all_prices(
         self, db: AsyncSession, user_id: UUID,
-    ) -> tuple[int, int, list[RefreshDetail]]:
+    ) -> tuple[int, int, list[RefreshDetail], list[ExchangeRateInfo]]:
         """사용자의 active 자산 전체 시세 갱신.
 
         Returns:
-            (success_count, fail_count, details)
+            (success_count, fail_count, details, exchange_rates)
         """
         result = await db.execute(
             select(Asset).where(
@@ -336,6 +336,7 @@ class PriceService:
                     details.append(RefreshDetail(
                         ticker=asset.ticker,
                         success=False,
+                        currency=cached.currency,
                         error="anomaly detected — price not updated",
                     ))
                     fail_count += 1
@@ -346,6 +347,7 @@ class PriceService:
                     ticker=asset.ticker,
                     success=True,
                     price=cached.price,
+                    currency=cached.currency,
                 ))
                 success_count += 1
             except Exception as exc:
@@ -361,14 +363,17 @@ class PriceService:
                 fail_count += 1
 
         # 환율 갱신
-        await self._refresh_exchange_rates(db)
+        exchange_rates = await self._refresh_exchange_rates(db)
 
         await db.commit()
-        return success_count, fail_count, details
+        return success_count, fail_count, details, exchange_rates
 
-    async def _refresh_exchange_rates(self, db: AsyncSession) -> None:
+    async def _refresh_exchange_rates(
+        self, db: AsyncSession,
+    ) -> list[ExchangeRateInfo]:
         """주요 환율 갱신 → exchange_rates 테이블 업데이트."""
         pairs = [("USD", "KRW"), ("EUR", "KRW"), ("JPY", "KRW")]
+        results: list[ExchangeRateInfo] = []
         for from_cur, to_cur in pairs:
             try:
                 cached = await self.fetch_exchange_rate(from_cur, to_cur)
@@ -389,11 +394,19 @@ class PriceService:
                     },
                 )
                 await db.execute(stmt)
+                results.append(ExchangeRateInfo(
+                    from_currency=from_cur,
+                    to_currency=to_cur,
+                    rate=cached.price,
+                    fetched_at=cached.fetched_at,
+                    source="exchangerate-api",
+                ))
             except Exception as exc:
                 logger.error(
                     "Failed to refresh exchange rate %s->%s: %s",
                     from_cur, to_cur, exc,
                 )
+        return results
 
 
 # 싱글톤 인스턴스

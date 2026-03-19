@@ -175,3 +175,41 @@ export interface PriceData {
   fetchedAt: string;
   isStale?: boolean;
 }
+
+// ── 시세 갱신 API 타입 ──
+
+export interface RefreshDetailApi {
+  ticker: string;
+  success: boolean;
+  price: number | null;
+  currency: string | null;
+  error: string | null;
+}
+
+export interface ExchangeRateApi {
+  from_currency: string;
+  to_currency: string;
+  rate: number;
+  fetched_at: string;
+  source: string;
+}
+
+export interface RefreshResponseApi {
+  success_count: number;
+  fail_count: number;
+  refreshed_at: string;
+  details: RefreshDetailApi[];
+  exchange_rates: ExchangeRateApi[];
+}
+
+export interface ExchangeRate {
+  fromCurrency: string;
+  toCurrency: string;
+  rate: number;
+  fetchedAt: string;
+  source: string;
+}
+
+export interface PriceModeApi {
+  current_mode: DataFreshness;
+}

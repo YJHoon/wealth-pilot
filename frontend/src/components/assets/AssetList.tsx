@@ -40,10 +40,11 @@ import {
   RefreshCw,
   Loader2,
 } from "lucide-react";
-import type { Asset, AssetType, AssetStatus, PortfolioGroup } from "@/types";
+import type { Asset, AssetType, AssetStatus, DataFreshness, PortfolioGroup } from "@/types";
 import { useAppStore } from "@/stores/appStore";
 import {
   formatAmount,
+  formatDualCurrency,
   formatQuantity,
   formatPnl,
   assetTypeLabels,
@@ -62,6 +63,15 @@ const typeIcons: Record<AssetType, React.ReactNode> = {
 
 // ── Props ──
 
+// ── 신뢰도 인디케이터 ──
+
+const freshnessConfig: Record<DataFreshness, { icon: string; label: string }> = {
+  realtime: { icon: "\uD83D\uDFE2", label: "실시간" },
+  delayed: { icon: "\uD83D\uDFE1", label: "15분 지연" },
+  batch: { icon: "\uD83D\uDFE0", label: "1일 배치" },
+  estimated: { icon: "\uD83D\uDD34", label: "추정치" },
+};
+
 interface AssetListProps {
   assets: Asset[];
   groups: PortfolioGroup[];
@@ -72,6 +82,9 @@ interface AssetListProps {
   onDeleteClick: (asset: Asset) => void;
   onRefreshClick: () => void;
   refreshing?: boolean;
+  lastRefreshedAt?: string | null;
+  priceMode?: DataFreshness | null;
+  toKrw?: (amount: number, currency: string) => number | null;
 }
 
 type TypeFilter = "all" | AssetType;
@@ -87,6 +100,9 @@ export function AssetList({
   onDeleteClick,
   onRefreshClick,
   refreshing,
+  lastRefreshedAt,
+  priceMode,
+  toKrw,
 }: AssetListProps) {
   const isMasked = useAppStore((s) => s.isMasked);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -130,7 +146,22 @@ export function AssetList({
     <div className="space-y-4">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">자산 관리</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-semibold">자산 관리</h1>
+          {priceMode && (
+            <span className="text-xs text-muted-foreground">
+              {freshnessConfig[priceMode].icon} {freshnessConfig[priceMode].label}
+            </span>
+          )}
+          {lastRefreshedAt && (
+            <span className="text-xs text-muted-foreground">
+              마지막 갱신: {new Date(lastRefreshedAt).toLocaleString("ko-KR", {
+                year: "numeric", month: "2-digit", day: "2-digit",
+                hour: "2-digit", minute: "2-digit",
+              })}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onRefreshClick} disabled={refreshing}>
             {refreshing ? (
@@ -274,7 +305,14 @@ export function AssetList({
 
                   {/* 매입가 */}
                   <TableCell className="text-right font-mono">
-                    {formatAmount(asset.purchasePrice, asset.currency, isMasked)}
+                    {asset.currency !== "KRW" && toKrw
+                      ? formatDualCurrency(
+                          asset.purchasePrice,
+                          asset.currency,
+                          toKrw(asset.purchasePrice, asset.currency),
+                          isMasked,
+                        )
+                      : formatAmount(asset.purchasePrice, asset.currency, isMasked)}
                   </TableCell>
 
                   {/* 현재가 */}
@@ -282,8 +320,15 @@ export function AssetList({
                     {isSold
                       ? formatAmount(asset.soldPrice, asset.currency, isMasked)
                       : asset.currentPrice != null
-                        ? formatAmount(asset.currentPrice, asset.currency, isMasked)
-                        : <span className="text-muted-foreground text-xs">데이터 없음</span>}
+                        ? asset.currency !== "KRW" && toKrw
+                          ? formatDualCurrency(
+                              asset.currentPrice,
+                              asset.currency,
+                              toKrw(asset.currentPrice, asset.currency),
+                              isMasked,
+                            )
+                          : formatAmount(asset.currentPrice, asset.currency, isMasked)
+                        : <span className="text-muted-foreground text-xs">데이터를 가져올 수 없습니다</span>}
                   </TableCell>
 
                   {/* 평가손익 */}
