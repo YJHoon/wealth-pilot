@@ -19,7 +19,7 @@ from app.schemas.price import (
     PriceResponse,
     RefreshResponse,
 )
-from app.services.price_service import price_service
+from app.services.price_service import EXCHANGE_RATE_SOURCE, price_service
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ async def get_exchange_rate(
         to_currency=to_currency,
         rate=cached.price,
         fetched_at=cached.fetched_at,
-        source="exchangerate-api",
+        source=EXCHANGE_RATE_SOURCE,
     )
 
 

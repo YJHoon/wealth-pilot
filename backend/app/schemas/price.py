@@ -54,9 +54,5 @@ class PriceModeUpdate(BaseModel):
     mode: PriceMode
 
 
-class ExchangeRateResponse(BaseModel):
-    from_currency: str
-    to_currency: str
-    rate: Decimal
-    fetched_at: datetime
-    source: str
+# ExchangeRateResponse는 ExchangeRateInfo와 동일한 필드 — 별칭으로 통합
+ExchangeRateResponse = ExchangeRateInfo

@@ -380,6 +380,60 @@ class TestRefreshAll:
         assert details[1].success is False
 
 
+# ── 환율 갱신 (DB mock) ───────────────────────────────────────
+
+
+class TestRefreshExchangeRates:
+    @pytest.mark.asyncio
+    async def test_refresh_exchange_rates_success(self, svc: PriceService, mock_httpx_client):
+        """_refresh_exchange_rates가 주요 환율을 갱신하고 결과를 반환하는지 확인."""
+        mock_client = mock_httpx_client({
+            "result": "success",
+            "rates": {"KRW": 1350.5, "EUR": 0.92, "JPY": 110.0},
+        })
+
+        mock_db = AsyncMock(spec=AsyncSession)
+        mock_db.execute = AsyncMock()
+
+        with patch("app.services.price_service.httpx.AsyncClient", return_value=mock_client):
+            results = await svc._refresh_exchange_rates(mock_db)
+
+        assert len(results) == 3
+        currencies = {(r.from_currency, r.to_currency) for r in results}
+        assert ("USD", "KRW") in currencies
+        assert ("EUR", "KRW") in currencies
+        assert ("JPY", "KRW") in currencies
+        # DB upsert가 호출되었는지 확인
+        assert mock_db.execute.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_refresh_exchange_rates_partial_failure(self, svc: PriceService):
+        """일부 환율 갱신 실패 시 성공한 것만 반환."""
+        call_count = 0
+
+        async def mock_fetch(from_cur, to_cur, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if from_cur == "EUR":
+                raise Exception("API error")
+            return CachedPrice(
+                price=Decimal("1350.5"),
+                currency=to_cur,
+                fetched_at=datetime.now(timezone.utc),
+            )
+
+        mock_db = AsyncMock(spec=AsyncSession)
+        mock_db.execute = AsyncMock()
+
+        with patch.object(svc, "fetch_exchange_rate", side_effect=mock_fetch):
+            results = await svc._refresh_exchange_rates(mock_db)
+
+        # EUR 실패 → 2개만 반환
+        assert len(results) == 2
+        currencies = {r.from_currency for r in results}
+        assert "EUR" not in currencies
+
+
 # ── API 엔드포인트 (통합 테스트) ──────────────────────────────
 
 

@@ -55,8 +55,8 @@ export function usePrices(): UsePricesReturn {
         ]);
         setExchangeRates(buildRateMap(rates));
         setPriceMode(mode.current_mode);
-      } catch {
-        // 초기 로드 실패는 무시 (환율 데이터 없을 수 있음)
+      } catch (err) {
+        console.warn("환율/모드 초기 로드 실패", err);
       } finally {
         setLoadingRates(false);
       }

@@ -21,6 +21,9 @@ from app.services.alert_service import send_telegram_message
 
 logger = logging.getLogger(__name__)
 
+# 외부 API 소스명
+EXCHANGE_RATE_SOURCE = "exchangerate-api"
+
 # 모드별 TTL (초)
 _TTL_MAP: dict[PriceMode, int] = {
     PriceMode.BATCH: 86400,     # 24h
@@ -384,7 +387,7 @@ class PriceService:
                     to_currency=to_cur,
                     rate=cached.price,
                     fetched_at=cached.fetched_at,
-                    source="exchangerate-api",
+                    source=EXCHANGE_RATE_SOURCE,
                 ).on_conflict_do_update(
                     index_elements=["from_currency", "to_currency"],
                     set_={
@@ -399,7 +402,7 @@ class PriceService:
                     to_currency=to_cur,
                     rate=cached.price,
                     fetched_at=cached.fetched_at,
-                    source="exchangerate-api",
+                    source=EXCHANGE_RATE_SOURCE,
                 ))
             except Exception as exc:
                 logger.error(
