@@ -29,6 +29,9 @@ httpx==0.27.2
 # 암호화
 cryptography==46.0.5
 
+# 시세 조회
+yfinance>=0.2.36
+
 # 모니터링
 sentry-sdk[fastapi]==2.19.0
 
