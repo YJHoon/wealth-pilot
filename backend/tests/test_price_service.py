@@ -315,8 +315,10 @@ class TestRefreshAll:
 
         with patch("app.services.price_service.yf.Ticker", return_value=mock_ticker):
             # exchange rate 갱신도 mock
-            with patch.object(svc, "_refresh_exchange_rates", new_callable=AsyncMock):
-                success, fail, details = await svc.refresh_all_prices(
+            with patch.object(
+                svc, "_refresh_exchange_rates", new_callable=AsyncMock, return_value=[],
+            ):
+                success, fail, details, ex_rates = await svc.refresh_all_prices(
                     mock_db, uuid.uuid4(),
                 )
 
@@ -324,7 +326,9 @@ class TestRefreshAll:
         assert fail == 0
         assert len(details) == 1
         assert details[0].success is True
+        assert details[0].currency == "KRW"
         assert mock_asset.current_price == Decimal("72500.0")
+        assert ex_rates == []
 
     @pytest.mark.asyncio
     async def test_refresh_all_partial_failure(self, svc: PriceService):
@@ -362,14 +366,17 @@ class TestRefreshAll:
 
         with patch.object(svc, "fetch_crypto_price", side_effect=mock_fetch_crypto):
             with patch.object(svc, "fetch_stock_price", side_effect=mock_fetch_stock):
-                with patch.object(svc, "_refresh_exchange_rates", new_callable=AsyncMock):
-                    success, fail, details = await svc.refresh_all_prices(
+                with patch.object(
+                    svc, "_refresh_exchange_rates", new_callable=AsyncMock, return_value=[],
+                ):
+                    success, fail, details, ex_rates = await svc.refresh_all_prices(
                         mock_db, uuid.uuid4(),
                     )
 
         assert success == 1
         assert fail == 1
         assert details[0].success is True
+        assert details[0].currency == "KRW"
         assert details[1].success is False
 
 
@@ -441,9 +448,9 @@ class TestPriceEndpoints:
             "refresh_all_prices",
             new_callable=AsyncMock,
             return_value=(2, 0, [
-                {"ticker": "005930.KS", "success": True, "price": "72500.0"},
-                {"ticker": "bitcoin", "success": True, "price": "95000000"},
-            ]),
+                {"ticker": "005930.KS", "success": True, "price": "72500.0", "currency": "KRW"},
+                {"ticker": "bitcoin", "success": True, "price": "95000000", "currency": "KRW"},
+            ], []),
         ):
             resp = await auth_client.post("/api/prices/refresh")
 
@@ -451,6 +458,7 @@ class TestPriceEndpoints:
         data = resp.json()
         assert data["success_count"] == 2
         assert data["fail_count"] == 0
+        assert data["exchange_rates"] == []
 
     @pytest.mark.asyncio
     async def test_refresh_endpoint_partial_failure(self, auth_client):
@@ -459,9 +467,9 @@ class TestPriceEndpoints:
             "refresh_all_prices",
             new_callable=AsyncMock,
             return_value=(1, 1, [
-                {"ticker": "005930.KS", "success": True, "price": "72500.0"},
+                {"ticker": "005930.KS", "success": True, "price": "72500.0", "currency": "KRW"},
                 {"ticker": "BADTICKER", "success": False, "error": "API down"},
-            ]),
+            ], []),
         ):
             resp = await auth_client.post("/api/prices/refresh")
 
@@ -481,3 +489,11 @@ class TestPriceEndpoints:
                 resp = await auth_client.get("/api/prices/stock/BADTICKER")
 
         assert resp.status_code == 502
+
+    @pytest.mark.asyncio
+    async def test_get_exchange_rates_endpoint(self, auth_client):
+        """GET /api/prices/exchange-rates 벌크 환율 조회."""
+        resp = await auth_client.get("/api/prices/exchange-rates")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)

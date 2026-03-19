@@ -26,7 +26,16 @@ class RefreshDetail(BaseModel):
     ticker: str
     success: bool
     price: Decimal | None = None
+    currency: str | None = None
     error: str | None = None
+
+
+class ExchangeRateInfo(BaseModel):
+    from_currency: str
+    to_currency: str
+    rate: Decimal
+    fetched_at: datetime
+    source: str
 
 
 class RefreshResponse(BaseModel):
@@ -34,6 +43,7 @@ class RefreshResponse(BaseModel):
     fail_count: int
     refreshed_at: datetime
     details: list[RefreshDetail]
+    exchange_rates: list[ExchangeRateInfo] = []
 
 
 class PriceModeResponse(BaseModel):
