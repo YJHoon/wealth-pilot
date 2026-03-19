@@ -366,20 +366,22 @@ class PriceService:
                 fail_count += 1
 
         # 환율 갱신
-        exchange_rates = await self._refresh_exchange_rates(db)
+        exchange_rates = await self._refresh_exchange_rates(db, user_id=user_id)
 
         await db.commit()
         return success_count, fail_count, details, exchange_rates
 
     async def _refresh_exchange_rates(
-        self, db: AsyncSession,
+        self, db: AsyncSession, *, user_id: UUID | None = None,
     ) -> list[ExchangeRateInfo]:
         """주요 환율 갱신 → exchange_rates 테이블 업데이트."""
         pairs = [("USD", "KRW"), ("EUR", "KRW"), ("JPY", "KRW")]
         results: list[ExchangeRateInfo] = []
         for from_cur, to_cur in pairs:
             try:
-                cached = await self.fetch_exchange_rate(from_cur, to_cur)
+                cached = await self.fetch_exchange_rate(
+                    from_cur, to_cur, user_id=user_id,
+                )
 
                 if cached.anomaly_flag:
                     logger.warning(
@@ -388,22 +390,23 @@ class PriceService:
                     )
                     continue
 
-                # atomic upsert (INSERT ... ON CONFLICT DO UPDATE)
-                stmt = pg_insert(ExchangeRate).values(
-                    from_currency=from_cur,
-                    to_currency=to_cur,
-                    rate=cached.price,
-                    fetched_at=cached.fetched_at,
-                    source=EXCHANGE_RATE_SOURCE,
-                ).on_conflict_do_update(
-                    index_elements=["from_currency", "to_currency"],
-                    set_={
-                        "rate": cached.price,
-                        "fetched_at": cached.fetched_at,
-                        "source": EXCHANGE_RATE_SOURCE,
-                    },
-                )
-                await db.execute(stmt)
+                # savepoint로 개별 upsert 실패 격리
+                async with db.begin_nested():
+                    stmt = pg_insert(ExchangeRate).values(
+                        from_currency=from_cur,
+                        to_currency=to_cur,
+                        rate=cached.price,
+                        fetched_at=cached.fetched_at,
+                        source=EXCHANGE_RATE_SOURCE,
+                    ).on_conflict_do_update(
+                        index_elements=["from_currency", "to_currency"],
+                        set_={
+                            "rate": cached.price,
+                            "fetched_at": cached.fetched_at,
+                            "source": EXCHANGE_RATE_SOURCE,
+                        },
+                    )
+                    await db.execute(stmt)
                 results.append(ExchangeRateInfo(
                     from_currency=from_cur,
                     to_currency=to_cur,
