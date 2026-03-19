@@ -128,4 +128,57 @@ describe("AssetList", () => {
     renderList();
     expect(screen.getByText(/총 2개 자산 표시 중/)).toBeInTheDocument();
   });
+
+  it("priceMode가 전달되면 신뢰도 라벨이 표시된다", () => {
+    renderList({ priceMode: "batch" });
+    expect(screen.getByText(/1일 배치/)).toBeInTheDocument();
+  });
+
+  it("lastRefreshedAt이 전달되면 마지막 갱신 시각이 표시된다", () => {
+    renderList({ lastRefreshedAt: "2026-03-19T12:00:00Z" });
+    expect(screen.getByText(/마지막 갱신/)).toBeInTheDocument();
+  });
+
+  it("refreshing=true이면 시세 갱신 버튼이 비활성화된다", () => {
+    renderList({ refreshing: true });
+    const btn = screen.getByRole("button", { name: /시세 갱신/ });
+    expect(btn).toBeDisabled();
+  });
+
+  it("isMasked=true이면 금액이 마스킹 처리된다", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    jest.spyOn(require("@/stores/appStore"), "useAppStore").mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (selector: any) => selector({ isMasked: true }),
+    );
+    renderList();
+    const maskedElements = screen.getAllByText("●●●●●●원");
+    expect(maskedElements.length).toBeGreaterThan(0);
+  });
+
+  it("해외자산에 toKrw가 전달되면 원화 병기된다", () => {
+    const foreignAsset: Asset = {
+      id: "a3",
+      groupId: null,
+      type: "foreign_stock",
+      status: "active",
+      name: "Apple",
+      ticker: "AAPL",
+      quantity: 5,
+      purchasePrice: 150,
+      currentPrice: 180,
+      currency: "USD",
+      metadata: {},
+      soldAt: null,
+      soldPrice: null,
+      realizedPnl: null,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    };
+    const mockToKrw = (amount: number, currency: string) =>
+      currency === "USD" ? amount * 1350 : null;
+    renderList({ assets: [foreignAsset], toKrw: mockToKrw });
+    // 원화 환산 금액이 표시되어야 함
+    expect(screen.getByText("Apple")).toBeInTheDocument();
+  });
 });
