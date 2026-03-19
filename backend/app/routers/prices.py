@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +28,6 @@ router = APIRouter(prefix="/api/prices", tags=["시세"])
 
 @router.get("/stock/{ticker}", response_model=PriceResponse)
 async def get_stock_price(
-    request: Request,
     ticker: str,
     user: User = Depends(get_current_active_user),
 ):
@@ -52,7 +51,6 @@ async def get_stock_price(
 
 @router.get("/crypto/{symbol}", response_model=PriceResponse)
 async def get_crypto_price(
-    request: Request,
     symbol: str,
     user: User = Depends(get_current_active_user),
 ):
@@ -76,7 +74,6 @@ async def get_crypto_price(
 
 @router.get("/exchange-rate", response_model=ExchangeRateResponse)
 async def get_exchange_rate(
-    request: Request,
     from_currency: str = Query(alias="from"),
     to_currency: str = Query(alias="to"),
     user: User = Depends(get_current_active_user),
@@ -102,7 +99,6 @@ async def get_exchange_rate(
 
 @router.post("/refresh", response_model=RefreshResponse)
 async def refresh_all_prices(
-    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -121,7 +117,6 @@ async def refresh_all_prices(
 
 @router.get("/exchange-rates", response_model=list[ExchangeRateInfo])
 async def get_all_exchange_rates(
-    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,7 +137,6 @@ async def get_all_exchange_rates(
 
 @router.get("/mode", response_model=PriceModeResponse)
 async def get_price_mode(
-    request: Request,
     user: User = Depends(get_current_active_user),
 ):
     """현재 시세 모드 조회 (유저별)."""
@@ -151,7 +145,6 @@ async def get_price_mode(
 
 @router.put("/mode", response_model=PriceModeResponse)
 async def update_price_mode(
-    request: Request,
     body: PriceModeUpdate,
     user: User = Depends(get_current_active_user),
 ):

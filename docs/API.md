@@ -744,7 +744,7 @@ DB에 저장된 모든 환율 벌크 조회.
 | 항목 | 값 |
 |------|---|
 | 인증 | **필수** (2FA 포함) |
-| Body | `{ "mode": "batch" | "delayed" | "realtime" }` |
+| Body | `{ "mode": "batch" &#124; "delayed" &#124; "realtime" }` |
 
 **응답** `200`: `PriceModeResponse`
 
@@ -754,7 +754,7 @@ DB에 저장된 모든 환율 벌크 조회.
 
 ### 대시보드 (`/api/dashboard`)
 
-```
+```text
 GET    /api/dashboard/summary      # 자산 요약 (총액, 비중, 손익)
 GET    /api/dashboard/history      # 자산 변동 추이 (?period=1M|3M|6M|1Y)
 POST   /api/dashboard/snapshot     # 자산 스냅샷 저장
@@ -762,7 +762,7 @@ POST   /api/dashboard/snapshot     # 자산 스냅샷 저장
 
 ### 보안 (`/api/security`)
 
-```
+```text
 GET    /api/security/access-logs       # 액세스 로그 조회
 ```
 

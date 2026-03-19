@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from uuid import UUID
 
 import httpx
@@ -381,6 +381,13 @@ class PriceService:
             try:
                 cached = await self.fetch_exchange_rate(from_cur, to_cur)
 
+                if cached.anomaly_flag:
+                    logger.warning(
+                        "Skipping exchange rate upsert for %s->%s due to anomaly",
+                        from_cur, to_cur,
+                    )
+                    continue
+
                 # atomic upsert (INSERT ... ON CONFLICT DO UPDATE)
                 stmt = pg_insert(ExchangeRate).values(
                     from_currency=from_cur,
@@ -393,7 +400,7 @@ class PriceService:
                     set_={
                         "rate": cached.price,
                         "fetched_at": cached.fetched_at,
-                        "source": "exchangerate-api",
+                        "source": EXCHANGE_RATE_SOURCE,
                     },
                 )
                 await db.execute(stmt)

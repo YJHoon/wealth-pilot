@@ -369,7 +369,7 @@ class TestRefreshAll:
                 with patch.object(
                     svc, "_refresh_exchange_rates", new_callable=AsyncMock, return_value=[],
                 ):
-                    success, fail, details, ex_rates = await svc.refresh_all_prices(
+                    success, fail, details, _ex_rates = await svc.refresh_all_prices(
                         mock_db, uuid.uuid4(),
                     )
 
