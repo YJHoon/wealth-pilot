@@ -313,13 +313,15 @@ class TestRefreshAll:
         mock_ticker = MagicMock()
         mock_ticker.fast_info = mock_info
 
+        user_id = uuid.uuid4()
+
         with patch("app.services.price_service.yf.Ticker", return_value=mock_ticker):
             # exchange rate 갱신도 mock
             with patch.object(
                 svc, "_refresh_exchange_rates", new_callable=AsyncMock, return_value=[],
-            ):
+            ) as mock_refresh_rates:
                 success, fail, details, ex_rates = await svc.refresh_all_prices(
-                    mock_db, uuid.uuid4(),
+                    mock_db, user_id,
                 )
 
         assert success == 1
@@ -329,6 +331,7 @@ class TestRefreshAll:
         assert details[0].currency == "KRW"
         assert mock_asset.current_price == Decimal("72500.0")
         assert ex_rates == []
+        mock_refresh_rates.assert_awaited_once_with(mock_db, user_id=user_id)
 
     @pytest.mark.asyncio
     async def test_refresh_all_partial_failure(self, svc: PriceService):
@@ -364,19 +367,22 @@ class TestRefreshAll:
         async def mock_fetch_stock(ticker, *, user_id=None):
             raise Exception("API down")
 
+        user_id = uuid.uuid4()
+
         with patch.object(svc, "fetch_crypto_price", side_effect=mock_fetch_crypto):
             with patch.object(svc, "fetch_stock_price", side_effect=mock_fetch_stock):
                 with patch.object(
                     svc, "_refresh_exchange_rates", new_callable=AsyncMock, return_value=[],
-                ):
+                ) as mock_refresh_rates:
                     success, fail, details, _ex_rates = await svc.refresh_all_prices(
-                        mock_db, uuid.uuid4(),
+                        mock_db, user_id,
                     )
 
         assert success == 1
         assert fail == 1
         assert details[0].success is True
         assert details[0].currency == "KRW"
+        mock_refresh_rates.assert_awaited_once_with(mock_db, user_id=user_id)
         assert details[1].success is False
 
 
@@ -384,6 +390,18 @@ class TestRefreshAll:
 
 
 class TestRefreshExchangeRates:
+    @staticmethod
+    def _make_savepoint_db():
+        """begin_nested를 지원하는 mock DB 세션 생성."""
+        mock_db = AsyncMock(spec=AsyncSession)
+        mock_db.execute = AsyncMock()
+        # begin_nested → async context manager (savepoint)
+        mock_nested = AsyncMock()
+        mock_nested.__aenter__ = AsyncMock(return_value=mock_nested)
+        mock_nested.__aexit__ = AsyncMock(return_value=False)
+        mock_db.begin_nested.return_value = mock_nested
+        return mock_db
+
     @pytest.mark.asyncio
     async def test_refresh_exchange_rates_success(self, svc: PriceService, mock_httpx_client):
         """_refresh_exchange_rates가 주요 환율을 갱신하고 결과를 반환하는지 확인."""
@@ -392,11 +410,11 @@ class TestRefreshExchangeRates:
             "rates": {"KRW": 1350.5, "EUR": 0.92, "JPY": 110.0},
         })
 
-        mock_db = AsyncMock(spec=AsyncSession)
-        mock_db.execute = AsyncMock()
+        mock_db = self._make_savepoint_db()
+        user_id = uuid.uuid4()
 
         with patch("app.services.price_service.httpx.AsyncClient", return_value=mock_client):
-            results = await svc._refresh_exchange_rates(mock_db)
+            results = await svc._refresh_exchange_rates(mock_db, user_id=user_id)
 
         assert len(results) == 3
         currencies = {(r.from_currency, r.to_currency) for r in results}
@@ -409,11 +427,7 @@ class TestRefreshExchangeRates:
     @pytest.mark.asyncio
     async def test_refresh_exchange_rates_partial_failure(self, svc: PriceService):
         """일부 환율 갱신 실패 시 성공한 것만 반환."""
-        call_count = 0
-
         async def mock_fetch(from_cur, to_cur, **kwargs):
-            nonlocal call_count
-            call_count += 1
             if from_cur == "EUR":
                 raise Exception("API error")
             return CachedPrice(
@@ -422,8 +436,7 @@ class TestRefreshExchangeRates:
                 fetched_at=datetime.now(timezone.utc),
             )
 
-        mock_db = AsyncMock(spec=AsyncSession)
-        mock_db.execute = AsyncMock()
+        mock_db = self._make_savepoint_db()
 
         with patch.object(svc, "fetch_exchange_rate", side_effect=mock_fetch):
             results = await svc._refresh_exchange_rates(mock_db)

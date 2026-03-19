@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { EndpointInfo, SchemaObject } from "./ApiExplorer";
 import { SchemaViewer } from "./SchemaViewer";
 
@@ -30,17 +30,25 @@ export function EndpointCard({ endpoint, schemas }: Props) {
   const { item } = endpoint;
 
   const hasParams = (item.parameters?.length ?? 0) > 0;
-  const hasBody = !!item.requestBody;
+  const hasBody = !!item.requestBody && !!item.requestBody.content && Object.keys(item.requestBody.content).length > 0;
   const hasResponses = !!item.responses && Object.keys(item.responses).length > 0;
 
-  const initialTab = useMemo<"params" | "body" | "responses">(() => {
+  const preferredTab = useMemo<"params" | "body" | "responses">(() => {
     if (hasResponses) return "responses";
     if (hasBody) return "body";
     if (hasParams) return "params";
     return "responses";
   }, [hasResponses, hasBody, hasParams]);
 
-  const [activeTab, setActiveTab] = useState<"params" | "body" | "responses">(initialTab);
+  const [activeTab, setActiveTab] = useState<"params" | "body" | "responses">(preferredTab);
+
+  useEffect(() => {
+    const tabAvailable =
+      (activeTab === "params" && hasParams) ||
+      (activeTab === "body" && hasBody) ||
+      (activeTab === "responses" && hasResponses);
+    if (!tabAvailable) setActiveTab(preferredTab);
+  }, [hasParams, hasBody, hasResponses, activeTab, preferredTab]);
 
   const requiresAuth = item.security !== undefined && item.security.length > 0;
 
