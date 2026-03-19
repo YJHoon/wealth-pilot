@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import type { EndpointInfo, SchemaObject } from "./ApiExplorer";
 import { SchemaViewer } from "./SchemaViewer";
 
@@ -25,7 +25,6 @@ interface Props {
 
 export function EndpointCard({ endpoint, schemas }: Props) {
   const [open, setOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"params" | "body" | "responses">("responses");
 
   const style = METHOD_STYLES[endpoint.method] ?? METHOD_STYLES.get;
   const { item } = endpoint;
@@ -34,11 +33,14 @@ export function EndpointCard({ endpoint, schemas }: Props) {
   const hasBody = !!item.requestBody;
   const hasResponses = !!item.responses && Object.keys(item.responses).length > 0;
 
-  useEffect(() => {
-    if (hasResponses) setActiveTab("responses");
-    else if (hasBody) setActiveTab("body");
-    else if (hasParams) setActiveTab("params");
+  const initialTab = useMemo<"params" | "body" | "responses">(() => {
+    if (hasResponses) return "responses";
+    if (hasBody) return "body";
+    if (hasParams) return "params";
+    return "responses";
   }, [hasResponses, hasBody, hasParams]);
+
+  const [activeTab, setActiveTab] = useState<"params" | "body" | "responses">(initialTab);
 
   const requiresAuth = item.security !== undefined && item.security.length > 0;
 
