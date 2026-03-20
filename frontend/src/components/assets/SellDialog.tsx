@@ -39,7 +39,7 @@ export function SellDialog({ open, onOpenChange, asset, onSubmit }: SellDialogPr
 
   const form = useForm<SellFormValues>({
     resolver: zodResolver(sellSchema) as Resolver<SellFormValues>,
-    defaultValues: { sold_price: undefined as unknown as number },
+    defaultValues: { sold_price: "" as unknown as number },
   });
 
   const watchPrice = form.watch("sold_price");

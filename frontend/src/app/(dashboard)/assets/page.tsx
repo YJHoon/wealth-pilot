@@ -7,6 +7,7 @@ import { AssetForm, type AssetFormValues } from "@/components/assets/AssetForm";
 import { SellDialog } from "@/components/assets/SellDialog";
 import { useAssets } from "@/hooks/useAssets";
 import { useGroups } from "@/hooks/useGroups";
+import { usePrices } from "@/hooks/usePrices";
 import type { Asset, AssetCreateRequest, AssetUpdateRequest } from "@/types";
 import { ApiError } from "@/lib/api";
 
@@ -14,6 +15,7 @@ export default function AssetsPage() {
   const { assets, loading, refetch, createAsset, updateAsset, deleteAsset, sellAsset } =
     useAssets();
   const { groups } = useGroups();
+  const { refreshPrices, lastRefreshedAt, priceMode, toKrw } = usePrices();
 
   // 폼 다이얼로그 상태
   const [formOpen, setFormOpen] = useState(false);
@@ -135,14 +137,21 @@ export default function AssetsPage() {
   const handleRefreshClick = useCallback(async () => {
     setRefreshing(true);
     try {
+      const result = await refreshPrices();
       await refetch();
-      toast.success("시세가 갱신되었습니다.");
+      if (result.fail_count > 0) {
+        toast.warning(
+          `시세 갱신: ${result.success_count}건 성공, ${result.fail_count}건 실패`,
+        );
+      } else {
+        toast.success(`시세 ${result.success_count}건 갱신 완료`);
+      }
     } catch {
       toast.error("시세 갱신에 실패했습니다.");
     } finally {
       setRefreshing(false);
     }
-  }, [refetch]);
+  }, [refreshPrices, refetch]);
 
   return (
     <>
@@ -156,6 +165,9 @@ export default function AssetsPage() {
         onDeleteClick={handleDeleteClick}
         onRefreshClick={handleRefreshClick}
         refreshing={refreshing}
+        lastRefreshedAt={lastRefreshedAt}
+        priceMode={priceMode}
+        toKrw={toKrw}
       />
 
       <AssetForm

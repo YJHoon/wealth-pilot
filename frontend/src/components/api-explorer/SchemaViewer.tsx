@@ -16,18 +16,26 @@ function resolveRef(ref: string, schemas: Record<string, SchemaObject>): SchemaO
   return schemas[name] ?? null;
 }
 
-function resolveSchema(schema: SchemaObject, schemas: Record<string, SchemaObject>): SchemaObject {
+function resolveSchema(
+  schema: SchemaObject,
+  schemas: Record<string, SchemaObject>,
+  visited: Set<string> = new Set(),
+): SchemaObject {
   if (schema.$ref) {
+    if (visited.has(schema.$ref)) {
+      return { type: "object", description: "(순환 참조)" };
+    }
+    visited.add(schema.$ref);
     const resolved = resolveRef(schema.$ref, schemas);
-    return resolved ?? schema;
+    return resolved ? resolveSchema(resolved, schemas, visited) : schema;
   }
   if (schema.anyOf?.length) {
     const nonNull = schema.anyOf.find((s) => s.type !== "null");
-    if (nonNull) return resolveSchema(nonNull, schemas);
+    if (nonNull) return resolveSchema(nonNull, schemas, visited);
   }
   if (schema.allOf?.length) {
     const merged = schema.allOf
-      .map((s) => resolveSchema(s, schemas))
+      .map((s) => resolveSchema(s, schemas, visited))
       .reduce<SchemaObject>(
         (acc, cur) => ({
           ...acc,
