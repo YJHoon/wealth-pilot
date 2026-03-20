@@ -33,6 +33,8 @@ class AccessAction:
     GROUP_VIEW = "group_view"
     TOTP_SETUP = "totp_setup"
     TOTP_VERIFY = "totp_verify"
+    DASHBOARD_VIEW = "dashboard_view"
+    SNAPSHOT_CREATE = "snapshot_create"
 
 
 async def log_access(
