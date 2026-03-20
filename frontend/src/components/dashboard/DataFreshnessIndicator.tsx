@@ -4,7 +4,7 @@ import type { DataFreshness } from "@/types";
 
 const freshnessConfig: Record<DataFreshness, { icon: string; label: string; color: string }> = {
   realtime: { icon: "\uD83D\uDFE2", label: "실시간", color: "text-emerald-500" },
-  delayed: { icon: "\uD83D\uDFE1", label: "15분 지연", color: "text-yellow-500" },
+  delayed: { icon: "\uD83D\uDFE1", label: "5~30분 지연", color: "text-yellow-500" },
   batch: { icon: "\uD83D\uDFE0", label: "1일 배치", color: "text-orange-500" },
   estimated: { icon: "\uD83D\uDD34", label: "추정치", color: "text-red-500" },
 };
@@ -29,13 +29,8 @@ export function DataFreshnessIndicator({ updatedAt, freshness }: DataFreshnessIn
   );
 
   const config = freshnessConfig[level];
-  const formattedTime = updated.toLocaleString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const formattedTime = `${updated.getFullYear()}.${pad(updated.getMonth() + 1)}.${pad(updated.getDate())} ${pad(updated.getHours())}:${pad(updated.getMinutes())}`;
 
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="freshness">

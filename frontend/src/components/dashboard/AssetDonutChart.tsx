@@ -95,8 +95,8 @@ export function AssetDonutChart({ summary }: AssetDonutChartProps) {
                     paddingAngle={2}
                     stroke="none"
                   >
-                    {data.map((entry, i) => (
-                      <Cell key={i} fill={entry.color} />
+                    {data.map((entry) => (
+                      <Cell key={entry.name} fill={entry.color} />
                     ))}
                   </Pie>
                   {!isMasked && (
@@ -126,7 +126,7 @@ export function AssetDonutChart({ summary }: AssetDonutChartProps) {
                     <span className="text-muted-foreground">{entry.name}</span>
                   </div>
                   <div className="text-right font-mono">
-                    {isMasked ? "●●●●●●원" : (
+                    {isMasked ? "●●%" : (
                       <>
                         <span className="font-medium">{entry.ratio.toFixed(1)}%</span>
                       </>
