@@ -28,8 +28,9 @@ function formatAxisKrw(value: number): string {
 }
 
 function formatDateLabel(date: string): string {
-  const d = new Date(date);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+  // YYYY-MM-DD 문자열을 직접 파싱하여 UTC 오프셋으로 인한 날짜 오차 방지
+  const [, m, d] = date.split("-");
+  return `${parseInt(m)}/${parseInt(d)}`;
 }
 
 interface TooltipProps {
@@ -120,7 +121,7 @@ export function TerminalChart({ data, period, onPeriodChange }: Props) {
               minTickGap={40}
             />
             <YAxis
-              tickFormatter={(v) => (isMasked ? "●●●" : formatAxisKrw(v))}
+              tickFormatter={(v) => (isMasked ? "●●●●●●원" : formatAxisKrw(v))}
               tick={{ fontSize: 10, fill: "oklch(0.708 0 0)" }}
               axisLine={false}
               tickLine={false}

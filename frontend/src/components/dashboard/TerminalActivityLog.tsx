@@ -7,12 +7,15 @@ import { useAppStore } from "@/stores/appStore";
 const typeConfig = {
   buy: { icon: ArrowDownRight, color: "text-emerald-400", label: "매수" },
   sell: { icon: ArrowUpRight, color: "text-red-400", label: "매도" },
-  price_update: { icon: RefreshCw, color: "text-blue-400", label: "시세" },
+  priceUpdate: { icon: RefreshCw, color: "text-blue-400", label: "시세" },
 } as const;
 
 function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const ts = new Date(iso).getTime();
+  if (isNaN(ts)) return "-";
+  const diff = Math.max(Date.now() - ts, 0);
   const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "방금";
   if (mins < 60) return `${mins}분 전`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}시간 전`;
@@ -64,11 +67,11 @@ export function TerminalActivityLog({ activity }: Props) {
                   <td className="py-1.5 px-2 text-foreground">{item.assetName}</td>
                   <td className="py-1.5 px-2 text-muted-foreground">{item.description}</td>
                   <td className="py-1.5 px-2 text-right text-foreground">
-                    {item.amount
-                      ? isMasked
+                    {item.amount == null
+                      ? "-"
+                      : isMasked
                         ? "●●●●●●원"
-                        : `${Math.round(item.amount).toLocaleString("ko-KR")}원`
-                      : "-"}
+                        : `${Math.round(item.amount).toLocaleString("ko-KR")}원`}
                   </td>
                   <td className="py-1.5 px-3 text-right text-muted-foreground">
                     {formatRelativeTime(item.timestamp)}

@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { useAppStore } from "@/stores/appStore";
 import { useDashboardData } from "@/hooks/useDashboardData";
@@ -9,16 +8,12 @@ import { MinimalDashboard } from "@/components/dashboard/MinimalDashboard";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 export default function DashboardPage() {
-  const { viewMode, setViewMode } = useAppStore();
+  const { viewMode } = useAppStore();
   const data = useDashboardData();
   const isMobile = useMediaQuery("(max-width: 1023px)");
 
-  // 모바일에서는 자동으로 미니멀 모드 전환
-  useEffect(() => {
-    if (isMobile && viewMode === "terminal") {
-      setViewMode("minimal");
-    }
-  }, [isMobile, viewMode, setViewMode]);
+  // 저장된 viewMode 선호값은 유지하되, 렌더링에만 모바일 보정 적용
+  const effectiveViewMode = isMobile ? "minimal" : viewMode;
 
   if (data.isLoading) {
     return (
@@ -28,7 +23,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (viewMode === "terminal" && !isMobile) {
+  if (effectiveViewMode === "terminal") {
     return <TerminalDashboard data={data} />;
   }
 

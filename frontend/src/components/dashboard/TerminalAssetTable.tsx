@@ -19,8 +19,7 @@ import {
   formatPercent,
   pnlColorClass,
 } from "@/lib/format";
-
-const EXCHANGE_RATE = 1380;
+import { toKrwRate } from "@/hooks/useDashboardData";
 
 const typeIcons: Record<AssetType, React.ReactNode> = {
   cash: <Banknote className="h-3.5 w-3.5 text-yellow-400" />,
@@ -31,24 +30,22 @@ const typeIcons: Record<AssetType, React.ReactNode> = {
 };
 
 function getChangePercent(asset: Asset): number {
-  if (!asset.currentPrice || asset.type === "cash") return 0;
+  if (asset.currentPrice == null || asset.type === "cash") return 0;
   return ((asset.currentPrice - asset.purchasePrice) / asset.purchasePrice) * 100;
 }
 
 function getEvalKrw(asset: Asset): number {
   const price = asset.currentPrice ?? asset.purchasePrice;
   if (asset.type === "cash") return asset.purchasePrice * asset.quantity;
-  if (asset.currency === "KRW") return price * asset.quantity;
-  return price * asset.quantity * EXCHANGE_RATE;
+  const rate = toKrwRate(asset.currency);
+  return price * asset.quantity * rate;
 }
 
 function getPnlKrw(asset: Asset): number {
   if (asset.type === "cash") return 0;
   const evalKrw = getEvalKrw(asset);
-  const costKrw =
-    asset.currency === "KRW"
-      ? asset.purchasePrice * asset.quantity
-      : asset.purchasePrice * asset.quantity * EXCHANGE_RATE;
+  const rate = toKrwRate(asset.currency);
+  const costKrw = asset.purchasePrice * asset.quantity * rate;
   return evalKrw - costKrw;
 }
 
