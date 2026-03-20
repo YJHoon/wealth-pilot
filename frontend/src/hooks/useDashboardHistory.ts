@@ -19,7 +19,7 @@ function toHistoryPoints(api: DashboardHistoryApi): HistoryDataPoint[] {
 
 export function useDashboardHistory(period: string = "3M") {
   const { data: session } = useSession();
-  const accessToken = (session as { accessToken?: string } | null)?.accessToken;
+  const accessToken = session?.accessToken;
 
   const { data, error, isLoading } = useSWR<HistoryDataPoint[]>(
     accessToken ? `/api/dashboard/history?period=${period}` : null,

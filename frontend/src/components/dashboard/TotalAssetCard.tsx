@@ -59,6 +59,7 @@ export function TotalAssetCard({ summary }: TotalAssetCardProps) {
             {PNL_TABS.map((tab) => (
               <button
                 key={tab.value}
+                type="button"
                 onClick={() => setPnlTab(tab.value)}
                 className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                   pnlTab === tab.value

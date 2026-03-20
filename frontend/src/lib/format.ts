@@ -74,6 +74,7 @@ export function formatPnl(
 
 /** 금액 축약 포맷 — 차트 Y축용 ("1.5억", "300만", "50조") */
 export function formatAmountAbbreviated(value: number): string {
+  if (!Number.isFinite(value)) return "-";
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
 
