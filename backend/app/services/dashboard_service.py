@@ -39,13 +39,12 @@ async def _get_exchange_rates(db: AsyncSession) -> dict[str, Decimal]:
 
 
 def _to_krw(amount: Decimal, currency: str, rates: dict[str, Decimal]) -> Decimal:
-    """금액을 원화로 환산. 환율 없으면 원본 반환 (경고 로그)."""
+    """금액을 원화로 환산. 환율이 없으면 ValueError를 발생시킨다."""
     if currency == "KRW":
         return amount
     rate = rates.get(currency)
     if rate is None:
-        logger.warning("Exchange rate not found for %s→KRW, using amount as-is", currency)
-        return amount
+        raise ValueError(f"Missing exchange rate for {currency}→KRW")
     return (amount * rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
 
@@ -87,7 +86,13 @@ async def get_dashboard_summary(
             # 매도 자산: 실현 손익만 반영
             rpnl = decrypt_decimal_optional(asset.realized_pnl)
             if rpnl is not None:
-                realized_pnl += _to_krw(rpnl, currency, rates)
+                try:
+                    realized_pnl += _to_krw(rpnl, currency, rates)
+                except ValueError:
+                    logger.warning(
+                        "Skipping sold asset %s: missing exchange rate for %s",
+                        asset.id, currency,
+                    )
             continue
 
         # 활성 자산: 평가액 계산
@@ -100,8 +105,15 @@ async def get_dashboard_summary(
             # 현재가 없으면 매입가 기준
             value = quantity * purchase_price
 
-        value_krw = _to_krw(value, currency, rates)
-        cost_krw = _to_krw(quantity * purchase_price, currency, rates)
+        try:
+            value_krw = _to_krw(value, currency, rates)
+            cost_krw = _to_krw(quantity * purchase_price, currency, rates)
+        except ValueError:
+            logger.warning(
+                "Skipping asset %s: missing exchange rate for %s",
+                asset.id, currency,
+            )
+            continue
 
         total_value_krw += value_krw
         total_cost_krw += cost_krw

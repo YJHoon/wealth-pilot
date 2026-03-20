@@ -78,6 +78,9 @@ async def create_dashboard_snapshot(
     - 같은 날짜에 이미 있으면 업데이트
     - expires_at = created_at + 1년
     """
+    # create_snapshot commits the snapshot in its own transaction so it persists
+    # even if subsequent access logging fails.  The try/except below is
+    # best-effort: rollback only undoes the log_access write, not the snapshot.
     snapshot = await create_snapshot(db, user.id)
 
     try:
