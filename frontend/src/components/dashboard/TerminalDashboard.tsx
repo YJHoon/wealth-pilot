@@ -22,18 +22,22 @@ export function TerminalDashboard() {
 
   if (data.isLoading) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full items-center justify-center" role="status" aria-label="대시보드 로딩 중">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="sr-only">로딩 중…</span>
       </div>
     );
   }
   const badge = freshnessBadge[data.freshness] ?? defaultBadge;
-  const lastUpdated = new Date(data.summary.updatedAt).toLocaleString("ko-KR", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const parsed = new Date(data.summary.updatedAt);
+  const lastUpdated = Number.isFinite(parsed.getTime())
+    ? parsed.toLocaleString("ko-KR", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "-";
 
   return (
     <div className="flex flex-col h-full gap-2">
@@ -51,7 +55,7 @@ export function TerminalDashboard() {
           variant="ghost"
           size="sm"
           className="h-7 gap-1.5 text-xs"
-          onClick={data.refresh}
+          onClick={() => void data.refresh()}
           disabled={data.isRefreshing}
         >
           {data.isRefreshing ? (
