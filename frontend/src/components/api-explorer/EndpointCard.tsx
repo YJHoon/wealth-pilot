@@ -60,6 +60,7 @@ export function EndpointCard({ endpoint, schemas }: Props) {
     >
       {/* 헤더 — 클릭으로 열기/닫기 */}
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-3 px-4 py-3.5 text-left group"
       >
@@ -200,6 +201,7 @@ function TabButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`px-3 py-1.5 text-xs rounded-t-lg border-b-2 transition-all ${
         active
