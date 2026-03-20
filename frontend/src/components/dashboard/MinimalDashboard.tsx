@@ -13,7 +13,9 @@ import { formatMaskedKrw, formatChangeKrw, formatPercent, pnlColorClass, assetTy
 import type { DashboardData } from "@/hooks/useDashboardData";
 import type { AssetType } from "@/types";
 
-const FRESHNESS_BADGE: Record<string, { label: string; dot: string }> = {
+const defaultBadge = { label: "알 수 없음", dot: "bg-muted-foreground" } as const;
+
+const freshnessBadge: Record<string, { label: string; dot: string }> = {
   realtime: { label: "실시간", dot: "bg-emerald-400" },
   delayed: { label: "15분 지연", dot: "bg-yellow-400" },
   batch: { label: "1일 배치", dot: "bg-orange-400" },
@@ -27,7 +29,7 @@ interface Props {
 export function MinimalDashboard({ data }: Props) {
   const { isMasked } = useAppStore();
   const { summary } = data;
-  const badge = FRESHNESS_BADGE[data.freshness];
+  const badge = freshnessBadge[data.freshness] ?? defaultBadge;
   const lastUpdated = new Date(summary.updatedAt).toLocaleString("ko-KR", {
     month: "2-digit",
     day: "2-digit",

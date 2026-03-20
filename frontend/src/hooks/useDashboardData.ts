@@ -30,7 +30,6 @@ const MOCK_GROUPS: PortfolioGroup[] = [
 const MOCK_ASSETS: Asset[] = [
   {
     id: "a1",
-
     groupId: "g1",
     type: "domestic_stock",
     status: "active",
@@ -49,7 +48,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a2",
-
     groupId: "g1",
     type: "domestic_stock",
     status: "active",
@@ -68,7 +66,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a3",
-
     groupId: "g1",
     type: "domestic_stock",
     status: "active",
@@ -87,7 +84,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a4",
-
     groupId: "g1",
     type: "foreign_stock",
     status: "active",
@@ -106,7 +102,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a5",
-
     groupId: "g1",
     type: "foreign_stock",
     status: "active",
@@ -125,7 +120,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a6",
-
     groupId: "g2",
     type: "crypto",
     status: "active",
@@ -144,7 +138,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a7",
-
     groupId: "g2",
     type: "crypto",
     status: "active",
@@ -163,7 +156,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a8",
-
     groupId: null,
     type: "cash",
     status: "active",
@@ -182,7 +174,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a9",
-
     groupId: null,
     type: "cash",
     status: "active",
@@ -201,7 +192,6 @@ const MOCK_ASSETS: Asset[] = [
   },
   {
     id: "a10",
-
     groupId: "g1",
     type: "domestic_stock",
     status: "sold",
@@ -220,7 +210,17 @@ const MOCK_ASSETS: Asset[] = [
   },
 ];
 
-const EXCHANGE_RATE_USD_KRW = 1380;
+// 통화별 KRW 환율 (mock)
+const exchangeRatesKrw: Record<string, number> = {
+  KRW: 1,
+  USD: 1380,
+  EUR: 1500,
+  JPY: 9.2,
+};
+
+function toKrwRate(currency: string): number {
+  return exchangeRatesKrw[currency] ?? 1;
+}
 
 // ── 계산 유틸 ──
 
@@ -229,23 +229,19 @@ function getKrwValue(asset: Asset): number {
   if (asset.type === "cash") {
     return asset.purchasePrice * asset.quantity;
   }
-  if (asset.currency === "KRW") {
-    return price * asset.quantity;
-  }
-  return price * asset.quantity * EXCHANGE_RATE_USD_KRW;
+  const rate = toKrwRate(asset.currency);
+  return price * asset.quantity * rate;
 }
 
 function getPurchaseKrw(asset: Asset): number {
   if (asset.type === "cash") {
     return asset.purchasePrice * asset.quantity;
   }
-  if (asset.currency === "KRW") {
-    return asset.purchasePrice * asset.quantity;
-  }
-  return asset.purchasePrice * asset.quantity * EXCHANGE_RATE_USD_KRW;
+  const rate = toKrwRate(asset.currency);
+  return asset.purchasePrice * asset.quantity * rate;
 }
 
-function buildSummary(assets: Asset[]): DashboardSummary {
+function buildSummary(assets: Asset[], updatedAt: string): DashboardSummary {
   const active = assets.filter((a) => a.status === "active");
 
   const totalValueKrw = active.reduce((sum, a) => sum + getKrwValue(a), 0);
@@ -253,7 +249,7 @@ function buildSummary(assets: Asset[]): DashboardSummary {
   const unrealized = totalValueKrw - totalPurchaseKrw;
   const realized = assets
     .filter((a) => a.status === "sold" && a.realizedPnl !== null)
-    .reduce((sum, a) => sum + (a.realizedPnl! * (a.currency === "KRW" ? 1 : EXCHANGE_RATE_USD_KRW)), 0);
+    .reduce((sum, a) => sum + (a.realizedPnl! * toKrwRate(a.currency)), 0);
 
   const byType: DashboardSummary["byType"] = {} as DashboardSummary["byType"];
   for (const a of active) {
@@ -294,7 +290,7 @@ function buildSummary(assets: Asset[]): DashboardSummary {
       amount: totalValueKrw * 0.0082, // mock: +0.82%
       ratio: 0.82,
     },
-    updatedAt: new Date().toISOString(),
+    updatedAt,
   };
 }
 
@@ -329,7 +325,7 @@ function generateHistory(period: string): HistoryPoint[] {
 
 export interface ActivityItem {
   id: string;
-  type: "buy" | "sell" | "price_update";
+  type: "buy" | "sell" | "priceUpdate";
   assetName: string;
   description: string;
   amount: number | null;
@@ -339,9 +335,9 @@ export interface ActivityItem {
 const MOCK_ACTIVITY: ActivityItem[] = [
   { id: "act1", type: "sell", assetName: "카카오", description: "매도 완료 (40주)", amount: 1920000, timestamp: "2025-03-01T10:00:00Z" },
   { id: "act2", type: "buy", assetName: "SK하이닉스", description: "매수 (50주)", amount: 6500000, timestamp: "2025-02-01T09:30:00Z" },
-  { id: "act3", type: "price_update", assetName: "Bitcoin", description: "시세 갱신 ($84,200)", amount: null, timestamp: "2025-03-20T09:00:00Z" },
+  { id: "act3", type: "priceUpdate", assetName: "Bitcoin", description: "시세 갱신 ($84,200)", amount: null, timestamp: "2025-03-20T09:00:00Z" },
   { id: "act4", type: "buy", assetName: "네이버", description: "매수 (30주)", amount: 6300000, timestamp: "2025-02-10T10:15:00Z" },
-  { id: "act5", type: "price_update", assetName: "삼성전자", description: "시세 갱신 (72,000원)", amount: null, timestamp: "2025-03-20T09:00:00Z" },
+  { id: "act5", type: "priceUpdate", assetName: "삼성전자", description: "시세 갱신 (72,000원)", amount: null, timestamp: "2025-03-20T09:00:00Z" },
 ];
 
 // ── Hook ──
@@ -364,22 +360,30 @@ export function useDashboardData(): DashboardData {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [historyPeriod, setHistoryPeriod] = useState("3M");
+  const [updatedAt, setUpdatedAt] = useState(() => new Date().toISOString());
 
   useEffect(() => {
     // 초기 로드 시뮬레이션
-    const t = setTimeout(() => setIsLoading(false), 500);
+    const t = setTimeout(() => {
+      setUpdatedAt(new Date().toISOString());
+      setIsLoading(false);
+    }, 500);
     return () => clearTimeout(t);
   }, []);
 
   const refresh = useCallback(async () => {
     setIsRefreshing(true);
-    // TODO: apiFetch("/api/prices/refresh", { method: "POST" })
-    await new Promise((r) => setTimeout(r, 1000));
-    setIsRefreshing(false);
+    try {
+      // TODO: apiFetch("/api/prices/refresh", { method: "POST" })
+      await new Promise((r) => setTimeout(r, 1000));
+      setUpdatedAt(new Date().toISOString());
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
 
   return {
-    summary: buildSummary(MOCK_ASSETS),
+    summary: buildSummary(MOCK_ASSETS, updatedAt),
     assets: MOCK_ASSETS,
     groups: MOCK_GROUPS,
     history: generateHistory(historyPeriod),
@@ -393,4 +397,4 @@ export function useDashboardData(): DashboardData {
   };
 }
 
-export { EXCHANGE_RATE_USD_KRW, getKrwValue, getPurchaseKrw };
+export { exchangeRatesKrw, toKrwRate, getKrwValue, getPurchaseKrw };
