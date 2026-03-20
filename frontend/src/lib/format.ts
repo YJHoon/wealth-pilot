@@ -87,3 +87,29 @@ export const assetStatusLabels: Record<AssetStatus, string> = {
   sold: "매도완료",
   delisted: "상장폐지",
 };
+
+/** 퍼센트 포맷 (예: "+12.34%") */
+export function formatPercent(value: number): string {
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+/** 변동 금액 포맷 (예: "+1,234,567원") */
+export function formatChangeKrw(value: number, isMasked: boolean): string {
+  if (isMasked) return `${MASK}원`;
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${Math.round(value).toLocaleString("ko-KR")}원`;
+}
+
+/** 수익률 색상 CSS 클래스 */
+export function pnlColorClass(value: number): string {
+  if (value > 0) return "text-emerald-400";
+  if (value < 0) return "text-red-400";
+  return "text-muted-foreground";
+}
+
+/** 마스킹 처리된 금액 (KRW) */
+export function formatMaskedKrw(value: number, isMasked: boolean): string {
+  if (isMasked) return `${MASK}원`;
+  return `${Math.round(value).toLocaleString("ko-KR")}원`;
+}
