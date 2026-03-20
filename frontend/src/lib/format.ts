@@ -72,6 +72,23 @@ export function formatPnl(
   return `${sign}${formatAmount(value, currency, false)}`;
 }
 
+/** 금액 축약 포맷 — 차트 Y축용 ("1.5억", "300만", "50조") */
+export function formatAmountAbbreviated(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  if (abs >= 1_0000_0000_0000) {
+    return `${sign}${(abs / 1_0000_0000_0000).toFixed(1)}조`;
+  }
+  if (abs >= 1_0000_0000) {
+    return `${sign}${(abs / 1_0000_0000).toFixed(1)}억`;
+  }
+  if (abs >= 1_0000) {
+    return `${sign}${(abs / 1_0000).toFixed(0)}만`;
+  }
+  return `${sign}${abs.toLocaleString("ko-KR")}`;
+}
+
 /** 자산 유형 한국어 라벨 */
 export const assetTypeLabels: Record<AssetType, string> = {
   cash: "현금/예적금",
