@@ -25,7 +25,7 @@ export const useAppStore = create<AppState>()(
       viewMode: "minimal",
       setViewMode: (mode) => set({ viewMode: mode }),
 
-      isMasked: true,
+      isMasked: false,
       toggleMask: () => set((state) => ({ isMasked: !state.isMasked })),
 
       theme: "dark",
