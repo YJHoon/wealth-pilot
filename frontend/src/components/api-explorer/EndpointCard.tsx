@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { EndpointInfo, SchemaObject } from "./ApiExplorer";
 import { SchemaViewer } from "./SchemaViewer";
 
@@ -25,25 +25,34 @@ interface Props {
 
 export function EndpointCard({ endpoint, schemas }: Props) {
   const [open, setOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"params" | "body" | "responses">("responses");
 
   const style = METHOD_STYLES[endpoint.method] ?? METHOD_STYLES.get;
   const { item } = endpoint;
 
   const hasParams = (item.parameters?.length ?? 0) > 0;
-  const hasBody = !!item.requestBody;
+  const hasBody = !!item.requestBody && !!item.requestBody.content && Object.keys(item.requestBody.content).length > 0;
   const hasResponses = !!item.responses && Object.keys(item.responses).length > 0;
 
+  const preferredTab = useMemo<"params" | "body" | "responses">(() => {
+    if (hasResponses) return "responses";
+    if (hasBody) return "body";
+    if (hasParams) return "params";
+    return "responses";
+  }, [hasResponses, hasBody, hasParams]);
+
+  const [activeTab, setActiveTab] = useState<"params" | "body" | "responses">(preferredTab);
+
   useEffect(() => {
-    if (hasResponses) setActiveTab("responses");
-    else if (hasBody) setActiveTab("body");
-    else if (hasParams) setActiveTab("params");
-  }, [hasResponses, hasBody, hasParams, endpoint.method, endpoint.path]);
+    const tabAvailable =
+      (activeTab === "params" && hasParams) ||
+      (activeTab === "body" && hasBody) ||
+      (activeTab === "responses" && hasResponses);
+    if (!tabAvailable) setActiveTab(preferredTab);
+  }, [hasParams, hasBody, hasResponses, activeTab, preferredTab]);
 
   const requiresAuth = item.security !== undefined && item.security.length > 0;
 
-  // path param 하이라이트
-  const formattedPath = endpoint.path.replace(/\{([^}]+)\}/g, (_, p) => `{${p}}`);
+  const formattedPath = endpoint.path;
 
   return (
     <div
@@ -51,6 +60,7 @@ export function EndpointCard({ endpoint, schemas }: Props) {
     >
       {/* 헤더 — 클릭으로 열기/닫기 */}
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-3 px-4 py-3.5 text-left group"
       >
@@ -191,6 +201,7 @@ function TabButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`px-3 py-1.5 text-xs rounded-t-lg border-b-2 transition-all ${
         active

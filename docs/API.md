@@ -614,30 +614,155 @@ Refresh Token으로 새 Access Token + Refresh Token 발급 (토큰 로테이션
 
 ---
 
+### 2.4. 시세 (`/api/prices`)
+
+#### `GET /api/prices/stock/{ticker}`
+
+주식 현재가 조회 (yfinance).
+
+| 항목 | 값 |
+|------|---|
+| 인증 | **필수** (2FA 포함) |
+| Rate Limit | 전역 (100/min) |
+
+**응답** `200`: `PriceResponse`
+
+```json
+{
+  "ticker": "005930.KS",
+  "price": "72500.0",
+  "currency": "KRW",
+  "fetched_at": "2026-03-19T12:00:00Z",
+  "is_stale": false,
+  "anomaly_flag": false
+}
+```
+
+---
+
+#### `GET /api/prices/crypto/{symbol}`
+
+암호화폐 현재가 조회 (CoinGecko).
+
+| 항목 | 값 |
+|------|---|
+| 인증 | **필수** (2FA 포함) |
+| Rate Limit | 전역 (100/min) |
+
+**응답** `200`: `PriceResponse`
+
+---
+
+#### `GET /api/prices/exchange-rate`
+
+단일 환율 조회.
+
+| 항목 | 값 |
+|------|---|
+| 인증 | **필수** (2FA 포함) |
+| Rate Limit | 전역 (100/min) |
+| Query | `from` (통화코드), `to` (통화코드) |
+
+**응답** `200`: `ExchangeRateResponse`
+
+```json
+{
+  "from_currency": "USD",
+  "to_currency": "KRW",
+  "rate": "1350.50",
+  "fetched_at": "2026-03-19T12:00:00Z",
+  "source": "exchangerate-api"
+}
+```
+
+---
+
+#### `GET /api/prices/exchange-rates`
+
+DB에 저장된 모든 환율 벌크 조회.
+
+| 항목 | 값 |
+|------|---|
+| 인증 | **필수** (2FA 포함) |
+| Rate Limit | 전역 (100/min) |
+
+**응답** `200`: `list[ExchangeRateInfo]`
+
+```json
+[
+  {
+    "from_currency": "USD",
+    "to_currency": "KRW",
+    "rate": "1350.50",
+    "fetched_at": "2026-03-19T12:00:00Z",
+    "source": "exchangerate-api"
+  }
+]
+```
+
+---
+
+#### `POST /api/prices/refresh`
+
+보유 종목 전체 시세 일괄 갱신 + 주요 환율 갱신.
+
+| 항목 | 값 |
+|------|---|
+| 인증 | **필수** (2FA 포함) |
+| Rate Limit | 전역 (100/min) |
+
+**응답** `200`: `RefreshResponse`
+
+```json
+{
+  "success_count": 2,
+  "fail_count": 0,
+  "refreshed_at": "2026-03-19T12:00:00Z",
+  "details": [{ "ticker": "005930.KS", "success": true, "price": "72500.0", "currency": "KRW" }],
+  "exchange_rates": [{ "from_currency": "USD", "to_currency": "KRW", "rate": "1350.50", "fetched_at": "...", "source": "exchangerate-api" }]
+}
+```
+
+---
+
+#### `GET /api/prices/mode`
+
+현재 시세 모드 조회 (유저별).
+
+| 항목 | 값 |
+|------|---|
+| 인증 | **필수** (2FA 포함) |
+
+**응답** `200`: `PriceModeResponse` (`{ "current_mode": "batch" }`)
+
+---
+
+#### `PUT /api/prices/mode`
+
+시세 모드 변경 (유저별).
+
+| 항목 | 값 |
+|------|---|
+| 인증 | **필수** (2FA 포함) |
+| Body | `{ "mode": "batch" &#124; "delayed" &#124; "realtime" }` |
+
+**응답** `200`: `PriceModeResponse`
+
+---
+
 ## 3. 미구현 엔드포인트 (TODO)
 
 ### 대시보드 (`/api/dashboard`)
 
-```
+```text
 GET    /api/dashboard/summary      # 자산 요약 (총액, 비중, 손익)
 GET    /api/dashboard/history      # 자산 변동 추이 (?period=1M|3M|6M|1Y)
 POST   /api/dashboard/snapshot     # 자산 스냅샷 저장
 ```
 
-### 시세 (`/api/prices`)
-
-```
-GET    /api/prices/stock/{ticker}      # 주식 현재가
-GET    /api/prices/crypto/{symbol}     # 코인 현재가
-GET    /api/prices/exchange-rate       # 환율 (?from=USD&to=KRW)
-POST   /api/prices/refresh             # 시세 일괄 갱신
-GET    /api/prices/mode                # 시세 모드 조회
-PUT    /api/prices/mode                # 시세 모드 변경
-```
-
 ### 보안 (`/api/security`)
 
-```
+```text
 GET    /api/security/access-logs       # 액세스 로그 조회
 ```
 

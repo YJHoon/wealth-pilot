@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { EndpointCard } from "./EndpointCard";
 
 export interface OpenAPISpec {
@@ -95,7 +95,7 @@ export function ApiExplorer() {
 
   const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-  const fetchSpec = async () => {
+  const fetchSpec = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -113,11 +113,11 @@ export function ApiExplorer() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [backendUrl]);
 
   useEffect(() => {
     fetchSpec();
-  }, []);
+  }, [fetchSpec]);
 
   if (loading) {
     return (
