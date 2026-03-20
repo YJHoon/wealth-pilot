@@ -1,10 +1,13 @@
-// 자산 유형
-export type AssetType =
-  | "cash"
-  | "domestic_stock"
-  | "foreign_stock"
-  | "crypto"
-  | "real_estate";
+// 자산 유형 — 단일 소스에서 타입과 런타임 Set을 모두 파생
+export const ASSET_TYPE_VALUES = [
+  "cash",
+  "domestic_stock",
+  "foreign_stock",
+  "crypto",
+  "real_estate",
+] as const;
+
+export type AssetType = (typeof ASSET_TYPE_VALUES)[number];
 
 // 자산 상태
 export type AssetStatus = "active" | "sold" | "delisted";
@@ -269,20 +272,19 @@ export interface SnapshotResponseApi {
 }
 
 // API → 프론트 변환
-const ASSET_TYPES = new Set<string>([
-  "cash",
-  "domestic_stock",
-  "foreign_stock",
-  "crypto",
-  "real_estate",
-]);
+const ASSET_TYPES_SET = new Set<string>(ASSET_TYPE_VALUES);
 
 function isAssetType(key: string): key is AssetType {
-  return ASSET_TYPES.has(key);
+  return ASSET_TYPES_SET.has(key);
 }
 
+const DEFAULT_TYPE_ENTRY = { valueKrw: 0, ratio: 0 } as const;
+
 export function toDashboardSummary(api: DashboardSummaryApi): DashboardSummary {
-  const byType = {} as Partial<DashboardSummary["byType"]>;
+  const byType: DashboardSummary["byType"] = Object.fromEntries(
+    ASSET_TYPE_VALUES.map((t) => [t, { ...DEFAULT_TYPE_ENTRY }]),
+  ) as DashboardSummary["byType"];
+
   for (const [key, val] of Object.entries(api.by_type)) {
     if (!isAssetType(key)) {
       console.warn(`Unknown asset type from API: ${key}`);
@@ -298,7 +300,7 @@ export function toDashboardSummary(api: DashboardSummaryApi): DashboardSummary {
 
   return {
     totalValueKrw: api.total_value_krw,
-    byType: byType as DashboardSummary["byType"],
+    byType,
     byGroup,
     pnl: {
       total: api.pnl.total,
