@@ -6,7 +6,7 @@ import { TerminalAssetTable } from "./TerminalAssetTable";
 import { TerminalChart } from "./TerminalChart";
 import { TerminalSummaryPanel } from "./TerminalSummaryPanel";
 import { TerminalActivityLog } from "./TerminalActivityLog";
-import type { DashboardData } from "@/hooks/useDashboardData";
+import { useDashboardData } from "@/hooks/useDashboardData";
 
 const defaultBadge = { label: "알 수 없음", dot: "bg-muted-foreground" } as const;
 
@@ -17,11 +17,16 @@ const freshnessBadge: Record<string, { label: string; dot: string }> = {
   estimated: { label: "추정치", dot: "bg-red-400" },
 };
 
-interface Props {
-  data: DashboardData;
-}
+export function TerminalDashboard() {
+  const data = useDashboardData();
 
-export function TerminalDashboard({ data }: Props) {
+  if (data.isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
   const badge = freshnessBadge[data.freshness] ?? defaultBadge;
   const lastUpdated = new Date(data.summary.updatedAt).toLocaleString("ko-KR", {
     month: "2-digit",
