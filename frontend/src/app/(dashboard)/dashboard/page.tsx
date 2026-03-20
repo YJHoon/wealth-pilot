@@ -15,17 +15,21 @@ export default function DashboardPage() {
   // 저장된 viewMode 선호값은 유지하되, 렌더링에만 모바일 보정 적용
   const effectiveViewMode = isMobile ? "minimal" : viewMode;
 
-  if (data.isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
   if (effectiveViewMode === "terminal") {
+    if (data.isLoading) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
     return <TerminalDashboard data={data} />;
   }
 
-  return <MinimalDashboard data={data} />;
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold tracking-tight">대시보드</h1>
+      <MinimalDashboard />
+    </div>
+  );
 }
