@@ -213,3 +213,87 @@ export interface ExchangeRate {
 export interface PriceModeApi {
   current_mode: DataFreshness;
 }
+
+// ── 대시보드 API 타입 ──
+
+export interface TypeBreakdownApi {
+  value_krw: number;
+  ratio: number;
+}
+
+export interface GroupBreakdownApi {
+  name: string;
+  value_krw: number;
+  ratio: number;
+}
+
+export interface PnlSummaryApi {
+  total: number;
+  realized: number;
+  unrealized: number;
+  total_ratio: number;
+}
+
+export interface DailyChangeApi {
+  amount: number;
+  ratio: number;
+}
+
+export interface DashboardSummaryApi {
+  total_value_krw: number;
+  by_type: Record<string, TypeBreakdownApi>;
+  by_group: Record<string, GroupBreakdownApi>;
+  pnl: PnlSummaryApi;
+  previous_day_change: DailyChangeApi;
+  updated_at: string;
+}
+
+export interface HistoryDataPointApi {
+  date: string;
+  total_value_krw: number;
+  breakdown: Record<string, unknown> | null;
+}
+
+export interface DashboardHistoryApi {
+  period: string;
+  data_points: HistoryDataPointApi[];
+  total_count: number;
+}
+
+export interface SnapshotResponseApi {
+  id: string;
+  snapshot_date: string;
+  total_value_krw: number;
+  breakdown: Record<string, unknown> | null;
+  created_at: string;
+}
+
+// API → 프론트 변환
+export function toDashboardSummary(api: DashboardSummaryApi): DashboardSummary {
+  const byType: DashboardSummary["byType"] = {} as DashboardSummary["byType"];
+  for (const [key, val] of Object.entries(api.by_type)) {
+    byType[key as AssetType] = { valueKrw: val.value_krw, ratio: val.ratio };
+  }
+
+  const byGroup: DashboardSummary["byGroup"] = {};
+  for (const [key, val] of Object.entries(api.by_group)) {
+    byGroup[key] = { name: val.name, valueKrw: val.value_krw, ratio: val.ratio };
+  }
+
+  return {
+    totalValueKrw: api.total_value_krw,
+    byType,
+    byGroup,
+    pnl: {
+      total: api.pnl.total,
+      realized: api.pnl.realized,
+      unrealized: api.pnl.unrealized,
+      totalRatio: api.pnl.total_ratio,
+    },
+    previousDayChange: {
+      amount: api.previous_day_change.amount,
+      ratio: api.previous_day_change.ratio,
+    },
+    updatedAt: api.updated_at,
+  };
+}
