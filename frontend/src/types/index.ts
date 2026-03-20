@@ -269,10 +269,26 @@ export interface SnapshotResponseApi {
 }
 
 // API → 프론트 변환
+const ASSET_TYPES = new Set<string>([
+  "cash",
+  "domestic_stock",
+  "foreign_stock",
+  "crypto",
+  "real_estate",
+]);
+
+function isAssetType(key: string): key is AssetType {
+  return ASSET_TYPES.has(key);
+}
+
 export function toDashboardSummary(api: DashboardSummaryApi): DashboardSummary {
-  const byType: DashboardSummary["byType"] = {} as DashboardSummary["byType"];
+  const byType = {} as Partial<DashboardSummary["byType"]>;
   for (const [key, val] of Object.entries(api.by_type)) {
-    byType[key as AssetType] = { valueKrw: val.value_krw, ratio: val.ratio };
+    if (!isAssetType(key)) {
+      console.warn(`Unknown asset type from API: ${key}`);
+      continue;
+    }
+    byType[key] = { valueKrw: val.value_krw, ratio: val.ratio };
   }
 
   const byGroup: DashboardSummary["byGroup"] = {};
@@ -282,7 +298,7 @@ export function toDashboardSummary(api: DashboardSummaryApi): DashboardSummary {
 
   return {
     totalValueKrw: api.total_value_krw,
-    byType,
+    byType: byType as DashboardSummary["byType"],
     byGroup,
     pnl: {
       total: api.pnl.total,
