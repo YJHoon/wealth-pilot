@@ -4,6 +4,7 @@ import { Eye, EyeOff, Monitor, Moon, Sun, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAppStore } from "@/stores/appStore";
+import { MobileSidebar } from "./MobileSidebar";
 
 export function Header() {
   const { viewMode, setViewMode, isMasked, toggleMask, theme, toggleTheme } =
@@ -11,14 +12,17 @@ export function Header() {
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-border bg-background px-4">
-      {/* 모바일 로고 (사이드바 없을 때) */}
-      <div className="lg:hidden text-sm font-semibold">WealthPilot</div>
-      <div className="hidden lg:block" />
+      {/* 좌측: 모바일 햄버거 + 로고 */}
+      <div className="flex items-center gap-2">
+        <MobileSidebar />
+        <span className="text-sm font-semibold lg:hidden">WealthPilot</span>
+        <div className="hidden lg:block" />
+      </div>
 
       {/* 우측 컨트롤 */}
       <div className="flex items-center gap-1">
-        {/* 뷰 모드 토글 */}
-        <div className="flex items-center rounded-md border border-border p-0.5">
+        {/* 뷰 모드 토글 — 모바일에서는 터미널 모드가 자동 미니멀 전환되므로 숨김 */}
+        <div className="hidden md:flex items-center rounded-md border border-border p-0.5">
           <Button
             variant={viewMode === "minimal" ? "secondary" : "ghost"}
             size="sm"
@@ -41,7 +45,7 @@ export function Header() {
           </Button>
         </div>
 
-        <Separator orientation="vertical" className="h-5 mx-1" />
+        <Separator orientation="vertical" className="hidden md:block h-5 mx-1" />
 
         {/* 금액 마스킹 토글 */}
         <Button
