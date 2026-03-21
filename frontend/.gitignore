@@ -39,3 +39,4 @@ next-env.d.ts
 
 # PWA (next-pwa auto-generated)
 public/swe-worker-*.js
+public/fallback-*.js
