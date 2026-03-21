@@ -1,38 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
-import {
-  BarChart2,
-  Coins,
-  FolderKanban,
-  History,
-  LineChart,
-  Newspaper,
-  Settings,
-  Shield,
-  Wallet,
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-
-const navItems = [
-  { href: "/dashboard", label: "대시보드", icon: BarChart2 },
-  { href: "/assets", label: "자산", icon: Wallet },
-  { href: "/groups", label: "그룹", icon: FolderKanban },
-  { href: "/analysis", label: "분석", icon: LineChart },
-  { href: "/spending", label: "지출", icon: Coins },
-  { href: "/news", label: "뉴스", icon: Newspaper },
-  { href: "/history", label: "이력", icon: History },
-  { href: "/security", label: "보안", icon: Shield },
-  { href: "/settings", label: "설정", icon: Settings },
-];
+import { navItems } from "@/config/navigation";
 
 export function MobileSidebar() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
 
   // 경로 변경 시 자동 닫기
   useEffect(() => {
@@ -61,12 +42,51 @@ export function MobileSidebar() {
     };
   }, [open]);
 
+  // 포커스 관리: 열릴 때 닫기 버튼에 포커스, 닫힐 때 트리거에 포커스 복원
+  useEffect(() => {
+    if (open) {
+      // 애니메이션 후 포커스 이동
+      requestAnimationFrame(() => closeBtnRef.current?.focus());
+    } else if (triggerRef.current) {
+      triggerRef.current.focus();
+    }
+  }, [open]);
+
+  // 포커스 트랩: aside 내부에서만 Tab 순환
+  useEffect(() => {
+    if (!open) return;
+    const aside = asideRef.current;
+    if (!aside) return;
+
+    const handleTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const focusable = aside.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleTab);
+    return () => document.removeEventListener("keydown", handleTab);
+  }, [open]);
+
   const close = useCallback(() => setOpen(false), []);
 
   return (
     <>
       {/* 햄버거 버튼 — 모바일에서만 표시 */}
       <Button
+        ref={triggerRef}
         variant="ghost"
         size="icon"
         className="h-8 w-8 lg:hidden"
@@ -88,6 +108,7 @@ export function MobileSidebar() {
 
           {/* 사이드 드로어 */}
           <aside
+            ref={asideRef}
             role="dialog"
             aria-modal="true"
             aria-label="네비게이션 메뉴"
@@ -97,6 +118,7 @@ export function MobileSidebar() {
             <div className="flex h-14 items-center justify-between border-b border-border px-4">
               <span className="text-sm font-semibold tracking-tight">WealthPilot</span>
               <Button
+                ref={closeBtnRef}
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
