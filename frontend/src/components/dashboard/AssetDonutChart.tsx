@@ -80,8 +80,8 @@ export function AssetDonutChart({ summary }: AssetDonutChartProps) {
             자산 데이터가 없습니다
           </div>
         ) : (
-          <div className="flex items-center gap-4">
-            <div className="h-52 w-52 shrink-0">
+          <div className="flex flex-col items-center gap-4 sm:flex-row">
+            <div className="h-44 w-44 shrink-0 sm:h-52 sm:w-52">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie

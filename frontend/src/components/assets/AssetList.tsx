@@ -90,6 +90,48 @@ interface AssetListProps {
 type TypeFilter = "all" | AssetType;
 type StatusFilter = "all" | AssetStatus;
 
+function AssetActionMenu({
+  asset,
+  onEditClick,
+  onSellClick,
+  onDeleteClick,
+}: {
+  asset: Asset;
+  onEditClick: (asset: Asset) => void;
+  onSellClick: (asset: Asset) => void;
+  onDeleteClick: (asset: Asset) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon-xs" aria-label={`${asset.name} 액션 메뉴`} />}
+      >
+        <MoreHorizontal className="size-3.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => onEditClick(asset)}>
+          <Pencil className="size-3.5" />
+          수정
+        </DropdownMenuItem>
+        {asset.type !== "cash" && (
+          <DropdownMenuItem onClick={() => onSellClick(asset)}>
+            <ArrowDownToLine className="size-3.5" />
+            매도
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={() => onDeleteClick(asset)}
+        >
+          <Trash2 className="size-3.5" />
+          삭제
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AssetList({
   assets,
   groups,
@@ -227,7 +269,7 @@ export function AssetList({
         </Select>
       </div>
 
-      {/* 테이블 */}
+      {/* 자산 목록 */}
       {loading ? (
         <div className="flex items-center justify-center py-12 text-muted-foreground">
           <Loader2 className="size-5 animate-spin mr-2" />
@@ -242,167 +284,221 @@ export function AssetList({
           </Button>
         </div>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>유형</TableHead>
-              <TableHead>자산명</TableHead>
-              <TableHead>그룹</TableHead>
-              <TableHead className="text-right">수량</TableHead>
-              <TableHead className="text-right">매입가</TableHead>
-              <TableHead className="text-right">현재가</TableHead>
-              <TableHead className="text-right">평가손익</TableHead>
-              <TableHead className="text-right">수익률</TableHead>
-              <TableHead className="text-right">상태</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <>
+          {/* 모바일: 카드 레이아웃 */}
+          <div className="space-y-3 md:hidden">
             {filtered.map((asset) => {
               const pnl = computePnl(asset);
               const rate = computePnlRate(asset);
               const isSold = asset.status === "sold";
 
               return (
-                <TableRow key={asset.id} className={isSold ? "opacity-60" : ""}>
-                  {/* 유형 */}
-                  <TableCell>
-                    <div className="flex items-center gap-1.5">
+                <div
+                  key={asset.id}
+                  className={`rounded-lg border border-border bg-card p-3 ${isSold ? "opacity-60" : ""}`}
+                >
+                  {/* 카드 상단: 유형 아이콘 + 자산명 + 액션 */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       {typeIcons[asset.type]}
-                      <span className="text-xs text-muted-foreground hidden sm:inline">
-                        {assetTypeLabels[asset.type]}
-                      </span>
+                      <div>
+                        <span className="text-sm font-medium">{asset.name}</span>
+                        {asset.ticker && (
+                          <span className="ml-1 text-xs text-muted-foreground">
+                            ({asset.ticker})
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </TableCell>
-
-                  {/* 자산명 */}
-                  <TableCell>
-                    <div>
-                      <span className="font-medium">{asset.name}</span>
-                      {asset.ticker && (
-                        <span className="ml-1 text-xs text-muted-foreground">
-                          ({asset.ticker})
-                        </span>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={isSold ? "outline" : "default"}>
+                        {assetStatusLabels[asset.status]}
+                      </Badge>
+                      {!isSold && (
+                        <AssetActionMenu
+                          asset={asset}
+                          onEditClick={onEditClick}
+                          onSellClick={onSellClick}
+                          onDeleteClick={onDeleteClick}
+                        />
                       )}
                     </div>
-                  </TableCell>
+                  </div>
 
-                  {/* 그룹 */}
-                  <TableCell>
-                    {asset.groupId ? (
-                      <Badge variant="secondary">
-                        {groupMap.get(asset.groupId) ?? "알 수 없음"}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-
-                  {/* 수량 */}
-                  <TableCell className="text-right font-mono">
-                    {formatQuantity(asset.quantity, isMasked)}
-                  </TableCell>
-
-                  {/* 매입가 */}
-                  <TableCell className="text-right font-mono">
-                    {asset.currency !== "KRW" && toKrw
-                      ? formatDualCurrency(
-                          asset.purchasePrice,
-                          asset.currency,
-                          toKrw(asset.purchasePrice, asset.currency),
-                          isMasked,
-                        )
-                      : formatAmount(asset.purchasePrice, asset.currency, isMasked)}
-                  </TableCell>
-
-                  {/* 현재가 */}
-                  <TableCell className="text-right font-mono">
-                    {isSold
-                      ? formatAmount(asset.soldPrice, asset.currency, isMasked)
-                      : asset.currentPrice != null
-                        ? asset.currency !== "KRW" && toKrw
-                          ? formatDualCurrency(
-                              asset.currentPrice,
-                              asset.currency,
-                              toKrw(asset.currentPrice, asset.currency),
-                              isMasked,
-                            )
-                          : formatAmount(asset.currentPrice, asset.currency, isMasked)
-                        : <span className="text-muted-foreground text-xs">데이터를 가져올 수 없습니다</span>}
-                  </TableCell>
-
-                  {/* 평가손익 */}
-                  <TableCell className="text-right font-mono">
-                    {isMasked ? (
-                      "●●●●●●원"
-                    ) : pnl != null ? (
-                      <span className={pnl >= 0 ? "text-emerald-500" : "text-red-500"}>
-                        {formatPnl(pnl, asset.currency, false)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-
-                  {/* 수익률 */}
-                  <TableCell className="text-right font-mono">
-                    {isMasked ? (
-                      "●●●●%"
-                    ) : rate != null ? (
-                      <span className={rate >= 0 ? "text-emerald-500" : "text-red-500"}>
-                        {rate >= 0 ? "+" : ""}{rate.toFixed(2)}%
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-
-                  {/* 상태 */}
-                  <TableCell className="text-right">
-                    <Badge variant={isSold ? "outline" : "default"}>
-                      {assetStatusLabels[asset.status]}
-                    </Badge>
-                  </TableCell>
-
-                  {/* 액션 */}
-                  <TableCell>
-                    {!isSold && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button variant="ghost" size="icon-xs" />
-                          }
-                        >
-                          <MoreHorizontal className="size-3.5" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => onEditClick(asset)}>
-                            <Pencil className="size-3.5" />
-                            수정
-                          </DropdownMenuItem>
-                          {asset.type !== "cash" && (
-                            <DropdownMenuItem onClick={() => onSellClick(asset)}>
-                              <ArrowDownToLine className="size-3.5" />
-                              매도
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={() => onDeleteClick(asset)}
-                          >
-                            <Trash2 className="size-3.5" />
-                            삭제
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
-                  </TableCell>
-                </TableRow>
+                  {/* 카드 하단: 주요 수치 */}
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <div className="text-muted-foreground">수량</div>
+                    <div className="text-right font-mono">
+                      {formatQuantity(asset.quantity, isMasked)}
+                    </div>
+                    <div className="text-muted-foreground">현재가</div>
+                    <div className="text-right font-mono">
+                      {isSold
+                        ? formatAmount(asset.soldPrice, asset.currency, isMasked)
+                        : asset.currentPrice != null
+                          ? asset.currency !== "KRW" && toKrw
+                            ? formatDualCurrency(
+                                asset.currentPrice,
+                                asset.currency,
+                                toKrw(asset.currentPrice, asset.currency),
+                                isMasked,
+                              )
+                            : formatAmount(asset.currentPrice, asset.currency, isMasked)
+                          : <span className="text-muted-foreground text-xs">데이터를 가져올 수 없습니다</span>}
+                    </div>
+                    <div className="text-muted-foreground">손익</div>
+                    <div className="text-right font-mono">
+                      {isMasked ? (
+                        "●●●●●●원"
+                      ) : pnl != null ? (
+                        <span className={pnl >= 0 ? "text-emerald-500" : "text-red-500"}>
+                          {formatPnl(pnl, asset.currency, false)}
+                        </span>
+                      ) : (
+                        "-"
+                      )}
+                    </div>
+                    <div className="text-muted-foreground">수익률</div>
+                    <div className="text-right font-mono">
+                      {isMasked ? (
+                        "●●●●%"
+                      ) : rate != null ? (
+                        <span className={rate >= 0 ? "text-emerald-500" : "text-red-500"}>
+                          {rate >= 0 ? "+" : ""}{rate.toFixed(2)}%
+                        </span>
+                      ) : (
+                        "-"
+                      )}
+                    </div>
+                  </div>
+                </div>
               );
             })}
-          </TableBody>
-        </Table>
+          </div>
+
+          {/* 데스크톱: 테이블 레이아웃 */}
+          <div className="hidden md:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>유형</TableHead>
+                  <TableHead>자산명</TableHead>
+                  <TableHead>그룹</TableHead>
+                  <TableHead className="text-right">수량</TableHead>
+                  <TableHead className="text-right">매입가</TableHead>
+                  <TableHead className="text-right">현재가</TableHead>
+                  <TableHead className="text-right">평가손익</TableHead>
+                  <TableHead className="text-right">수익률</TableHead>
+                  <TableHead className="text-right">상태</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((asset) => {
+                  const pnl = computePnl(asset);
+                  const rate = computePnlRate(asset);
+                  const isSold = asset.status === "sold";
+
+                  return (
+                    <TableRow key={asset.id} className={isSold ? "opacity-60" : ""}>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5">
+                          {typeIcons[asset.type]}
+                          <span className="text-xs text-muted-foreground">
+                            {assetTypeLabels[asset.type]}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div>
+                          <span className="font-medium">{asset.name}</span>
+                          {asset.ticker && (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              ({asset.ticker})
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {asset.groupId ? (
+                          <Badge variant="secondary">
+                            {groupMap.get(asset.groupId) ?? "알 수 없음"}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatQuantity(asset.quantity, isMasked)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {asset.currency !== "KRW" && toKrw
+                          ? formatDualCurrency(
+                              asset.purchasePrice,
+                              asset.currency,
+                              toKrw(asset.purchasePrice, asset.currency),
+                              isMasked,
+                            )
+                          : formatAmount(asset.purchasePrice, asset.currency, isMasked)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {isSold
+                          ? formatAmount(asset.soldPrice, asset.currency, isMasked)
+                          : asset.currentPrice != null
+                            ? asset.currency !== "KRW" && toKrw
+                              ? formatDualCurrency(
+                                  asset.currentPrice,
+                                  asset.currency,
+                                  toKrw(asset.currentPrice, asset.currency),
+                                  isMasked,
+                                )
+                              : formatAmount(asset.currentPrice, asset.currency, isMasked)
+                            : <span className="text-muted-foreground text-xs">데이터를 가져올 수 없습니다</span>}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {isMasked ? (
+                          "●●●●●●원"
+                        ) : pnl != null ? (
+                          <span className={pnl >= 0 ? "text-emerald-500" : "text-red-500"}>
+                            {formatPnl(pnl, asset.currency, false)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {isMasked ? (
+                          "●●●●%"
+                        ) : rate != null ? (
+                          <span className={rate >= 0 ? "text-emerald-500" : "text-red-500"}>
+                            {rate >= 0 ? "+" : ""}{rate.toFixed(2)}%
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={isSold ? "outline" : "default"}>
+                          {assetStatusLabels[asset.status]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {!isSold && (
+                          <AssetActionMenu
+                            asset={asset}
+                            onEditClick={onEditClick}
+                            onSellClick={onSellClick}
+                            onDeleteClick={onDeleteClick}
+                          />
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </>
       )}
 
       {/* 하단 카운트 */}
