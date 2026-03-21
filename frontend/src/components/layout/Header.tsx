@@ -16,7 +16,6 @@ export function Header() {
       <div className="flex items-center gap-2">
         <MobileSidebar />
         <span className="text-sm font-semibold lg:hidden">WealthPilot</span>
-        <div className="hidden lg:block" />
       </div>
 
       {/* 우측 컨트롤 */}

@@ -90,6 +90,48 @@ interface AssetListProps {
 type TypeFilter = "all" | AssetType;
 type StatusFilter = "all" | AssetStatus;
 
+function AssetActionMenu({
+  asset,
+  onEditClick,
+  onSellClick,
+  onDeleteClick,
+}: {
+  asset: Asset;
+  onEditClick: (asset: Asset) => void;
+  onSellClick: (asset: Asset) => void;
+  onDeleteClick: (asset: Asset) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon-xs" aria-label={`${asset.name} 액션 메뉴`} />}
+      >
+        <MoreHorizontal className="size-3.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => onEditClick(asset)}>
+          <Pencil className="size-3.5" />
+          수정
+        </DropdownMenuItem>
+        {asset.type !== "cash" && (
+          <DropdownMenuItem onClick={() => onSellClick(asset)}>
+            <ArrowDownToLine className="size-3.5" />
+            매도
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={() => onDeleteClick(asset)}
+        >
+          <Trash2 className="size-3.5" />
+          삭제
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AssetList({
   assets,
   groups,
@@ -273,33 +315,12 @@ export function AssetList({
                         {assetStatusLabels[asset.status]}
                       </Badge>
                       {!isSold && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={<Button variant="ghost" size="icon-xs" />}
-                          >
-                            <MoreHorizontal className="size-3.5" />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => onEditClick(asset)}>
-                              <Pencil className="size-3.5" />
-                              수정
-                            </DropdownMenuItem>
-                            {asset.type !== "cash" && (
-                              <DropdownMenuItem onClick={() => onSellClick(asset)}>
-                                <ArrowDownToLine className="size-3.5" />
-                                매도
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              variant="destructive"
-                              onClick={() => onDeleteClick(asset)}
-                            >
-                              <Trash2 className="size-3.5" />
-                              삭제
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <AssetActionMenu
+                          asset={asset}
+                          onEditClick={onEditClick}
+                          onSellClick={onSellClick}
+                          onDeleteClick={onDeleteClick}
+                        />
                       )}
                     </div>
                   </div>
@@ -315,8 +336,15 @@ export function AssetList({
                       {isSold
                         ? formatAmount(asset.soldPrice, asset.currency, isMasked)
                         : asset.currentPrice != null
-                          ? formatAmount(asset.currentPrice, asset.currency, isMasked)
-                          : <span className="text-muted-foreground">-</span>}
+                          ? asset.currency !== "KRW" && toKrw
+                            ? formatDualCurrency(
+                                asset.currentPrice,
+                                asset.currency,
+                                toKrw(asset.currentPrice, asset.currency),
+                                isMasked,
+                              )
+                            : formatAmount(asset.currentPrice, asset.currency, isMasked)
+                          : <span className="text-muted-foreground text-xs">데이터를 가져올 수 없습니다</span>}
                     </div>
                     <div className="text-muted-foreground">손익</div>
                     <div className="text-right font-mono">
@@ -456,33 +484,12 @@ export function AssetList({
                       </TableCell>
                       <TableCell>
                         {!isSold && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              render={<Button variant="ghost" size="icon-xs" />}
-                            >
-                              <MoreHorizontal className="size-3.5" />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => onEditClick(asset)}>
-                                <Pencil className="size-3.5" />
-                                수정
-                              </DropdownMenuItem>
-                              {asset.type !== "cash" && (
-                                <DropdownMenuItem onClick={() => onSellClick(asset)}>
-                                  <ArrowDownToLine className="size-3.5" />
-                                  매도
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => onDeleteClick(asset)}
-                              >
-                                <Trash2 className="size-3.5" />
-                                삭제
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          <AssetActionMenu
+                            asset={asset}
+                            onEditClick={onEditClick}
+                            onSellClick={onSellClick}
+                            onDeleteClick={onDeleteClick}
+                          />
                         )}
                       </TableCell>
                     </TableRow>
