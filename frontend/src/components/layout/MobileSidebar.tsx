@@ -87,7 +87,12 @@ export function MobileSidebar() {
           />
 
           {/* 사이드 드로어 */}
-          <aside className="absolute inset-y-0 left-0 w-64 bg-background border-r border-border shadow-xl animate-in slide-in-from-left duration-200">
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-label="네비게이션 메뉴"
+            className="absolute inset-y-0 left-0 w-64 bg-background border-r border-border shadow-xl animate-in slide-in-from-left duration-200"
+          >
             {/* 헤더 */}
             <div className="flex h-14 items-center justify-between border-b border-border px-4">
               <span className="text-sm font-semibold tracking-tight">WealthPilot</span>
@@ -111,6 +116,7 @@ export function MobileSidebar() {
                     <li key={href}>
                       <Link
                         href={href}
+                        onClick={close}
                         className={cn(
                           "flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors",
                           isActive
