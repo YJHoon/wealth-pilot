@@ -49,6 +49,16 @@ async def complete_onboarding(
         )
 
     user.onboarding_completed = True
+
+    # selected_asset_types는 프론트엔드 위저드 가이드용으로만 사용되며 DB에 저장하지 않음.
+    # 분석 목적으로 로그에만 기록.
+    if body.selected_asset_types:
+        logger.info(
+            "Onboarding asset types selected: user=%s types=%s",
+            user.id,
+            [t.value for t in body.selected_asset_types],
+        )
+
     await log_access(db, user.id, AccessAction.ONBOARDING_COMPLETE, request)
     try:
         await db.commit()

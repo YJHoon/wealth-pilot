@@ -163,6 +163,7 @@ describe("OnboardingWizard", () => {
 
     expect(mockApiFetch).toHaveBeenCalledWith("/api/onboarding/complete", expect.objectContaining({
       method: "PUT",
+      body: expect.stringContaining('"disclaimer_agreed":true'),
     }));
     expect(mockUpdate).toHaveBeenCalledWith({ onboardingCompleted: true });
     expect(mockPush).toHaveBeenCalledWith("/dashboard");
