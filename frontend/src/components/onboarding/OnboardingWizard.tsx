@@ -402,9 +402,10 @@ function DisclaimerStep({
           type="checkbox"
           checked={agreed}
           onChange={onToggle}
+          aria-describedby="disclaimer-text"
           className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
         />
-        <span className="text-sm">
+        <span id="disclaimer-text" className="text-sm">
           위 면책 조항을 모두 읽었으며, 이에 <strong>동의합니다</strong>.
         </span>
       </label>
@@ -631,7 +632,7 @@ function AssetTypeStep({
         <Button variant="outline" className="flex-1" onClick={onBack}>
           이전
         </Button>
-        <Button className="flex-1" onClick={onNext} disabled={selected.length === 0}>
+        <Button className="flex-1" data-testid="onboarding-next" onClick={onNext} disabled={selected.length === 0}>
           다음
         </Button>
       </div>

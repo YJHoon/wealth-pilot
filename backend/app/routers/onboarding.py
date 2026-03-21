@@ -1,6 +1,9 @@
 """온보딩 라우터 — 온보딩 완료 처리"""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -8,6 +11,9 @@ from app.dependencies.auth import get_current_user
 from app.middleware.rate_limit import limiter
 from app.models.user import User
 from app.schemas.onboarding import OnboardingCompleteRequest, OnboardingCompleteResponse
+from app.services.security_service import AccessAction, log_access
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/onboarding", tags=["온보딩"])
 
@@ -43,7 +49,16 @@ async def complete_onboarding(
         )
 
     user.onboarding_completed = True
-    await db.commit()
+    await log_access(db, user.id, AccessAction.ONBOARDING_COMPLETE, request)
+    try:
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.exception("Onboarding commit failed for user %s", user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="온보딩 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+        ) from None
 
     return OnboardingCompleteResponse(
         onboarding_completed=True,
