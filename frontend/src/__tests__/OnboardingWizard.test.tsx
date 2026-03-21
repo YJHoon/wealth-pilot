@@ -135,9 +135,7 @@ describe("OnboardingWizard", () => {
     await user.click(stockButton);
 
     // 다음 버튼 활성화
-    const buttons = screen.getAllByRole("button", { name: "다음" });
-    const nextButton = buttons.find((btn) => !btn.closest("[class*=ghost]"));
-    expect(nextButton).toBeEnabled();
+    expect(screen.getByTestId("onboarding-next")).toBeEnabled();
   });
 
   it("완료 단계에서 API 호출 + 대시보드 이동", async () => {
@@ -168,6 +166,31 @@ describe("OnboardingWizard", () => {
     }));
     expect(mockUpdate).toHaveBeenCalledWith({ onboardingCompleted: true });
     expect(mockPush).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("완료 단계에서 API 실패 시 에러 표시 + 대시보드 미이동", async () => {
+    mockSession = { ...mockSession, totpSetupRequired: false };
+    mockApiFetch.mockRejectedValueOnce(new Error("서버 오류가 발생했습니다."));
+
+    const user = userEvent.setup();
+    render(<OnboardingWizard />);
+
+    // Navigate through all steps: 1→2→3→4(skip)→5(skip)→6
+    await user.click(screen.getByRole("button", { name: "시작하기" }));
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: "동의하고 계속하기" }));
+    await user.click(screen.getByRole("button", { name: "다음" }));
+    await user.click(screen.getByRole("button", { name: "건너뛰기" }));
+    await user.click(screen.getByRole("button", { name: "건너뛰기" }));
+
+    await user.click(screen.getByRole("button", { name: "대시보드로 이동" }));
+
+    expect(mockApiFetch).toHaveBeenCalledWith("/api/onboarding/complete", expect.objectContaining({
+      method: "PUT",
+    }));
+    expect(screen.getByText("서버 오류가 발생했습니다.")).toBeInTheDocument();
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("스텝 인디케이터가 현재 단계를 표시한다", () => {
