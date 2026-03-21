@@ -7,6 +7,7 @@ declare module "next-auth" {
     refreshToken?: string;
     totpRequired?: boolean;
     totpSetupRequired?: boolean;
+    onboardingCompleted?: boolean;
   }
 }
 
@@ -16,6 +17,7 @@ declare module "@auth/core/jwt" {
     refreshToken?: string;
     totpRequired?: boolean;
     totpSetupRequired?: boolean;
+    onboardingCompleted?: boolean;
   }
 }
 

@@ -11,6 +11,7 @@ interface ExtendedUser extends User {
     refreshToken: string;
     totpRequired: boolean;
     totpSetupRequired: boolean;
+    onboardingCompleted: boolean;
   };
 }
 
@@ -63,6 +64,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           refreshToken: data.refresh_token,
           totpRequired: data.totp_required,
           totpSetupRequired: data.totp_setup_required,
+          onboardingCompleted: data.user?.onboarding_completed ?? false,
         };
 
         return true;
@@ -81,14 +83,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.refreshToken = backendTokens.refreshToken;
           token.totpRequired = backendTokens.totpRequired;
           token.totpSetupRequired = backendTokens.totpSetupRequired;
+          token.onboardingCompleted = backendTokens.onboardingCompleted;
         }
       }
 
-      // 세션 업데이트 (2FA 완료 후 새 토큰 반영)
+      // 세션 업데이트 (2FA 완료, 온보딩 완료 후 새 토큰 반영)
       if (trigger === "update" && session) {
         if (session.accessToken !== undefined) token.accessToken = session.accessToken;
         if (session.totpRequired !== undefined) token.totpRequired = session.totpRequired;
         if (session.totpSetupRequired !== undefined) token.totpSetupRequired = session.totpSetupRequired;
+        if (session.onboardingCompleted !== undefined) token.onboardingCompleted = session.onboardingCompleted;
       }
 
       return token;
@@ -100,6 +104,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.refreshToken = token.refreshToken as string | undefined;
       session.totpRequired = token.totpRequired as boolean | undefined;
       session.totpSetupRequired = token.totpSetupRequired as boolean | undefined;
+      session.onboardingCompleted = token.onboardingCompleted as boolean | undefined;
 
       return session;
     },

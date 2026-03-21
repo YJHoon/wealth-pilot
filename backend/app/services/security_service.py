@@ -35,6 +35,7 @@ class AccessAction:
     TOTP_VERIFY = "totp_verify"
     DASHBOARD_VIEW = "dashboard_view"
     SNAPSHOT_CREATE = "snapshot_create"
+    ONBOARDING_COMPLETE = "onboarding_complete"
 
 
 async def log_access(
