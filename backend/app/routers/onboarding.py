@@ -1,0 +1,51 @@
+"""온보딩 라우터 — 온보딩 완료 처리"""
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.dependencies.auth import get_current_user
+from app.middleware.rate_limit import limiter
+from app.models.user import User
+from app.schemas.onboarding import OnboardingCompleteRequest, OnboardingCompleteResponse
+
+router = APIRouter(prefix="/api/onboarding", tags=["온보딩"])
+
+
+@router.put("/complete", response_model=OnboardingCompleteResponse)
+@limiter.limit("100/minute")
+async def complete_onboarding(
+    request: Request,
+    body: OnboardingCompleteRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """온보딩 완료 처리
+
+    면책 동의 확인 + 2FA 설정 확인 후 onboarding_completed=True 설정.
+    """
+    if user.onboarding_completed:
+        return OnboardingCompleteResponse(
+            onboarding_completed=True,
+            message="이미 온보딩이 완료되었습니다.",
+        )
+
+    if not body.disclaimer_agreed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="면책 조항에 동의해야 합니다.",
+        )
+
+    if not user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="2단계 인증(2FA) 설정을 완료해야 합니다.",
+        )
+
+    user.onboarding_completed = True
+    await db.commit()
+
+    return OnboardingCompleteResponse(
+        onboarding_completed=True,
+        message="온보딩이 완료되었습니다. 대시보드로 이동합니다.",
+    )
