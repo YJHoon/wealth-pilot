@@ -14,6 +14,8 @@ export function MobileSidebar() {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const asideRef = useRef<HTMLElement>(null);
+  const prevOpenRef = useRef(false);
+  const prevOverflowRef = useRef("");
 
   // 경로 변경 시 자동 닫기
   useEffect(() => {
@@ -30,26 +32,27 @@ export function MobileSidebar() {
     return () => document.removeEventListener("keydown", handleEsc);
   }, [open]);
 
-  // 열릴 때 body 스크롤 방지
+  // 열릴 때 body 스크롤 방지 (기존 overflow 값 보존)
   useEffect(() => {
     if (open) {
+      prevOverflowRef.current = document.body.style.overflow;
       document.body.style.overflow = "hidden";
     } else {
-      document.body.style.overflow = "";
+      document.body.style.overflow = prevOverflowRef.current;
     }
     return () => {
-      document.body.style.overflow = "";
+      document.body.style.overflow = prevOverflowRef.current;
     };
   }, [open]);
 
   // 포커스 관리: 열릴 때 닫기 버튼에 포커스, 닫힐 때 트리거에 포커스 복원
   useEffect(() => {
     if (open) {
-      // 애니메이션 후 포커스 이동
       requestAnimationFrame(() => closeBtnRef.current?.focus());
-    } else if (triggerRef.current) {
-      triggerRef.current.focus();
+    } else if (prevOpenRef.current) {
+      triggerRef.current?.focus();
     }
+    prevOpenRef.current = open;
   }, [open]);
 
   // 포커스 트랩: aside 내부에서만 Tab 순환
