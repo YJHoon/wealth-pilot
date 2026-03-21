@@ -7,6 +7,9 @@ const PUBLIC_PATHS = ["/login", "/api/auth", "/api-docs"];
 // 2FA 관련 경로 (인증 후 접근 허용)
 const TWO_FA_PATHS = ["/security/2fa"];
 
+// 온보딩 경로
+const ONBOARDING_PATHS = ["/onboarding"];
+
 export default auth((req) => {
   const { pathname } = req.nextUrl;
 
@@ -36,9 +39,20 @@ export default auth((req) => {
   }
 
   const isTwoFaPath = TWO_FA_PATHS.some((p) => pathname.startsWith(p));
+  const isOnboardingPath = ONBOARDING_PATHS.some((p) => pathname.startsWith(p));
 
-  // 2FA 초기 설정 필요 → 설정 페이지로 강제 이동
-  if (req.auth?.totpSetupRequired && !isTwoFaPath) {
+  // 온보딩 미완료 → 온보딩 페이지로 강제 이동 (온보딩에서 2FA도 처리)
+  if (req.auth?.onboardingCompleted === false && !isOnboardingPath) {
+    return NextResponse.redirect(new URL("/onboarding", req.url));
+  }
+
+  // 온보딩 완료된 사용자가 /onboarding 접근 → 대시보드로 리다이렉트
+  if (req.auth?.onboardingCompleted && isOnboardingPath) {
+    return NextResponse.redirect(new URL("/dashboard", req.url));
+  }
+
+  // 2FA 초기 설정 필요 (온보딩 완료 후 엣지 케이스) → 설정 페이지로 강제 이동
+  if (req.auth?.totpSetupRequired && !isTwoFaPath && !isOnboardingPath) {
     return NextResponse.redirect(new URL("/security/2fa/setup", req.url));
   }
 
