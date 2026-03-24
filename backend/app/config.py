@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     kis_live_base_url: str = "https://openapi.koreainvestment.com:9443"
     trading_enabled: bool = False  # 자동매매 글로벌 킬 스위치
 
+
     # 환경
     env: str = "development"
 
