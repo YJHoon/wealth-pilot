@@ -23,7 +23,7 @@ export function formatAmount(
   const config = currencyConfig[currency];
 
   if (currency === "KRW") {
-    return `${value.toLocaleString("ko-KR")}원`;
+    return `${value.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원`;
   }
   if (currency === "BTC" || currency === "ETH") {
     return `${value.toLocaleString(config.locale, { minimumFractionDigits: 2, maximumFractionDigits: 8 })} ${config.symbol}`;

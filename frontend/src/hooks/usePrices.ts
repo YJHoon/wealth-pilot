@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { apiFetch } from "@/lib/api";
+
+const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 import type {
   DataFreshness,
   ExchangeRateApi,
@@ -39,9 +41,11 @@ export function usePrices(): UsePricesReturn {
     return map;
   }, []);
 
+  const canFetch = AUTH_DISABLED || !!accessToken;
+
   // 마운트 시 환율 + 모드 조회
   useEffect(() => {
-    if (!accessToken) return;
+    if (!canFetch) return;
 
     setLoadingRates(true);
 
@@ -49,9 +53,9 @@ export function usePrices(): UsePricesReturn {
       try {
         const [rates, mode] = await Promise.all([
           apiFetch<ExchangeRateApi[]>("/api/prices/exchange-rates", {
-            accessToken,
+            ...(accessToken && { accessToken }),
           }),
-          apiFetch<PriceModeApi>("/api/prices/mode", { accessToken }),
+          apiFetch<PriceModeApi>("/api/prices/mode", { ...(accessToken && { accessToken }) }),
         ]);
         setExchangeRates(buildRateMap(rates));
         setPriceMode(mode.current_mode);
@@ -63,15 +67,15 @@ export function usePrices(): UsePricesReturn {
     };
 
     fetchInitial();
-  }, [accessToken, buildRateMap]);
+  }, [canFetch, accessToken, buildRateMap]);
 
   // 시세 갱신
   const refreshPrices = useCallback(async (): Promise<RefreshResponseApi> => {
-    if (!accessToken) throw new Error("인증이 필요합니다.");
+    if (!canFetch) throw new Error("인증이 필요합니다.");
 
     const res = await apiFetch<RefreshResponseApi>("/api/prices/refresh", {
       method: "POST",
-      accessToken,
+      ...(accessToken && { accessToken }),
     });
 
     setLastRefreshedAt(res.refreshed_at);
@@ -81,7 +85,7 @@ export function usePrices(): UsePricesReturn {
     }
 
     return res;
-  }, [accessToken, buildRateMap]);
+  }, [canFetch, accessToken, buildRateMap]);
 
   // 환율 변환 헬퍼
   const toKrw = useCallback(

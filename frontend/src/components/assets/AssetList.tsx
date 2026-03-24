@@ -40,6 +40,8 @@ import {
   RefreshCw,
   Loader2,
 } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { Asset, AssetType, AssetStatus, DataFreshness, PortfolioGroup } from "@/types";
 import { useAppStore } from "@/stores/appStore";
 import {
@@ -104,7 +106,8 @@ function AssetActionMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon-xs" aria-label={`${asset.name} 액션 메뉴`} />}
+        className={cn(buttonVariants({ variant: "ghost", size: "icon-xs" }))}
+        aria-label={`${asset.name} 액션 메뉴`}
       >
         <MoreHorizontal className="size-3.5" />
       </DropdownMenuTrigger>

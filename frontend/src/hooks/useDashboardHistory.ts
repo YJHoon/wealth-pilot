@@ -5,6 +5,8 @@ import { useSession } from "next-auth/react";
 import { apiFetch } from "@/lib/api";
 import type { DashboardHistoryApi, HistoryDataPointApi } from "@/types";
 
+const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
+
 export interface HistoryDataPoint {
   date: string;
   totalValueKrw: number;
@@ -20,11 +22,12 @@ function toHistoryPoints(api: DashboardHistoryApi): HistoryDataPoint[] {
 export function useDashboardHistory(period: string = "3M") {
   const { data: session } = useSession();
   const accessToken = session?.accessToken;
+  const canFetch = AUTH_DISABLED || !!accessToken;
 
   const { data, error, isLoading } = useSWR<HistoryDataPoint[]>(
-    accessToken ? `/api/dashboard/history?period=${period}` : null,
+    canFetch ? `/api/dashboard/history?period=${period}` : null,
     (path: string) =>
-      apiFetch<DashboardHistoryApi>(path, { accessToken: accessToken! }).then(
+      apiFetch<DashboardHistoryApi>(path, { ...(accessToken && { accessToken }) }).then(
         toHistoryPoints,
       ),
     {

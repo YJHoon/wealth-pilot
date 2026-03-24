@@ -1,5 +1,8 @@
 import { auth } from "@/lib/auth";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+
+// 개발용: 인증 비활성화
+const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 
 // 인증 없이 접근 가능한 경로
 const PUBLIC_PATHS = ["/login", "/api/auth", "/api-docs"];
@@ -10,7 +13,12 @@ const TWO_FA_PATHS = ["/security/2fa"];
 // 온보딩 경로
 const ONBOARDING_PATHS = ["/onboarding"];
 
-export default auth((req) => {
+// 인증 비활성화 시 모든 경로 통과
+function devMiddleware(req: NextRequest) {
+  return NextResponse.next();
+}
+
+const authMiddleware = auth((req) => {
   const { pathname } = req.nextUrl;
 
   // 공개 경로는 인증 체크 안 함
@@ -63,6 +71,8 @@ export default auth((req) => {
 
   return NextResponse.next();
 });
+
+export default AUTH_DISABLED ? devMiddleware : authMiddleware;
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.json|icons/).*)"],

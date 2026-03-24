@@ -24,6 +24,27 @@ logger = logging.getLogger(__name__)
 # 외부 API 소스명
 EXCHANGE_RATE_SOURCE = "exchangerate-api"
 
+# 암호화폐 ticker → CoinGecko ID 매핑
+_CRYPTO_ID_MAP: dict[str, str] = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "XRP": "ripple",
+    "SOL": "solana",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "MATIC": "matic-network",
+    "AVAX": "avalanche-2",
+    "LINK": "chainlink",
+    "ATOM": "cosmos",
+    "UNI": "uniswap",
+    "NEAR": "near",
+    "APT": "aptos",
+    "ARB": "arbitrum",
+    "OP": "optimism",
+    "SUI": "sui",
+}
+
 # 모드별 TTL (초)
 _TTL_MAP: dict[PriceMode, int] = {
     PriceMode.BATCH: 86400,     # 24h
@@ -127,6 +148,34 @@ class PriceService:
         return False
 
     # ------------------------------------------------------------------
+    # ticker 자동 변환
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _to_yfinance_ticker(ticker: str, asset_type: str | None = None) -> list[str]:
+        """DB ticker → yfinance ticker 후보 목록 반환.
+
+        한국 주식(숫자 6자리)은 .KS(KOSPI), .KQ(KOSDAQ) 순으로 시도.
+        이미 접미사가 있으면 그대로 사용.
+        """
+        # 이미 .KS/.KQ/.T 등 접미사가 붙어 있으면 그대로
+        if "." in ticker:
+            return [ticker]
+        # 숫자 6자리 → 한국 주식
+        if ticker.isdigit() and len(ticker) == 6:
+            return [f"{ticker}.KS", f"{ticker}.KQ"]
+        return [ticker]
+
+    @staticmethod
+    def _to_coingecko_id(symbol: str) -> str:
+        """DB ticker(대문자 심볼) → CoinGecko coin ID 변환."""
+        upper = symbol.upper()
+        if upper in _CRYPTO_ID_MAP:
+            return _CRYPTO_ID_MAP[upper]
+        # 매핑에 없으면 소문자로 시도 (CoinGecko는 소문자 slug)
+        return symbol.lower()
+
+    # ------------------------------------------------------------------
     # 주식 시세 (yfinance)
     # ------------------------------------------------------------------
 
@@ -140,14 +189,23 @@ class PriceService:
             return self._cache[cache_key]
 
         try:
+            candidates = self._to_yfinance_ticker(ticker)
+
             # yfinance는 동기 라이브러리 → 이벤트 루프 차단 방지
             def _fetch_yf() -> tuple[Decimal, str]:
-                tk = yf.Ticker(ticker)
-                info = tk.fast_info
-                return (
-                    Decimal(str(info.last_price)),
-                    getattr(info, "currency", "KRW") or "KRW",
-                )
+                last_err: Exception | None = None
+                for candidate in candidates:
+                    try:
+                        tk = yf.Ticker(candidate)
+                        info = tk.fast_info
+                        return (
+                            Decimal(str(info.last_price)),
+                            getattr(info, "currency", "KRW") or "KRW",
+                        )
+                    except Exception as e:
+                        last_err = e
+                        continue
+                raise last_err  # type: ignore[misc]
 
             price, currency = await asyncio.to_thread(_fetch_yf)
 
@@ -191,8 +249,9 @@ class PriceService:
         if self._is_cache_valid(cache_key, user_id=user_id):
             return self._cache[cache_key]
 
+        coin_id = self._to_coingecko_id(symbol)
         url = "https://api.coingecko.com/api/v3/simple/price"
-        params = {"ids": symbol, "vs_currencies": "krw"}
+        params = {"ids": coin_id, "vs_currencies": "krw"}
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -200,10 +259,10 @@ class PriceService:
                 resp.raise_for_status()
                 data = resp.json()
 
-            if symbol not in data or "krw" not in data[symbol]:
-                raise ValueError(f"CoinGecko returned no data for {symbol}")
+            if coin_id not in data or "krw" not in data[coin_id]:
+                raise ValueError(f"CoinGecko returned no data for {symbol} (coin_id={coin_id})")
 
-            price = Decimal(str(data[symbol]["krw"]))
+            price = Decimal(str(data[coin_id]["krw"]))
             anomaly = self._detect_anomaly(cache_key, price)
             if anomaly:
                 logger.warning(
@@ -399,7 +458,7 @@ class PriceService:
                         fetched_at=cached.fetched_at,
                         source=EXCHANGE_RATE_SOURCE,
                     ).on_conflict_do_update(
-                        index_elements=["from_currency", "to_currency"],
+                        constraint="uq_exchange_rate_pair",
                         set_={
                             "rate": cached.price,
                             "fetched_at": cached.fetched_at,

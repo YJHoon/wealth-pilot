@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { apiFetch, ApiError } from "@/lib/api";
+
+const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 import {
   PortfolioGroup,
   GroupListApiResponse,
@@ -23,9 +25,10 @@ export function useGroups(): UseGroupsReturn {
   const [error, setError] = useState<string | null>(null);
 
   const accessToken = (session as { accessToken?: string } | null)?.accessToken;
+  const canFetch = AUTH_DISABLED || !!accessToken;
 
   const fetchGroups = useCallback(async () => {
-    if (!accessToken) {
+    if (!canFetch) {
       setGroups([]);
       setLoading(false);
       return;
@@ -34,7 +37,7 @@ export function useGroups(): UseGroupsReturn {
     setError(null);
     try {
       const res = await apiFetch<GroupListApiResponse>("/api/groups", {
-        accessToken,
+        ...(accessToken && { accessToken }),
       });
       setGroups(res.groups.map(toGroup));
     } catch (err) {
@@ -42,7 +45,7 @@ export function useGroups(): UseGroupsReturn {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [canFetch, accessToken]);
 
   useEffect(() => {
     fetchGroups();
