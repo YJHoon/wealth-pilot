@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import engine, get_db, AsyncSessionLocal
@@ -34,6 +35,12 @@ async def db_session():
 @pytest_asyncio.fixture
 async def mock_user(db_session: AsyncSession):
     """테스트용 사용자 생성."""
+    # 이전 테스트 실행에서 남은 잔여 데이터 정리
+    await db_session.execute(text(
+        "DELETE FROM users WHERE email = 'test@example.com'"
+    ))
+    await db_session.commit()
+
     user = User(
         id=uuid.uuid4(),
         email="test@example.com",
@@ -44,8 +51,15 @@ async def mock_user(db_session: AsyncSession):
     await db_session.commit()
     await db_session.refresh(user)
     yield user
-    # cleanup
-    await db_session.delete(user)
+    # cleanup: API 테스트에서 생성된 관련 데이터를 먼저 삭제 (cascade 충돌 방지)
+    user_id = str(user.id)
+    await db_session.execute(text(f"DELETE FROM trading_orders WHERE user_id = '{user_id}'"))
+    await db_session.execute(text(f"DELETE FROM trading_schedule_logs WHERE user_id = '{user_id}'"))
+    await db_session.execute(text(f"DELETE FROM trading_positions WHERE user_id = '{user_id}'"))
+    await db_session.execute(text(f"DELETE FROM trading_strategies WHERE user_id = '{user_id}'"))
+    await db_session.execute(text(f"DELETE FROM trading_accounts WHERE user_id = '{user_id}'"))
+    await db_session.execute(text(f"DELETE FROM access_logs WHERE user_id = '{user_id}'"))
+    await db_session.execute(text(f"DELETE FROM users WHERE id = '{user_id}'"))
     await db_session.commit()
 
 
@@ -62,7 +76,8 @@ async def other_user(db_session: AsyncSession):
     await db_session.commit()
     await db_session.refresh(user)
     yield user
-    await db_session.delete(user)
+    user_id = str(user.id)
+    await db_session.execute(text(f"DELETE FROM users WHERE id = '{user_id}'"))
     await db_session.commit()
 
 

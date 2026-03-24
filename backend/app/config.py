@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # 개발용: 인증 비활성화 (True면 모든 API에서 인증 스킵)
     auth_disabled: bool = False
 
+    # KIS API
+    kis_paper_base_url: str = "https://openapivts.koreainvestment.com:29443"
+    kis_live_base_url: str = "https://openapi.koreainvestment.com:9443"
+    trading_enabled: bool = False  # 자동매매 글로벌 킬 스위치
+
     # 환경
     env: str = "development"
 

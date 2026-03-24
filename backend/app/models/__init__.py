@@ -7,6 +7,19 @@ from app.models.portfolio_group import PortfolioGroup
 from app.models.asset import Asset, AssetType, AssetStatus, Currency
 from app.models.asset_snapshot import AssetSnapshot
 from app.models.exchange_rate import ExchangeRate
+from app.models.trading import (
+    TradingAccount,
+    TradingStrategy,
+    TradingOrder,
+    TradingPosition,
+    TradingScheduleLog,
+    TradingMode,
+    StrategyType,
+    OrderSide,
+    OrderType,
+    OrderStatus,
+    ScheduleLogStatus,
+)
 
 __all__ = [
     "User",
@@ -19,4 +32,15 @@ __all__ = [
     "Currency",
     "AssetSnapshot",
     "ExchangeRate",
+    "TradingAccount",
+    "TradingStrategy",
+    "TradingOrder",
+    "TradingPosition",
+    "TradingScheduleLog",
+    "TradingMode",
+    "StrategyType",
+    "OrderSide",
+    "OrderType",
+    "OrderStatus",
+    "ScheduleLogStatus",
 ]
