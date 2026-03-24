@@ -7,16 +7,34 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.services.auth_service import verify_token
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=not settings.auth_disabled)
+
+
+async def _get_dev_user(db: AsyncSession) -> User:
+    """개발용: DB의 첫 번째 유저 반환, 없으면 생성"""
+    result = await db.execute(select(User).limit(1))
+    user = result.scalar_one_or_none()
+    if user is None:
+        user = User(
+            email="dev@wealthpilot.local",
+            name="Dev User",
+            totp_enabled=False,
+            onboarding_completed=True,
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    return user
 
 
 async def get_current_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """JWT Access Token으로 현재 사용자 조회
@@ -25,6 +43,12 @@ async def get_current_user(
         HTTPException 401: 토큰 유효하지 않음
         HTTPException 403: 2FA 미설정 (totp_enabled=False)
     """
+    # 개발용 인증 바이패스
+    if settings.auth_disabled:
+        user = await _get_dev_user(db)
+        request.state.rate_limit_user_id = str(user.id)
+        return user
+
     payload = verify_token(credentials.credentials, expected_type="access")
     if payload is None:
         raise HTTPException(
@@ -57,7 +81,7 @@ async def get_current_user(
 
 async def get_current_active_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """JWT 인증 + 2FA 검증 완료 확인
@@ -69,6 +93,12 @@ async def get_current_active_user(
         HTTPException 401: 토큰 유효하지 않음
         HTTPException 403: 2FA 인증 미완료
     """
+    # 개발용 인증 바이패스
+    if settings.auth_disabled:
+        user = await _get_dev_user(db)
+        request.state.rate_limit_user_id = str(user.id)
+        return user
+
     payload = verify_token(credentials.credentials, expected_type="access")
     if payload is None:
         raise HTTPException(

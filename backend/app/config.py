@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Sentry
     sentry_dsn: str = ""
 
+    # 개발용: 인증 비활성화 (True면 모든 API에서 인증 스킵)
+    auth_disabled: bool = False
+
     # 환경
     env: str = "development"
 

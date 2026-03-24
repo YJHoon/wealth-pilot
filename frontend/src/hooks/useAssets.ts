@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { apiFetch, ApiError } from "@/lib/api";
+
+const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 import {
   Asset,
   AssetType,
@@ -41,9 +43,10 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
   const [error, setError] = useState<string | null>(null);
 
   const accessToken = (session as { accessToken?: string } | null)?.accessToken;
+  const canFetch = AUTH_DISABLED || !!accessToken;
 
   const fetchAssets = useCallback(async () => {
-    if (!accessToken) {
+    if (!canFetch) {
       setAssets([]);
       setTotal(0);
       setError(null);
@@ -60,7 +63,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
       const qs = params.toString();
       const res = await apiFetch<AssetListApiResponse>(
         `/api/assets${qs ? `?${qs}` : ""}`,
-        { accessToken },
+        { ...(accessToken && { accessToken }) },
       );
       setAssets(res.assets.map(toAsset));
       setTotal(res.total);
@@ -70,7 +73,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, options.type, options.status, options.groupId]);
+  }, [canFetch, accessToken, options.type, options.status, options.groupId]);
 
   useEffect(() => {
     fetchAssets().catch(() => {});
@@ -78,56 +81,56 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
 
   const createAsset = useCallback(
     async (data: AssetCreateRequest): Promise<Asset> => {
-      if (!accessToken) throw new Error("인증이 필요합니다.");
+      if (!canFetch) throw new Error("인증이 필요합니다.");
       const res = await apiFetch<AssetApiResponse>("/api/assets", {
         method: "POST",
         body: JSON.stringify(data),
-        accessToken,
+        ...(accessToken && { accessToken }),
       });
       await fetchAssets().catch(() => {});
       return toAsset(res);
     },
-    [accessToken, fetchAssets],
+    [canFetch, accessToken, fetchAssets],
   );
 
   const updateAsset = useCallback(
     async (id: string, data: AssetUpdateRequest): Promise<Asset> => {
-      if (!accessToken) throw new Error("인증이 필요합니다.");
+      if (!canFetch) throw new Error("인증이 필요합니다.");
       const res = await apiFetch<AssetApiResponse>(`/api/assets/${id}`, {
         method: "PUT",
         body: JSON.stringify(data),
-        accessToken,
+        ...(accessToken && { accessToken }),
       });
       await fetchAssets().catch(() => {});
       return toAsset(res);
     },
-    [accessToken, fetchAssets],
+    [canFetch, accessToken, fetchAssets],
   );
 
   const deleteAsset = useCallback(
     async (id: string): Promise<void> => {
-      if (!accessToken) throw new Error("인증이 필요합니다.");
+      if (!canFetch) throw new Error("인증이 필요합니다.");
       await apiFetch<void>(`/api/assets/${id}`, {
         method: "DELETE",
-        accessToken,
+        ...(accessToken && { accessToken }),
       });
       await fetchAssets().catch(() => {});
     },
-    [accessToken, fetchAssets],
+    [canFetch, accessToken, fetchAssets],
   );
 
   const sellAsset = useCallback(
     async (id: string, data: SellRequest): Promise<Asset> => {
-      if (!accessToken) throw new Error("인증이 필요합니다.");
+      if (!canFetch) throw new Error("인증이 필요합니다.");
       const res = await apiFetch<AssetApiResponse>(`/api/assets/${id}/sell`, {
         method: "POST",
         body: JSON.stringify(data),
-        accessToken,
+        ...(accessToken && { accessToken }),
       });
       await fetchAssets().catch(() => {});
       return toAsset(res);
     },
-    [accessToken, fetchAssets],
+    [canFetch, accessToken, fetchAssets],
   );
 
   return {

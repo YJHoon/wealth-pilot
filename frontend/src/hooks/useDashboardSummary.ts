@@ -9,14 +9,17 @@ import {
   toDashboardSummary,
 } from "@/types";
 
+const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
+
 export function useDashboardSummary() {
   const { data: session } = useSession();
   const accessToken = (session as { accessToken?: string } | null)?.accessToken;
+  const canFetch = AUTH_DISABLED || !!accessToken;
 
   const { data, error, isLoading, mutate } = useSWR<DashboardSummary>(
-    accessToken ? "/api/dashboard/summary" : null,
+    canFetch ? "/api/dashboard/summary" : null,
     (path: string) =>
-      apiFetch<DashboardSummaryApi>(path, { accessToken: accessToken! }).then(
+      apiFetch<DashboardSummaryApi>(path, { ...(accessToken && { accessToken }) }).then(
         toDashboardSummary,
       ),
     {
