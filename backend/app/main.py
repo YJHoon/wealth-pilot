@@ -10,7 +10,8 @@ from app.config import settings
 from app.database import engine
 from app.middleware.rate_limit import limiter
 from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.routers import assets, auth, dashboard, groups, onboarding, prices
+from app.routers import assets, auth, dashboard, groups, onboarding, prices, trading
+from app.tasks.trading_scheduler import trading_scheduler
 
 
 # Sentry 초기화 (DSN이 설정된 경우에만)
@@ -27,7 +28,15 @@ async def lifespan(app: FastAPI):
     # 시작: DB 연결 확인
     async with engine.begin() as conn:
         await conn.run_sync(lambda _: None)
+
+    # 시작: 매매 스케줄러 초기화 (trading_enabled 시에만)
+    if settings.trading_enabled:
+        await trading_scheduler.setup()
+
     yield
+
+    # 종료: 매매 스케줄러 정리
+    await trading_scheduler.shutdown()
     # 종료: 엔진 정리
     await engine.dispose()
 
@@ -66,6 +75,7 @@ app.include_router(groups.router)
 app.include_router(prices.router)
 app.include_router(dashboard.router)
 app.include_router(onboarding.router)
+app.include_router(trading.router)
 
 
 @app.get("/health")
