@@ -1,5 +1,6 @@
 import {
   BarChart2,
+  Bot,
   Coins,
   FolderKanban,
   History,
@@ -20,6 +21,7 @@ export interface NavItem {
 export const navItems: NavItem[] = [
   { href: "/dashboard", label: "대시보드", icon: BarChart2 },
   { href: "/assets", label: "자산", icon: Wallet },
+  { href: "/trading", label: "자동매매", icon: Bot },
   { href: "/groups", label: "그룹", icon: FolderKanban },
   { href: "/analysis", label: "분석", icon: LineChart },
   { href: "/spending", label: "지출", icon: Coins },
