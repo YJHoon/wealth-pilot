@@ -36,6 +36,12 @@ class AccessAction:
     DASHBOARD_VIEW = "dashboard_view"
     SNAPSHOT_CREATE = "snapshot_create"
     ONBOARDING_COMPLETE = "onboarding_complete"
+    TRADING_ACCOUNT_CREATE = "trading_account_create"
+    TRADING_ACCOUNT_DELETE = "trading_account_delete"
+    TRADING_SCHEDULE_START = "trading_schedule_start"
+    TRADING_SCHEDULE_STOP = "trading_schedule_stop"
+    TRADING_MANUAL_RUN = "trading_manual_run"
+    TRADING_ORDER_PLACED = "trading_order_placed"
 
 
 async def log_access(

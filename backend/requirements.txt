@@ -32,6 +32,9 @@ cryptography==46.0.5
 # 시세 조회
 yfinance>=0.2.36
 
+# 스케줄러
+apscheduler>=3.10,<4.0
+
 # 모니터링
 sentry-sdk[fastapi]==2.19.0
 

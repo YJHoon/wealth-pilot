@@ -18,6 +18,16 @@ _ALERT_TEMPLATES = {
     "repeated_login_failures": "🚨 [반복 로그인 실패]\n사용자: {user_email}\nIP: {ip}\n기기: {device}",
 }
 
+# 매매 알림 (send_telegram_message로 직접 전송하는 형태)
+TRADING_ALERT_TEMPLATES = {
+    "trade_executed": "📈 [매매 체결] {side} {ticker} {qty}주 @ {price}원",
+    "bot_started": "🤖 [자동매매 스케줄 시작] 전략: {strategy}, 모드: {mode}",
+    "bot_stopped": "🛑 [자동매매 스케줄 중지] 전략: {strategy}",
+    "stop_loss": "🚨 [손절 발동] {ticker} 손실: {loss}원",
+    "daily_limit": "⛔ [일일 손실 한도 도달] 오늘 손실: {loss}원",
+    "cycle_error": "❌ [매매 사이클 오류] {error}",
+}
+
 
 async def send_telegram_message(message: str) -> bool:
     """텔레그램 메시지 전송. 토큰 미설정 시 skip."""
