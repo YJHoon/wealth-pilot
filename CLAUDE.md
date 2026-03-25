@@ -90,10 +90,6 @@ git checkout develop && git merge feature/기능명
 6. 보안 변경 → `security_service.py` 업데이트 + 테스트 필수
 7. DB 모델 변경 → Alembic 마이그레이션 생성
 
-## 현재 Phase
-
-**Phase 1: 자산 대시보드 MVP** — 자산 CRUD + 매도 아카이브 + 포트폴리오 그룹 + 대시보드(미니멀/터미널) + 2FA 인증 + 보안 + 배포
-
 ## 참고 문서
 
 - PRD: `docs/PRD.md`
