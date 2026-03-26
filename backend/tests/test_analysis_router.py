@@ -204,10 +204,20 @@ class TestTradingSignals:
 
 @pytest.mark.asyncio
 class TestSimulate:
-    async def test_returns_501(self, auth_client: AsyncClient):
-        resp = await auth_client.post("/api/analysis/simulate")
-        assert resp.status_code == 501
-        assert "준비 중" in resp.json()["detail"]
+    async def test_scenario_returns_201(self, auth_client: AsyncClient):
+        resp = await auth_client.post("/api/analysis/simulate", json={
+            "params": {
+                "type": "scenario",
+                "ticker": "005930",
+                "market": "KRX",
+                "entry_price": "10000",
+                "quantity": "10",
+                "target_price": "12000",
+                "stop_loss_price": "9000",
+            },
+        })
+        assert resp.status_code == 201
+        assert resp.json()["type"] == "scenario"
 
 
 # ──────────────────────────────────────────────

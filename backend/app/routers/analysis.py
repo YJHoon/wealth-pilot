@@ -4,7 +4,7 @@
 - GET    /api/analysis/stock/{ticker}            기본적 분석
 - GET    /api/analysis/stock/{ticker}/technical   기술적 분석
 - GET    /api/analysis/stock/{ticker}/signals     매매 시그널
-- POST   /api/analysis/simulate                   시뮬레이션 (placeholder)
+- POST   /api/analysis/simulate                   시뮬레이션 (DCA/포트폴리오/시나리오)
 - GET    /api/analysis/watchlist                   관심종목 목록
 - POST   /api/analysis/watchlist                   관심종목 추가
 - PUT    /api/analysis/watchlist/{id}              관심종목 수정
@@ -18,11 +18,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.middleware.rate_limit import limiter
 from app.dependencies.auth import get_current_active_user
 from app.models.user import User
 from app.schemas.analysis import (
     FundamentalAnalysisResponse,
     MarketType,
+    SimulationRequest,
+    SimulationResponse,
     TechnicalAnalysisResponse,
     TradingSignalsResponse,
     WatchlistCreate,
@@ -36,6 +39,7 @@ from app.services.stock_analysis_service import (
     get_technical_analysis,
     get_trading_signals,
 )
+from app.services.simulation_service import SimulationError, run_simulation
 from app.services.watchlist_service import (
     WatchlistDuplicateError,
     WatchlistNotFoundError,
@@ -127,18 +131,31 @@ async def trading_signals(
 
 
 # ──────────────────────────────────────────────
-# 시뮬레이션 (Task 3-5에서 구현)
+# 시뮬레이션
 # ──────────────────────────────────────────────
 
-@router.post("/simulate")
+@router.post("/simulate", response_model=SimulationResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("100/minute")
 async def simulate(
+    body: SimulationRequest,
+    request: Request,
     user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """시뮬레이션 — Task 3-5에서 구현 예정."""
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="시뮬레이션 기능은 준비 중입니다.",
-    )
+    """시뮬레이션 실행 (DCA / 포트폴리오 / 시나리오)."""
+    try:
+        result = await run_simulation(db, user.id, body.params)
+    except SimulationError as e:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    try:
+        await log_access(db, user.id, AccessAction.SIMULATION_RUN, request)
+    except Exception:
+        logger.warning("SIMULATION_RUN access logging failed", exc_info=True)
+
+    await db.commit()
+    return result
 
 
 # ──────────────────────────────────────────────

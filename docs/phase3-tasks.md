@@ -161,6 +161,21 @@
 
 ---
 
+## Task 3-9: 분석 라우터 트랜잭션 분리 리팩토링
+
+**수정 파일**: `backend/app/routers/analysis.py`
+
+현재 모든 엔드포인트(simulate, add_watchlist, modify_watchlist, remove_watchlist)에서 메인 비즈니스 로직(시뮬레이션 저장, 관심종목 CRUD)과 액세스 로그(`log_access`)가 동일 트랜잭션으로 commit된다. 액세스 로그 INSERT의 DB 레벨 오류가 메인 데이터까지 롤백시킬 수 있다.
+
+**변경 내용**:
+- 메인 비즈니스 로직 완료 후 즉시 `db.commit()` (데이터 보존 확정)
+- `log_access`는 별도 try/except + rollback/commit으로 분리 (실패 시 메인 데이터에 영향 없음)
+- 라우터 내 전체 엔드포인트에 일괄 적용하여 패턴 통일
+
+**검증**: 기존 테스트 전체 통과 확인
+
+---
+
 ## 검증 계획
 
 1. **백엔드 단위 테스트**: `pytest -x -q --tb=short` (각 Task마다)

@@ -52,15 +52,17 @@ async def mock_user(db_session: AsyncSession):
     await db_session.refresh(user)
     yield user
     # cleanup: API 테스트에서 생성된 관련 데이터를 먼저 삭제 (cascade 충돌 방지)
-    user_id = str(user.id)
-    await db_session.execute(text(f"DELETE FROM trading_orders WHERE user_id = '{user_id}'"))
-    await db_session.execute(text(f"DELETE FROM trading_schedule_logs WHERE user_id = '{user_id}'"))
-    await db_session.execute(text(f"DELETE FROM trading_positions WHERE user_id = '{user_id}'"))
-    await db_session.execute(text(f"DELETE FROM trading_strategies WHERE user_id = '{user_id}'"))
-    await db_session.execute(text(f"DELETE FROM trading_accounts WHERE user_id = '{user_id}'"))
-    await db_session.execute(text(f"DELETE FROM watchlists WHERE user_id = '{user_id}'"))
-    await db_session.execute(text(f"DELETE FROM access_logs WHERE user_id = '{user_id}'"))
-    await db_session.execute(text(f"DELETE FROM users WHERE id = '{user_id}'"))
+    uid = str(user.id)
+    params = {"user_id": uid}
+    await db_session.execute(text("DELETE FROM trading_orders WHERE user_id = :user_id"), params)
+    await db_session.execute(text("DELETE FROM trading_schedule_logs WHERE user_id = :user_id"), params)
+    await db_session.execute(text("DELETE FROM trading_positions WHERE user_id = :user_id"), params)
+    await db_session.execute(text("DELETE FROM trading_strategies WHERE user_id = :user_id"), params)
+    await db_session.execute(text("DELETE FROM trading_accounts WHERE user_id = :user_id"), params)
+    await db_session.execute(text("DELETE FROM simulations WHERE user_id = :user_id"), params)
+    await db_session.execute(text("DELETE FROM watchlists WHERE user_id = :user_id"), params)
+    await db_session.execute(text("DELETE FROM access_logs WHERE user_id = :user_id"), params)
+    await db_session.execute(text("DELETE FROM users WHERE id = :user_id"), params)
     await db_session.commit()
 
 
@@ -77,8 +79,7 @@ async def other_user(db_session: AsyncSession):
     await db_session.commit()
     await db_session.refresh(user)
     yield user
-    user_id = str(user.id)
-    await db_session.execute(text(f"DELETE FROM users WHERE id = '{user_id}'"))
+    await db_session.execute(text("DELETE FROM users WHERE id = :user_id"), {"user_id": str(user.id)})
     await db_session.commit()
 
 
