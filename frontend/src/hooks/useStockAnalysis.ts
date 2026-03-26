@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 종목 분석 훅 — fundamental/technical/signals 병렬 fetch
+ */
+
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { apiFetch, ApiError } from "@/lib/api";
