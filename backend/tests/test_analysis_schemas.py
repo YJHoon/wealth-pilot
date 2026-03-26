@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -9,8 +10,14 @@ from pydantic import ValidationError
 
 from app.schemas.analysis import (
     INVESTMENT_DISCLAIMER_KO,
+    DcaSimulationParams,
+    DcaSimulationResult,
     FundamentalAnalysisResponse,
     MarketType,
+    PortfolioSimulationParams,
+    PortfolioSimulationResult,
+    ScenarioSimulationParams,
+    ScenarioSimulationResult,
     SimulationRequest,
     SimulationResponse,
     TechnicalAnalysisResponse,
@@ -20,6 +27,7 @@ from app.schemas.analysis import (
     WatchlistCreate,
     WatchlistResponse,
     WatchlistUpdate,
+    watchlist_to_response,
 )
 from app.models.analysis import SimulationType
 
@@ -135,6 +143,24 @@ def test_technical_response_full():
     assert resp.sma_120 == Decimal("165.0")
 
 
+def test_technical_response_rsi_out_of_range():
+    """RSI는 0~100 범위만 허용."""
+    with pytest.raises(ValidationError):
+        TechnicalAnalysisResponse(ticker="AAPL", market="NASDAQ", rsi=Decimal("140"))
+
+    with pytest.raises(ValidationError):
+        TechnicalAnalysisResponse(ticker="AAPL", market="NASDAQ", rsi=Decimal("-5"))
+
+
+def test_technical_response_rsi_boundary():
+    """RSI 경계값 (0, 100) 허용."""
+    resp0 = TechnicalAnalysisResponse(ticker="AAPL", market="NASDAQ", rsi=Decimal("0"))
+    assert resp0.rsi == Decimal("0")
+
+    resp100 = TechnicalAnalysisResponse(ticker="AAPL", market="NASDAQ", rsi=Decimal("100"))
+    assert resp100.rsi == Decimal("100")
+
+
 # ──────────────────────────────────────────────
 # TradingSignalsResponse
 # ──────────────────────────────────────────────
@@ -244,8 +270,17 @@ def test_watchlist_update_empty():
     assert data.target_buy_price is None
 
 
+def test_watchlist_update_invalid_price():
+    """Update에서도 매수/매도 가격은 0보다 커야 함."""
+    with pytest.raises(ValidationError):
+        WatchlistUpdate(target_buy_price=Decimal("0"))
+
+    with pytest.raises(ValidationError):
+        WatchlistUpdate(target_sell_price=Decimal("-500"))
+
+
 # ──────────────────────────────────────────────
-# WatchlistResponse
+# WatchlistResponse + watchlist_to_response
 # ──────────────────────────────────────────────
 
 def test_watchlist_response():
@@ -264,38 +299,168 @@ def test_watchlist_response():
     assert resp.ticker == "005930"
 
 
+def test_watchlist_to_response_with_encrypted_prices(monkeypatch):
+    """watchlist_to_response가 암호화 필드를 복호화하여 매핑하는지 검증."""
+    now = datetime.now(timezone.utc)
+    wl_id = uuid4()
+
+    # Mock Watchlist 모델 (DB에서 읽어온 상태)
+    mock_wl = MagicMock()
+    mock_wl.id = wl_id
+    mock_wl.ticker = "005930"
+    mock_wl.market = "KRX"
+    mock_wl.target_buy_price = "ENCRYPTED_BUY"
+    mock_wl.target_sell_price = "ENCRYPTED_SELL"
+    mock_wl.alert_threshold_pct = Decimal("5.0")
+    mock_wl.notes = "삼성전자"
+    mock_wl.created_at = now
+    mock_wl.updated_at = now
+
+    # decrypt_decimal_optional을 모킹
+    monkeypatch.setattr(
+        "app.schemas.analysis.decrypt_decimal_optional",
+        lambda v: Decimal("70000") if v == "ENCRYPTED_BUY"
+        else Decimal("90000") if v == "ENCRYPTED_SELL"
+        else None,
+    )
+
+    resp = watchlist_to_response(mock_wl)
+    assert resp.id == wl_id
+    assert resp.ticker == "005930"
+    assert resp.market == "KRX"
+    assert resp.target_buy_price == Decimal("70000")
+    assert resp.target_sell_price == Decimal("90000")
+    assert resp.alert_threshold_pct == Decimal("5.0")
+    assert resp.notes == "삼성전자"
+
+
+def test_watchlist_to_response_with_none_prices(monkeypatch):
+    """목표가가 None인 경우 watchlist_to_response가 None을 반환하는지 검증."""
+    now = datetime.now(timezone.utc)
+
+    mock_wl = MagicMock()
+    mock_wl.id = uuid4()
+    mock_wl.ticker = "AAPL"
+    mock_wl.market = "NASDAQ"
+    mock_wl.target_buy_price = None
+    mock_wl.target_sell_price = None
+    mock_wl.alert_threshold_pct = None
+    mock_wl.notes = None
+    mock_wl.created_at = now
+    mock_wl.updated_at = now
+
+    monkeypatch.setattr(
+        "app.schemas.analysis.decrypt_decimal_optional",
+        lambda v: None,
+    )
+
+    resp = watchlist_to_response(mock_wl)
+    assert resp.target_buy_price is None
+    assert resp.target_sell_price is None
+    assert resp.alert_threshold_pct is None
+    assert resp.notes is None
+
+
 # ──────────────────────────────────────────────
-# SimulationRequest / SimulationResponse
+# SimulationRequest / SimulationResponse (타입별 모델)
 # ──────────────────────────────────────────────
 
 def test_simulation_request_dca():
     req = SimulationRequest(
-        type=SimulationType.DCA,
-        params={"ticker": "AAPL", "monthly_amount": 500000, "months": 12},
+        params={
+            "type": "dca",
+            "ticker": "AAPL",
+            "market": "NASDAQ",
+            "monthly_amount": 500000,
+            "months": 12,
+        },
     )
-    assert req.type == SimulationType.DCA
-    assert req.params["monthly_amount"] == 500000
+    assert isinstance(req.params, DcaSimulationParams)
+    assert req.params.monthly_amount == Decimal("500000")
+    assert req.params.months == 12
 
 
-def test_simulation_request_default_params():
-    req = SimulationRequest(type=SimulationType.PORTFOLIO)
-    assert req.params == {}
+def test_simulation_request_portfolio():
+    req = SimulationRequest(
+        params={
+            "type": "portfolio",
+            "tickers": ["AAPL", "GOOGL"],
+            "weights": ["0.6", "0.4"],
+            "initial_amount": 10000000,
+            "months": 24,
+        },
+    )
+    assert isinstance(req.params, PortfolioSimulationParams)
+    assert len(req.params.tickers) == 2
 
 
-def test_simulation_request_invalid_type():
+def test_simulation_request_scenario():
+    req = SimulationRequest(
+        params={
+            "type": "scenario",
+            "ticker": "005930",
+            "market": "KRX",
+            "entry_price": 72000,
+            "quantity": 10,
+            "target_price": 85000,
+            "stop_loss_price": 65000,
+        },
+    )
+    assert isinstance(req.params, ScenarioSimulationParams)
+    assert req.params.entry_price == Decimal("72000")
+
+
+def test_simulation_request_invalid_discriminator():
+    """잘못된 type 값은 거부."""
     with pytest.raises(ValidationError):
-        SimulationRequest(type="invalid_type")
+        SimulationRequest(
+            params={"type": "invalid", "ticker": "AAPL"},
+        )
 
 
-def test_simulation_response():
+def test_simulation_request_dca_missing_fields():
+    """DCA 필수 필드 누락 시 거부."""
+    with pytest.raises(ValidationError):
+        SimulationRequest(
+            params={"type": "dca", "ticker": "AAPL"},
+        )
+
+
+def test_simulation_request_dca_invalid_amount():
+    """월적립 금액은 0보다 커야 함."""
+    with pytest.raises(ValidationError):
+        SimulationRequest(
+            params={
+                "type": "dca",
+                "ticker": "AAPL",
+                "market": "NASDAQ",
+                "monthly_amount": 0,
+                "months": 12,
+            },
+        )
+
+
+def test_simulation_response_dca():
     now = datetime.now(timezone.utc)
     resp = SimulationResponse(
         id=uuid4(),
         type=SimulationType.DCA,
-        params={"ticker": "AAPL"},
-        result={"total_invested": 6000000, "final_value": 7200000},
+        params={
+            "type": "dca",
+            "ticker": "AAPL",
+            "market": "NASDAQ",
+            "monthly_amount": 500000,
+            "months": 12,
+        },
+        result={
+            "total_invested": 6000000,
+            "final_value": 7200000,
+            "return_rate": 20,
+        },
         created_at=now,
         expires_at=now,
     )
     assert resp.type == SimulationType.DCA
-    assert resp.result["final_value"] == 7200000
+    assert isinstance(resp.params, DcaSimulationParams)
+    assert isinstance(resp.result, DcaSimulationResult)
+    assert resp.result.final_value == Decimal("7200000")

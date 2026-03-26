@@ -8,7 +8,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import Annotated, Literal, TYPE_CHECKING, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -98,8 +98,8 @@ class TechnicalAnalysisResponse(BaseModel):
     ticker: str
     market: str
 
-    # RSI
-    rsi: Decimal | None = None
+    # RSI (0~100)
+    rsi: Decimal | None = Field(default=None, ge=0, le=100)
 
     # MACD
     macd: Decimal | None = None
@@ -170,8 +170,8 @@ class WatchlistCreate(BaseModel):
 
 
 class WatchlistUpdate(BaseModel):
-    target_buy_price: Decimal | None = None
-    target_sell_price: Decimal | None = None
+    target_buy_price: Decimal | None = Field(default=None, gt=0)
+    target_sell_price: Decimal | None = Field(default=None, gt=0)
     alert_threshold_pct: Decimal | None = Field(default=None, ge=0, le=100)
     notes: str | None = None
 
@@ -204,18 +204,82 @@ def watchlist_to_response(watchlist: WatchlistModel) -> WatchlistResponse:
 
 
 # ──────────────────────────────────────────────
-# Simulation (시뮬레이션)
+# Simulation — 타입별 Params / Result
 # ──────────────────────────────────────────────
 
+# --- DCA (월적립 시뮬레이션) ---
+
+class DcaSimulationParams(BaseModel):
+    type: Literal["dca"] = "dca"
+    ticker: str
+    market: MarketType
+    monthly_amount: Decimal = Field(gt=0)
+    months: int = Field(gt=0, le=600)
+
+
+class DcaSimulationResult(BaseModel):
+    total_invested: Decimal
+    final_value: Decimal
+    return_rate: Decimal
+    monthly_breakdown: list[dict] = Field(default_factory=list)
+
+
+# --- Portfolio (포트폴리오 리밸런싱 시뮬레이션) ---
+
+class PortfolioSimulationParams(BaseModel):
+    type: Literal["portfolio"] = "portfolio"
+    tickers: list[str] = Field(min_length=1)
+    weights: list[Decimal] = Field(min_length=1)
+    initial_amount: Decimal = Field(gt=0)
+    months: int = Field(gt=0, le=600)
+    rebalance_interval_months: int = Field(default=3, ge=1, le=12)
+
+
+class PortfolioSimulationResult(BaseModel):
+    total_invested: Decimal
+    final_value: Decimal
+    return_rate: Decimal
+    rebalance_events: list[dict] = Field(default_factory=list)
+
+
+# --- Scenario (시나리오 분석) ---
+
+class ScenarioSimulationParams(BaseModel):
+    type: Literal["scenario"] = "scenario"
+    ticker: str
+    market: MarketType
+    entry_price: Decimal = Field(gt=0)
+    quantity: Decimal = Field(gt=0)
+    target_price: Decimal = Field(gt=0)
+    stop_loss_price: Decimal = Field(gt=0)
+
+
+class ScenarioSimulationResult(BaseModel):
+    potential_profit: Decimal
+    potential_loss: Decimal
+    risk_reward_ratio: Decimal
+    profit_pct: Decimal
+    loss_pct: Decimal
+
+
+# --- Discriminated Union ---
+
+SimulationParams = Annotated[
+    Union[DcaSimulationParams, PortfolioSimulationParams, ScenarioSimulationParams],
+    Field(discriminator="type"),
+]
+
+SimulationResult = Union[DcaSimulationResult, PortfolioSimulationResult, ScenarioSimulationResult]
+
+
 class SimulationRequest(BaseModel):
-    type: SimulationType
-    params: dict = Field(default_factory=dict)
+    params: SimulationParams
 
 
 class SimulationResponse(BaseModel):
     id: UUID
     type: SimulationType
-    params: dict
-    result: dict
+    params: SimulationParams
+    result: SimulationResult
     created_at: datetime
     expires_at: datetime
