@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     trading_enabled: bool = False  # 자동매매 글로벌 킬 스위치
 
     def kis_credentials(self, mode: str) -> dict:
-        """모드별 KIS 인증정보 반환."""
+        """모드별 KIS 인증정보 반환. 잘못된 모드는 ValueError."""
         if mode == "paper":
             return {
                 "app_key": self.kis_paper_app_key,
@@ -72,12 +72,14 @@ class Settings(BaseSettings):
                 "account_number": self.kis_paper_account_number,
                 "account_product_code": self.kis_paper_account_product_code,
             }
-        return {
-            "app_key": self.kis_live_app_key,
-            "app_secret": self.kis_live_app_secret,
-            "account_number": self.kis_live_account_number,
-            "account_product_code": self.kis_live_account_product_code,
-        }
+        if mode == "live":
+            return {
+                "app_key": self.kis_live_app_key,
+                "app_secret": self.kis_live_app_secret,
+                "account_number": self.kis_live_account_number,
+                "account_product_code": self.kis_live_account_product_code,
+            }
+        raise ValueError(f"Invalid KIS trading mode: {mode!r}. Expected 'paper' or 'live'.")
 
     # 환경
     env: str = "development"

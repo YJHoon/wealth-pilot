@@ -134,11 +134,13 @@ async def deactivate_trading_account(
 @router.get("/accounts/{account_id}/balance")
 async def get_account_balance(
     account_id: UUID,
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """KIS 실시간 잔고 조회."""
     account = await _get_user_account(db, account_id, user.id)
+    await log_access(db, user.id, AccessAction.TRADING_BALANCE_INQUIRY, request)
 
     creds = settings.kis_credentials(account.mode.value)
     kis = KISClient(
