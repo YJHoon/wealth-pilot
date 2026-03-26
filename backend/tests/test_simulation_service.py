@@ -12,7 +12,6 @@ from unittest.mock import patch
 import pytest
 from httpx import AsyncClient
 
-from app.models.user import User
 from app.schemas.analysis import (
     DcaSimulationParams,
     MarketType,
@@ -221,6 +220,8 @@ class TestScenarioSimulation:
 
         assert result.potential_profit == Decimal("-10000.00")
         assert result.potential_loss == Decimal("-5000.00")
+        # abs() 기반 계산이므로 숏 포지션에서도 양의 ratio
+        assert result.risk_reward_ratio == Decimal("2.00")
 
 
 # ──────────────────────────────────────────────
@@ -307,13 +308,12 @@ class TestPortfolioSimulation:
 # 라우터 통합 테스트
 # ──────────────────────────────────────────────
 
+@pytest.mark.usefixtures("mock_user")
 class TestSimulateEndpoint:
     """POST /api/analysis/simulate 라우터 테스트."""
 
     @pytest.mark.asyncio
-    async def test_simulate_scenario(
-        self, auth_client: AsyncClient, mock_user: User,
-    ):
+    async def test_simulate_scenario(self, auth_client: AsyncClient):
         """시나리오 시뮬레이션 201 응답."""
         resp = await auth_client.post("/api/analysis/simulate", json={
             "params": {
@@ -334,9 +334,7 @@ class TestSimulateEndpoint:
         assert Decimal(data["result"]["risk_reward_ratio"]) == Decimal("2")
 
     @pytest.mark.asyncio
-    async def test_simulate_dca(
-        self, auth_client: AsyncClient, mock_user: User,
-    ):
+    async def test_simulate_dca(self, auth_client: AsyncClient):
         """DCA 시뮬레이션 mock + 201 응답."""
         prices = _make_monthly_prices(Decimal("10000"), 6)
         history = _make_history_rows(prices)
@@ -361,9 +359,7 @@ class TestSimulateEndpoint:
         assert Decimal(data["result"]["return_rate"]) == Decimal("0")
 
     @pytest.mark.asyncio
-    async def test_simulate_invalid_type(
-        self, auth_client: AsyncClient, mock_user: User,
-    ):
+    async def test_simulate_invalid_type(self, auth_client: AsyncClient):
         """잘못된 시뮬레이션 타입 → 422."""
         resp = await auth_client.post("/api/analysis/simulate", json={
             "params": {
@@ -375,9 +371,7 @@ class TestSimulateEndpoint:
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_simulate_dca_invalid_months(
-        self, auth_client: AsyncClient, mock_user: User,
-    ):
+    async def test_simulate_dca_invalid_months(self, auth_client: AsyncClient):
         """DCA months=0 → 422 (Pydantic validation)."""
         resp = await auth_client.post("/api/analysis/simulate", json={
             "params": {
@@ -392,9 +386,7 @@ class TestSimulateEndpoint:
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_simulate_portfolio(
-        self, auth_client: AsyncClient, mock_user: User,
-    ):
+    async def test_simulate_portfolio(self, auth_client: AsyncClient):
         """포트폴리오 시뮬레이션 mock + 201 응답."""
         prices = _make_monthly_prices(Decimal("50000"), 6)
         history = _make_history_rows(prices)

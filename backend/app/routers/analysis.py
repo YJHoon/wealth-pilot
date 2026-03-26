@@ -144,14 +144,16 @@ async def simulate(
     try:
         result = await run_simulation(db, user.id, body.params)
     except SimulationError as e:
+        await db.rollback()
         raise HTTPException(status_code=422, detail=str(e)) from None
 
     try:
         await log_access(db, user.id, AccessAction.SIMULATION_RUN, request)
+        await db.commit()
     except Exception:
+        await db.rollback()
         logger.warning("SIMULATION_RUN access logging failed", exc_info=True)
 
-    await db.commit()
     return result
 
 

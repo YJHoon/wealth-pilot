@@ -162,15 +162,11 @@ async def run_portfolio_simulation(
     if weight_sum <= 0:
         raise SimulationError("비중 합계가 0 이하입니다.")
 
-    # 정규화 (사용자가 퍼센트로 입력한 경우 대응)
-    if weight_sum > Decimal(2):
-        # 퍼센트로 입력 (예: 60, 40) → 비율로 변환
-        normalized_weights = [
-            (w / weight_sum).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-            for w in params.weights
-        ]
-    else:
-        normalized_weights = list(params.weights)
+    # 정규화 (비율/퍼센트 입력 모두 대응)
+    normalized_weights = [
+        (w / weight_sum).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        for w in params.weights
+    ]
 
     # 모든 종목의 월별 가격 병렬 fetch (종목 코드 형태로 시장 추론)
     price_tasks = [
@@ -305,7 +301,7 @@ async def run_scenario_simulation(
 
     risk_reward_ratio = Decimal(0)
     if potential_loss != 0:
-        risk_reward_ratio = (potential_profit / potential_loss).quantize(
+        risk_reward_ratio = (abs(potential_profit) / abs(potential_loss)).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP,
         )
 
