@@ -12,7 +12,6 @@ export type ScheduleLogStatus = "success" | "skipped" | "error";
 export interface TradingAccountApi {
   id: string;
   mode: TradingMode;
-  account_number_masked: string;
   initial_capital: number;
   is_active: boolean;
   token_expires_at: string | null;
@@ -105,7 +104,6 @@ export interface ScheduleStatusApi {
 export interface TradingAccount {
   id: string;
   mode: TradingMode;
-  accountNumberMasked: string;
   initialCapital: number;
   isActive: boolean;
   tokenExpiresAt: string | null;
@@ -185,10 +183,6 @@ export interface ScheduleStatus {
 
 export interface TradingAccountCreateRequest {
   mode: TradingMode;
-  app_key: string;
-  app_secret: string;
-  account_number: string;
-  account_product_code: string;
   initial_capital: number;
 }
 
@@ -216,7 +210,6 @@ export function toTradingAccount(api: TradingAccountApi): TradingAccount {
   return {
     id: api.id,
     mode: api.mode,
-    accountNumberMasked: api.account_number_masked,
     initialCapital: api.initial_capital,
     isActive: api.is_active,
     tokenExpiresAt: api.token_expires_at,

@@ -105,8 +105,13 @@ async def get_or_create_user(
 ) -> User:
     """Google OAuth 로그인 후 사용자 조회 또는 생성
 
+    싱글유저 모드(ALLOWED_EMAIL 설정 시): 허용되지 않은 이메일은 계정 생성 차단.
     동시 요청으로 인한 IntegrityError(unique 위반) 발생 시 재조회하여 안전하게 처리.
     """
+    # 싱글유저 모드: 허용되지 않은 이메일은 계정 생성 차단 (방어적 이중 검증)
+    if settings.allowed_email and email != settings.allowed_email:
+        raise ValueError("허용되지 않은 이메일입니다.")
+
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
 

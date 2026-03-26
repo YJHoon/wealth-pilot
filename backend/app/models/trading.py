@@ -72,7 +72,7 @@ class ScheduleLogStatus(str, enum.Enum):
 # ──────────────────────────────────────────────
 
 class TradingAccount(Base):
-    """KIS API 인증정보 + 초기 자본."""
+    """매매 계좌 설정 (KIS 인증정보는 .env에서 로드)."""
 
     __tablename__ = "trading_accounts"
     __table_args__ = (
@@ -91,16 +91,10 @@ class TradingAccount(Base):
         nullable=False,
     )
 
-    # KIS 인증정보 (AES-256 암호화)
-    app_key: Mapped[str] = mapped_column(Text, nullable=False)
-    app_secret: Mapped[str] = mapped_column(Text, nullable=False)
-    account_number: Mapped[str] = mapped_column(Text, nullable=False)
-    account_product_code: Mapped[str] = mapped_column(String(2), default="01")
-
     # 초기 투자금 (AES-256 암호화)
     initial_capital: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # KIS Access Token (AES-256 암호화, 임시)
+    # KIS Access Token 캐시 (AES-256 암호화, 임시)
     access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,

@@ -37,11 +37,10 @@ from app.schemas.trading import (
     schedule_log_to_summary,
     strategy_to_response,
 )
+from app.config import settings
 from app.services.crypto_service import (
     decrypt_decimal,
-    decrypt_value,
     encrypt_decimal,
-    encrypt_value,
 )
 from app.services.kis_client import KISClient, KISClientError
 from app.services.security_service import AccessAction, log_access
@@ -80,10 +79,6 @@ async def create_trading_account(
     account = TradingAccount(
         user_id=user.id,
         mode=body.mode,
-        app_key=encrypt_value(body.app_key),
-        app_secret=encrypt_value(body.app_secret),
-        account_number=encrypt_value(body.account_number),
-        account_product_code=body.account_product_code,
         initial_capital=encrypt_decimal(body.initial_capital),
     )
     db.add(account)
@@ -146,10 +141,10 @@ async def get_account_balance(
     account = await _get_user_account(db, account_id, user.id)
 
     kis = KISClient(
-        app_key=decrypt_value(account.app_key),
-        app_secret=decrypt_value(account.app_secret),
-        account_number=decrypt_value(account.account_number),
-        account_product_code=account.account_product_code,
+        app_key=settings.kis_app_key,
+        app_secret=settings.kis_app_secret,
+        account_number=settings.kis_account_number,
+        account_product_code=settings.kis_account_product_code,
         mode=account.mode,
     )
     try:

@@ -44,7 +44,14 @@ class Settings(BaseSettings):
     # 개발용: 인증 비활성화 (True면 모든 API에서 인증 스킵)
     auth_disabled: bool = False
 
-    # KIS API
+    # 싱글유저 모드: 허용된 이메일만 로그인 가능 (빈 문자열이면 제한 없음)
+    allowed_email: str = ""
+
+    # KIS API (싱글유저: 환경변수에서 직접 로드)
+    kis_app_key: str = ""
+    kis_app_secret: str = ""
+    kis_account_number: str = ""
+    kis_account_product_code: str = "01"
     kis_paper_base_url: str = "https://openapivts.koreainvestment.com:29443"
     kis_live_base_url: str = "https://openapi.koreainvestment.com:9443"
     trading_enabled: bool = False  # 자동매매 글로벌 킬 스위치

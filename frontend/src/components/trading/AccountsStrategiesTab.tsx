@@ -63,8 +63,8 @@ export function AccountsStrategiesTab({
                       >
                         {tradingModeLabels[account.mode]}
                       </Badge>
-                      <span className="text-sm font-mono">
-                        {account.accountNumberMasked}
+                      <span className="text-sm text-muted-foreground">
+                        {account.initialCapital.toLocaleString()}원
                       </span>
                     </div>
                     <Button
