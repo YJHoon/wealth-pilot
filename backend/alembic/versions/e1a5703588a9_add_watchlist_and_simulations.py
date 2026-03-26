@@ -57,4 +57,5 @@ def downgrade() -> None:
     op.drop_table('watchlists')
     op.drop_index(op.f('ix_simulations_user_id'), table_name='simulations')
     op.drop_table('simulations')
+    op.execute('DROP TYPE IF EXISTS simulationtype')
     # ### end Alembic commands ###

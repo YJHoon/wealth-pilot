@@ -7,6 +7,7 @@
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     DateTime,
@@ -62,7 +63,7 @@ class Watchlist(Base):
     target_sell_price: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 알림 기준 (%, 비암호화)
-    alert_threshold_pct: Mapped[float | None] = mapped_column(
+    alert_threshold_pct: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 2), nullable=True
     )
 
