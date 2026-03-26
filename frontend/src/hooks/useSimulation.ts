@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 시뮬레이션 실행 훅 — DCA / 포트폴리오 / 시나리오
+ */
+
 import { useCallback, useState } from "react";
 import { useSession } from "next-auth/react";
 import { apiFetch, ApiError } from "@/lib/api";
