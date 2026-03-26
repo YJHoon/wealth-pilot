@@ -7,13 +7,10 @@ DCA 계산 정확성, 시나리오 분석, 포트폴리오 시뮬레이션,
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 from app.schemas.analysis import (

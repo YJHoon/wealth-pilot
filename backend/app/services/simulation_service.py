@@ -27,7 +27,6 @@ from app.schemas.analysis import (
     SimulationResponse,
 )
 from app.services.stock_analysis_service import (
-    StockAnalysisError,
     _fetch_history_sync,
     _to_yfinance_ticker,
 )
@@ -173,9 +172,13 @@ async def run_portfolio_simulation(
     else:
         normalized_weights = list(params.weights)
 
-    # 모든 종목의 월별 가격 병렬 fetch
+    # 모든 종목의 월별 가격 병렬 fetch (종목 코드 형태로 시장 추론)
     price_tasks = [
-        _fetch_monthly_prices(ticker, "KRX", params.months)
+        _fetch_monthly_prices(
+            ticker,
+            "KRX" if ticker.isdigit() and len(ticker) == 6 else "US",
+            params.months,
+        )
         for ticker in params.tickers
     ]
     all_prices = await asyncio.gather(*price_tasks, return_exceptions=True)
