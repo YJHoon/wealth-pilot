@@ -43,6 +43,12 @@ class AccessAction:
     TRADING_SCHEDULE_STOP = "trading_schedule_stop"
     TRADING_MANUAL_RUN = "trading_manual_run"
     TRADING_ORDER_PLACED = "trading_order_placed"
+    WATCHLIST_CREATE = "watchlist_create"
+    WATCHLIST_UPDATE = "watchlist_update"
+    WATCHLIST_DELETE = "watchlist_delete"
+    WATCHLIST_VIEW = "watchlist_view"
+    ANALYSIS_VIEW = "analysis_view"
+    SIMULATION_RUN = "simulation_run"
 
 
 async def log_access(

@@ -20,6 +20,11 @@ from app.models.trading import (
     OrderStatus,
     ScheduleLogStatus,
 )
+from app.models.analysis import (
+    Watchlist,
+    Simulation,
+    SimulationType,
+)
 
 __all__ = [
     "User",
@@ -43,4 +48,7 @@ __all__ = [
     "OrderType",
     "OrderStatus",
     "ScheduleLogStatus",
+    "Watchlist",
+    "Simulation",
+    "SimulationType",
 ]
