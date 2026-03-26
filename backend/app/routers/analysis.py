@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.middleware.rate_limit import limiter
 from app.dependencies.auth import get_current_active_user
 from app.models.user import User
 from app.schemas.analysis import (
@@ -134,6 +135,7 @@ async def trading_signals(
 # ──────────────────────────────────────────────
 
 @router.post("/simulate", response_model=SimulationResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("100/minute")
 async def simulate(
     body: SimulationRequest,
     request: Request,
