@@ -14,8 +14,10 @@ from app.schemas.analysis import (
     DcaSimulationResult,
     FundamentalAnalysisResponse,
     MarketType,
+    MonthlyBreakdownItem,
     PortfolioSimulationParams,
     PortfolioSimulationResult,
+    RebalanceEvent,
     ScenarioSimulationParams,
     ScenarioSimulationResult,
     SimulationRequest,
@@ -203,6 +205,24 @@ def test_trading_signals_confidence_validation():
         )
 
 
+def test_trading_signals_risk_level_validation():
+    """risk_level은 상/중/하만 허용."""
+    for valid in ("상", "중", "하"):
+        resp = TradingSignalsResponse(
+            ticker="AAPL", market="NASDAQ",
+            action=TradingSignalAction.HOLD,
+            confidence=Decimal("50"), risk_level=valid,
+        )
+        assert resp.risk_level == valid
+
+    with pytest.raises(ValidationError):
+        TradingSignalsResponse(
+            ticker="AAPL", market="NASDAQ",
+            action=TradingSignalAction.HOLD,
+            confidence=Decimal("50"), risk_level="invalid",
+        )
+
+
 # ──────────────────────────────────────────────
 # WatchlistCreate
 # ──────────────────────────────────────────────
@@ -361,6 +381,32 @@ def test_watchlist_to_response_with_none_prices(monkeypatch):
     assert resp.notes is None
 
 
+def test_watchlist_to_response_decrypt_failure(monkeypatch):
+    """복호화 실패 시 500이 아닌 None 폴백 반환."""
+    now = datetime.now(timezone.utc)
+
+    mock_wl = MagicMock()
+    mock_wl.id = uuid4()
+    mock_wl.ticker = "005930"
+    mock_wl.market = "KRX"
+    mock_wl.target_buy_price = "CORRUPTED_DATA"
+    mock_wl.target_sell_price = "CORRUPTED_DATA"
+    mock_wl.alert_threshold_pct = Decimal("5.0")
+    mock_wl.notes = None
+    mock_wl.created_at = now
+    mock_wl.updated_at = now
+
+    def _raise(_v):
+        raise ValueError("decryption failed")
+
+    monkeypatch.setattr("app.schemas.analysis.decrypt_decimal_optional", _raise)
+
+    resp = watchlist_to_response(mock_wl)
+    assert resp.target_buy_price is None
+    assert resp.target_sell_price is None
+    assert resp.alert_threshold_pct == Decimal("5.0")
+
+
 # ──────────────────────────────────────────────
 # SimulationRequest / SimulationResponse (타입별 모델)
 # ──────────────────────────────────────────────
@@ -464,3 +510,78 @@ def test_simulation_response_dca():
     assert isinstance(resp.params, DcaSimulationParams)
     assert isinstance(resp.result, DcaSimulationResult)
     assert resp.result.final_value == Decimal("7200000")
+
+
+def test_portfolio_tickers_weights_length_mismatch():
+    """tickers와 weights 길이가 다르면 거부."""
+    with pytest.raises(ValidationError, match="길이가 일치"):
+        SimulationRequest(
+            params={
+                "type": "portfolio",
+                "tickers": ["AAPL", "GOOGL", "MSFT"],
+                "weights": ["0.5", "0.5"],
+                "initial_amount": 10000000,
+                "months": 12,
+            },
+        )
+
+
+def test_monthly_breakdown_item_typed():
+    """MonthlyBreakdownItem이 Decimal 필드를 강제하는지 검증."""
+    item = MonthlyBreakdownItem(
+        month=1,
+        invested=Decimal("500000"),
+        cumulative_invested=Decimal("500000"),
+        shares_bought=Decimal("2.85"),
+        cumulative_shares=Decimal("2.85"),
+        price=Decimal("175500"),
+        portfolio_value=Decimal("500175"),
+    )
+    assert item.invested == Decimal("500000")
+    assert isinstance(item.price, Decimal)
+
+
+def test_dca_result_with_typed_breakdown():
+    """DcaSimulationResult가 typed MonthlyBreakdownItem 리스트를 받는지 검증."""
+    result = DcaSimulationResult(
+        total_invested=Decimal("1000000"),
+        final_value=Decimal("1100000"),
+        return_rate=Decimal("10"),
+        monthly_breakdown=[
+            {
+                "month": 1, "invested": 500000, "cumulative_invested": 500000,
+                "shares_bought": "2.85", "cumulative_shares": "2.85",
+                "price": 175500, "portfolio_value": 500175,
+            },
+        ],
+    )
+    assert isinstance(result.monthly_breakdown[0], MonthlyBreakdownItem)
+
+
+def test_rebalance_event_typed():
+    """RebalanceEvent가 Decimal 필드를 강제하는지 검증."""
+    event = RebalanceEvent(
+        month=3,
+        pre_rebalance_value=Decimal("10500000"),
+        post_rebalance_value=Decimal("10500000"),
+        allocations={"AAPL": Decimal("0.6"), "GOOGL": Decimal("0.4")},
+    )
+    assert event.allocations["AAPL"] == Decimal("0.6")
+
+
+def test_portfolio_result_with_typed_events():
+    """PortfolioSimulationResult가 typed RebalanceEvent 리스트를 받는지 검증."""
+    result = PortfolioSimulationResult(
+        total_invested=Decimal("10000000"),
+        final_value=Decimal("12000000"),
+        return_rate=Decimal("20"),
+        rebalance_events=[
+            {
+                "month": 3,
+                "pre_rebalance_value": 10500000,
+                "post_rebalance_value": 10500000,
+                "allocations": {"AAPL": "0.6", "GOOGL": "0.4"},
+            },
+        ],
+    )
+    assert isinstance(result.rebalance_events[0], RebalanceEvent)

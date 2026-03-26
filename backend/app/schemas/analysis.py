@@ -6,15 +6,18 @@
 from __future__ import annotations
 
 import enum
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal, TYPE_CHECKING, Union
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.analysis import SimulationType
 from app.services.crypto_service import decrypt_decimal_optional
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.models.analysis import Watchlist as WatchlistModel
@@ -139,7 +142,7 @@ class TradingSignalsResponse(BaseModel):
 
     action: TradingSignalAction
     confidence: Decimal = Field(ge=0, le=100)  # 신뢰도 (%)
-    risk_level: str  # 상/중/하
+    risk_level: Literal["상", "중", "하"]
 
     # 근거 요약
     reasons: list[str] = Field(default_factory=list)
@@ -188,14 +191,31 @@ class WatchlistResponse(BaseModel):
     updated_at: datetime
 
 
+def _safe_decrypt(encrypted: str | None, *, watchlist_id: UUID, field: str) -> Decimal | None:
+    """복호화 시도, 실패 시 None 반환 + 로그."""
+    try:
+        return decrypt_decimal_optional(encrypted)
+    except Exception:
+        logger.exception(
+            "Failed to decrypt %s for watchlist %s", field, watchlist_id,
+        )
+        return None
+
+
 def watchlist_to_response(watchlist: WatchlistModel) -> WatchlistResponse:
     """DB 모델 → Response 스키마 변환 (암호화 필드 복호화)."""
     return WatchlistResponse(
         id=watchlist.id,
         ticker=watchlist.ticker,
         market=watchlist.market,
-        target_buy_price=decrypt_decimal_optional(watchlist.target_buy_price),
-        target_sell_price=decrypt_decimal_optional(watchlist.target_sell_price),
+        target_buy_price=_safe_decrypt(
+            watchlist.target_buy_price,
+            watchlist_id=watchlist.id, field="target_buy_price",
+        ),
+        target_sell_price=_safe_decrypt(
+            watchlist.target_sell_price,
+            watchlist_id=watchlist.id, field="target_sell_price",
+        ),
         alert_threshold_pct=watchlist.alert_threshold_pct,
         notes=watchlist.notes,
         created_at=watchlist.created_at,
@@ -217,11 +237,21 @@ class DcaSimulationParams(BaseModel):
     months: int = Field(gt=0, le=600)
 
 
+class MonthlyBreakdownItem(BaseModel):
+    month: int
+    invested: Decimal
+    cumulative_invested: Decimal
+    shares_bought: Decimal
+    cumulative_shares: Decimal
+    price: Decimal
+    portfolio_value: Decimal
+
+
 class DcaSimulationResult(BaseModel):
     total_invested: Decimal
     final_value: Decimal
     return_rate: Decimal
-    monthly_breakdown: list[dict] = Field(default_factory=list)
+    monthly_breakdown: list[MonthlyBreakdownItem] = Field(default_factory=list)
 
 
 # --- Portfolio (포트폴리오 리밸런싱 시뮬레이션) ---
@@ -234,12 +264,26 @@ class PortfolioSimulationParams(BaseModel):
     months: int = Field(gt=0, le=600)
     rebalance_interval_months: int = Field(default=3, ge=1, le=12)
 
+    @model_validator(mode="after")
+    def _check_tickers_weights_length(self) -> PortfolioSimulationParams:
+        if len(self.tickers) != len(self.weights):
+            msg = f"tickers({len(self.tickers)})와 weights({len(self.weights)})의 길이가 일치해야 합니다"
+            raise ValueError(msg)
+        return self
+
+
+class RebalanceEvent(BaseModel):
+    month: int
+    pre_rebalance_value: Decimal
+    post_rebalance_value: Decimal
+    allocations: dict[str, Decimal]  # ticker → 비중
+
 
 class PortfolioSimulationResult(BaseModel):
     total_invested: Decimal
     final_value: Decimal
     return_rate: Decimal
-    rebalance_events: list[dict] = Field(default_factory=list)
+    rebalance_events: list[RebalanceEvent] = Field(default_factory=list)
 
 
 # --- Scenario (시나리오 분석) ---
