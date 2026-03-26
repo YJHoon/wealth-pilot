@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+import threading
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal
 
 import yfinance as yf
+from cachetools import TTLCache
 
 from app.schemas.analysis import (
     FundamentalAnalysisResponse,
@@ -26,86 +27,105 @@ from app.services.trading_strategy import _ema, _rsi, _sma
 
 logger = logging.getLogger(__name__)
 
+# 외부 API 호출 타임아웃 (초)
+_FETCH_TIMEOUT = 10
+
 # 캐시 TTL (초)
 _CACHE_TTL = 900  # 15분
 
 
 # ──────────────────────────────────────────────
-# 인메모리 캐시
+# 도메인 예외
 # ──────────────────────────────────────────────
 
-@dataclass
-class _CacheEntry:
-    data: Any
-    fetched_at: datetime
+class StockAnalysisError(Exception):
+    """종목 분석 서비스 도메인 예외."""
 
 
-_cache: dict[str, _CacheEntry] = {}
+# ──────────────────────────────────────────────
+# 인메모리 캐시 (TTLCache — 자동 만료 + bounded)
+# ──────────────────────────────────────────────
+
+_cache: TTLCache[str, Any] = TTLCache(maxsize=256, ttl=_CACHE_TTL)
+_cache_lock = threading.Lock()
 
 
 def _get_cached(key: str) -> Any | None:
-    entry = _cache.get(key)
-    if entry is None:
-        return None
-    elapsed = (datetime.now(timezone.utc) - entry.fetched_at).total_seconds()
-    if elapsed >= _CACHE_TTL:
-        del _cache[key]
-        return None
-    return entry.data
+    with _cache_lock:
+        return _cache.get(key)
 
 
 def _set_cached(key: str, data: Any) -> None:
-    _cache[key] = _CacheEntry(data=data, fetched_at=datetime.now(timezone.utc))
+    with _cache_lock:
+        _cache[key] = data
 
 
 # ──────────────────────────────────────────────
 # yfinance ticker 변환
 # ──────────────────────────────────────────────
 
-def _to_yfinance_ticker(ticker: str, market: str) -> str:
-    """ticker + market → yfinance 심볼."""
+def _to_yfinance_ticker(ticker: str, market: str) -> list[str]:
+    """ticker + market → yfinance 심볼 후보 리스트.
+
+    한국 주식(6자리 숫자)은 .KS(KOSPI), .KQ(KOSDAQ) 순으로 시도.
+    """
     if "." in ticker:
-        return ticker
-    if market == "KRX":
-        # 6자리 숫자 → .KS (KOSPI 우선)
-        if ticker.isdigit() and len(ticker) == 6:
-            return f"{ticker}.KS"
-    return ticker
+        return [ticker]
+    if market == "KRX" and ticker.isdigit() and len(ticker) == 6:
+        return [f"{ticker}.KS", f"{ticker}.KQ"]
+    return [ticker]
 
 
 # ──────────────────────────────────────────────
 # yfinance 데이터 fetch (동기 → asyncio.to_thread)
 # ──────────────────────────────────────────────
 
-def _fetch_info_sync(yf_ticker: str) -> dict:
-    """yfinance Ticker.info 동기 호출."""
-    tk = yf.Ticker(yf_ticker)
-    return tk.info or {}
+def _fetch_info_sync(candidates: list[str]) -> dict:
+    """yfinance Ticker.info 동기 호출 (후보 목록 순회 fallback)."""
+    last_err: Exception | None = None
+    for candidate in candidates:
+        try:
+            tk = yf.Ticker(candidate)
+            info = tk.info
+            if info:
+                return info
+        except Exception as e:
+            last_err = e
+            continue
+    if last_err:
+        raise last_err
+    return {}
 
 
-def _fetch_history_sync(yf_ticker: str, period: str = "1y") -> list[dict]:
-    """yfinance Ticker.history → list[dict] 동기 호출.
+def _fetch_history_sync(candidates: list[str], period: str = "1y") -> list[dict]:
+    """yfinance Ticker.history → list[dict] 동기 호출 (후보 목록 순회 fallback).
 
     Returns:
         [{"date": datetime, "close": Decimal, "high": Decimal, "low": Decimal, "volume": int}, ...]
         오래된 순 정렬.
     """
-    tk = yf.Ticker(yf_ticker)
-    df = tk.history(period=period)
-
-    if df.empty:
-        return []
-
-    rows: list[dict] = []
-    for idx, row in df.iterrows():
-        rows.append({
-            "date": idx.to_pydatetime(),
-            "close": Decimal(str(row["Close"])),
-            "high": Decimal(str(row["High"])),
-            "low": Decimal(str(row["Low"])),
-            "volume": int(row["Volume"]),
-        })
-    return rows
+    last_err: Exception | None = None
+    for candidate in candidates:
+        try:
+            tk = yf.Ticker(candidate)
+            df = tk.history(period=period)
+            if not df.empty:
+                rows: list[dict] = []
+                for idx, row in df.iterrows():
+                    rows.append({
+                        "date": idx.to_pydatetime(),
+                        "close": Decimal(str(row["Close"])),
+                        "high": Decimal(str(row["High"])),
+                        "low": Decimal(str(row["Low"])),
+                        "volume": int(row["Volume"]),
+                    })
+                return rows
+        except Exception as e:
+            last_err = e
+            continue
+    if last_err:
+        raise last_err
+    return []
 
 
 # ──────────────────────────────────────────────
@@ -115,14 +135,24 @@ def _fetch_history_sync(yf_ticker: str, period: str = "1y") -> list[dict]:
 async def get_fundamental_analysis(
     ticker: str, market: str,
 ) -> FundamentalAnalysisResponse:
-    """기본적 분석: PER, PBR, ROE, EPS, 섹터 평균, DCF 적정가, 평가 시그널."""
+    """기본적 분석: PER, PBR, ROE, EPS, 섹터 평균, PER 기반 적정가, 평가 시그널."""
     cache_key = f"fundamental:{ticker}:{market}"
     cached = _get_cached(cache_key)
     if cached is not None:
         return cached
 
-    yf_ticker = _to_yfinance_ticker(ticker, market)
-    info = await asyncio.to_thread(_fetch_info_sync, yf_ticker)
+    candidates = _to_yfinance_ticker(ticker, market)
+    try:
+        info = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_info_sync, candidates),
+            timeout=_FETCH_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.error("Timeout fetching info for %s (candidates=%s)", ticker, candidates)
+        raise StockAnalysisError(f"종목 정보 조회 시간 초과: {ticker}")
+    except Exception as exc:
+        logger.error("Failed to fetch info for %s: %s", ticker, exc)
+        raise StockAnalysisError(f"종목 정보 조회 실패: {ticker}") from exc
 
     # 핵심 지표 추출
     per = _to_decimal(info.get("trailingPE"))
@@ -138,18 +168,18 @@ async def get_fundamental_analysis(
     sector_avg_per = _to_decimal(info.get("sectorPE"))
     sector_avg_pbr = _to_decimal(info.get("sectorPB"))
 
-    # DCF 적정가 간이 추정: EPS * 기대 PER(15)
-    dcf_fair_value: Decimal | None = None
+    # PER 기반 적정가 추정: EPS × 기대 PER(15)
+    per_based_fair_value: Decimal | None = None
     price_gap_pct: Decimal | None = None
     valuation_signal: ValuationSignal | None = None
 
     if eps is not None and eps > 0:
         expected_per = sector_avg_per if sector_avg_per and sector_avg_per > 0 else Decimal(15)
-        dcf_fair_value = (eps * expected_per).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        per_based_fair_value = (eps * expected_per).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-        if current_price and current_price > 0 and dcf_fair_value > 0:
+        if current_price and current_price > 0 and per_based_fair_value > 0:
             price_gap_pct = (
-                (current_price - dcf_fair_value) / dcf_fair_value * Decimal(100)
+                (current_price - per_based_fair_value) / per_based_fair_value * Decimal(100)
             ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
             if price_gap_pct < Decimal(-20):
@@ -170,7 +200,7 @@ async def get_fundamental_analysis(
         eps=eps,
         sector_avg_per=sector_avg_per,
         sector_avg_pbr=sector_avg_pbr,
-        dcf_fair_value=dcf_fair_value,
+        per_based_fair_value=per_based_fair_value,
         current_price=current_price,
         price_gap_pct=price_gap_pct,
         valuation_signal=valuation_signal,
@@ -195,8 +225,18 @@ async def get_technical_analysis(
     if cached is not None:
         return cached
 
-    yf_ticker = _to_yfinance_ticker(ticker, market)
-    history = await asyncio.to_thread(_fetch_history_sync, yf_ticker)
+    candidates = _to_yfinance_ticker(ticker, market)
+    try:
+        history = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_history_sync, candidates),
+            timeout=_FETCH_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.error("Timeout fetching history for %s (candidates=%s)", ticker, candidates)
+        raise StockAnalysisError(f"종목 시세 조회 시간 초과: {ticker}")
+    except Exception as exc:
+        logger.error("Failed to fetch history for %s: %s", ticker, exc)
+        raise StockAnalysisError(f"종목 시세 조회 실패: {ticker}") from exc
 
     if len(history) < 26:
         # 최소 데이터 부족 시 빈 응답

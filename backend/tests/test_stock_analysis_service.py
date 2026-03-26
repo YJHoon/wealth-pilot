@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
 from app.services.stock_analysis_service import (
+    StockAnalysisError,
     _cache,
     _last_nonzero,
     _quantize,
@@ -121,14 +123,14 @@ class TestLastNonzero:
 
 
 class TestToYfinanceTicker:
-    def test_krx_6digit(self):
-        assert _to_yfinance_ticker("005930", "KRX") == "005930.KS"
+    def test_krx_6digit_returns_both_candidates(self):
+        assert _to_yfinance_ticker("005930", "KRX") == ["005930.KS", "005930.KQ"]
 
     def test_already_has_suffix(self):
-        assert _to_yfinance_ticker("005930.KS", "KRX") == "005930.KS"
+        assert _to_yfinance_ticker("005930.KS", "KRX") == ["005930.KS"]
 
     def test_us_ticker(self):
-        assert _to_yfinance_ticker("AAPL", "NASDAQ") == "AAPL"
+        assert _to_yfinance_ticker("AAPL", "NASDAQ") == ["AAPL"]
 
 
 # ──────────────────────────────────────────────
@@ -191,7 +193,7 @@ class TestFundamentalAnalysis:
         assert result.data_source == "yfinance"
 
     @pytest.mark.asyncio
-    async def test_dcf_fair_value_calculation(self):
+    async def test_per_based_fair_value_calculation(self):
         """EPS * 기대PER(15) = 적정가"""
         mock_info = _make_mock_info({
             "trailingEps": 5000,
@@ -202,7 +204,7 @@ class TestFundamentalAnalysis:
             result = await get_fundamental_analysis("TEST", "NASDAQ")
 
         # EPS(5000) * PER(15) = 75000, currentPrice=50000
-        assert result.dcf_fair_value == Decimal("75000.00")
+        assert result.per_based_fair_value == Decimal("75000.00")
         # gap = (50000 - 75000) / 75000 * 100 = -33.33%
         assert result.price_gap_pct is not None
         assert result.price_gap_pct < Decimal(-20)
@@ -243,7 +245,7 @@ class TestFundamentalAnalysis:
         with patch("app.services.stock_analysis_service._fetch_info_sync", return_value=mock_info):
             result = await get_fundamental_analysis("TEST", "NASDAQ")
 
-        assert result.dcf_fair_value is None
+        assert result.per_based_fair_value is None
         assert result.valuation_signal is None
 
     @pytest.mark.asyncio
@@ -438,3 +440,45 @@ class TestTradingSignals:
         assert Decimal(0) <= result.fundamental_score <= Decimal(100)
         assert Decimal(0) <= result.technical_score <= Decimal(100)
         assert Decimal(0) <= result.confidence <= Decimal(100)
+
+
+# ──────────────────────────────────────────────
+# 타임아웃 및 에러 핸들링 테스트
+# ──────────────────────────────────────────────
+
+class TestErrorHandling:
+    @pytest.mark.asyncio
+    async def test_fundamental_timeout_raises_stock_analysis_error(self):
+        import time
+
+        def _slow(*args, **kwargs):
+            time.sleep(30)
+
+        with patch("app.services.stock_analysis_service._fetch_info_sync", side_effect=_slow):
+            with patch("app.services.stock_analysis_service._FETCH_TIMEOUT", 0.01):
+                with pytest.raises(StockAnalysisError, match="시간 초과"):
+                    await get_fundamental_analysis("TIMEOUT", "NASDAQ")
+
+    @pytest.mark.asyncio
+    async def test_technical_timeout_raises_stock_analysis_error(self):
+        import time
+
+        def _slow(*args, **kwargs):
+            time.sleep(30)
+
+        with patch("app.services.stock_analysis_service._fetch_history_sync", side_effect=_slow):
+            with patch("app.services.stock_analysis_service._FETCH_TIMEOUT", 0.01):
+                with pytest.raises(StockAnalysisError, match="시간 초과"):
+                    await get_technical_analysis("TIMEOUT", "NASDAQ")
+
+    @pytest.mark.asyncio
+    async def test_fundamental_network_error_raises_stock_analysis_error(self):
+        with patch("app.services.stock_analysis_service._fetch_info_sync", side_effect=ConnectionError("network")):
+            with pytest.raises(StockAnalysisError, match="조회 실패"):
+                await get_fundamental_analysis("ERR", "NASDAQ")
+
+    @pytest.mark.asyncio
+    async def test_technical_network_error_raises_stock_analysis_error(self):
+        with patch("app.services.stock_analysis_service._fetch_history_sync", side_effect=ConnectionError("network")):
+            with pytest.raises(StockAnalysisError, match="조회 실패"):
+                await get_technical_analysis("ERR", "NASDAQ")

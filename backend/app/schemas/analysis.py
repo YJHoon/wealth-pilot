@@ -79,8 +79,8 @@ class FundamentalAnalysisResponse(BaseModel):
     sector_avg_per: Decimal | None = None
     sector_avg_pbr: Decimal | None = None
 
-    # 적정가 추정
-    dcf_fair_value: Decimal | None = None
+    # PER 기반 적정가 추정 (EPS × 기대 PER)
+    per_based_fair_value: Decimal | None = None
     current_price: Decimal | None = None
     price_gap_pct: Decimal | None = None  # 현재가 대비 적정가 괴리율
 

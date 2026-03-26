@@ -99,7 +99,7 @@ def test_fundamental_response_full():
         eps=Decimal("6.42"),
         sector_avg_per=Decimal("25.0"),
         sector_avg_pbr=Decimal("10.0"),
-        dcf_fair_value=Decimal("180.00"),
+        per_based_fair_value=Decimal("180.00"),
         current_price=Decimal("175.50"),
         price_gap_pct=Decimal("-2.5"),
         valuation_signal=ValuationSignal.UNDERVALUED,
@@ -107,7 +107,7 @@ def test_fundamental_response_full():
         updated_at=now,
     )
     assert resp.valuation_signal == ValuationSignal.UNDERVALUED
-    assert resp.dcf_fair_value == Decimal("180.00")
+    assert resp.per_based_fair_value == Decimal("180.00")
 
 
 # ──────────────────────────────────────────────
