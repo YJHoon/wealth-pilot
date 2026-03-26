@@ -135,7 +135,7 @@
 > 목표: 종목의 가치를 평가하고 매매 판단 돕기
 
 **기본적 분석 (Fundamental):**
-- PER, PBR, ROE, EPS 등 핵심 지표
+- PER, PBR, ROE, EPSm 등 핵심 지표
 - 동종 업계 비교 (Peer Comparison)
 - 적정가 추정 (DCF 간이 모델)
 - 과대평가/과소평가 판정 (신호등 시스템: 🟢저평가 🟡적정 🔴고평가)
