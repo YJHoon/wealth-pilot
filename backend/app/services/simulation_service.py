@@ -33,7 +33,7 @@ from app.services.stock_analysis_service import (
 
 logger = logging.getLogger(__name__)
 
-_FETCH_TIMEOUT = 10
+_FETCH_TIMEOUT = 15
 _SIMULATION_EXPIRY_DAYS = 30
 
 
