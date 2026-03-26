@@ -149,7 +149,7 @@ async def get_fundamental_analysis(
         )
     except asyncio.TimeoutError:
         logger.error("Timeout fetching info for %s (candidates=%s)", ticker, candidates)
-        raise StockAnalysisError(f"종목 정보 조회 시간 초과: {ticker}")
+        raise StockAnalysisError(f"종목 정보 조회 시간 초과: {ticker}") from None
     except Exception as exc:
         logger.error("Failed to fetch info for %s: %s", ticker, exc)
         raise StockAnalysisError(f"종목 정보 조회 실패: {ticker}") from exc
@@ -168,7 +168,7 @@ async def get_fundamental_analysis(
     sector_avg_per = _to_decimal(info.get("sectorPE"))
     sector_avg_pbr = _to_decimal(info.get("sectorPB"))
 
-    # PER 기반 적정가 추정: EPS × 기대 PER(15)
+    # PER 기반 적정가 추정: EPS x 기대 PER(15)
     per_based_fair_value: Decimal | None = None
     price_gap_pct: Decimal | None = None
     valuation_signal: ValuationSignal | None = None
@@ -233,7 +233,7 @@ async def get_technical_analysis(
         )
     except asyncio.TimeoutError:
         logger.error("Timeout fetching history for %s (candidates=%s)", ticker, candidates)
-        raise StockAnalysisError(f"종목 시세 조회 시간 초과: {ticker}")
+        raise StockAnalysisError(f"종목 시세 조회 시간 초과: {ticker}") from None
     except Exception as exc:
         logger.error("Failed to fetch history for %s: %s", ticker, exc)
         raise StockAnalysisError(f"종목 시세 조회 실패: {ticker}") from exc
@@ -258,7 +258,7 @@ async def get_technical_analysis(
     # MACD (12, 26, 9)
     ema_12 = _ema(closes, 12)
     ema_26 = _ema(closes, 26)
-    macd_line = [e12 - e26 for e12, e26 in zip(ema_12, ema_26)]
+    macd_line = [e12 - e26 for e12, e26 in zip(ema_12, ema_26, strict=True)]
     macd_signal_line = _ema(macd_line[25:], 9)  # 26번째부터 유효
 
     macd_val = macd_line[-1] if macd_line else None
@@ -267,7 +267,7 @@ async def get_technical_analysis(
     if macd_val is not None and macd_signal_val is not None:
         macd_histogram = macd_val - macd_signal_val
 
-    # 볼린저밴드 (20일, 2σ)
+    # 볼린저밴드 (20일, 2 std)
     sma_20_list = _sma(closes, 20)
     bb_middle = sma_20_list[-1] if sma_20_list else None
     bb_upper: Decimal | None = None
@@ -400,13 +400,13 @@ async def get_trading_signals(
             reasons.append("볼린저밴드 상단 접근")
 
     # --- 종합 ---
+    # 점수 범위 clamp (0~100) — combined 계산 전에 수행
+    fundamental_score = max(Decimal(0), min(Decimal(100), fundamental_score))
+    technical_score = max(Decimal(0), min(Decimal(100), technical_score))
+
     # 기본적 40% + 기술적 60%
     combined = fundamental_score * Decimal("0.4") + technical_score * Decimal("0.6")
     combined = combined.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-    # 점수 범위 clamp (0~100)
-    fundamental_score = max(Decimal(0), min(Decimal(100), fundamental_score))
-    technical_score = max(Decimal(0), min(Decimal(100), technical_score))
     combined = max(Decimal(0), min(Decimal(100), combined))
 
     if combined >= Decimal(60):
