@@ -130,13 +130,13 @@ async def trading_signals(
 # 시뮬레이션 (Task 3-5에서 구현)
 # ──────────────────────────────────────────────
 
-@router.post("/simulate", status_code=status.HTTP_501_NOT_IMPLEMENTED)
+@router.post("/simulate")
 async def simulate(
     user: User = Depends(get_current_active_user),
 ):
     """시뮬레이션 — Task 3-5에서 구현 예정."""
     raise HTTPException(
-        status_code=501,
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="시뮬레이션 기능은 준비 중입니다.",
     )
 
