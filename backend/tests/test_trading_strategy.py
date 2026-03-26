@@ -50,6 +50,12 @@ class TestRSI:
         result = _rsi(prices, period=14)
         assert result == Decimal("50")
 
+    def test_flat_prices_returns_neutral(self):
+        """모든 가격이 동일하면 RSI = 50 (중립)."""
+        prices = [Decimal("1000")] * 30
+        result = _rsi(prices, period=14)
+        assert result == Decimal("50")
+
     def test_all_gains_returns_100(self):
         # Monotonically increasing prices
         prices = [Decimal(str(1000 + i * 10)) for i in range(30)]

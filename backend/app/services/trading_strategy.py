@@ -37,6 +37,29 @@ class BaseStrategy(ABC):
         ...
 
 
+def _sma(prices: list[Decimal], period: int) -> list[Decimal]:
+    """단순이동평균(SMA) 계산.
+
+    Args:
+        prices: 종가 리스트 (오래된 순)
+        period: SMA 기간
+
+    Returns:
+        SMA 리스트 (prices와 동일 길이, 초기 period-1개는 Decimal(0))
+    """
+    if len(prices) < period:
+        return []
+
+    result: list[Decimal] = []
+    for i in range(len(prices)):
+        if i < period - 1:
+            result.append(Decimal(0))
+        else:
+            window = prices[i - period + 1 : i + 1]
+            result.append(sum(window) / Decimal(period))
+    return result
+
+
 def _ema(prices: list[Decimal], period: int) -> list[Decimal]:
     """지수이동평균(EMA) 계산.
 
@@ -98,7 +121,7 @@ def _rsi(prices: list[Decimal], period: int = 14) -> Decimal:
             avg_loss = (avg_loss * (Decimal(period) - 1) + abs(c)) / Decimal(period)
 
     if avg_loss == 0:
-        return Decimal(100)
+        return Decimal(50) if avg_gain == 0 else Decimal(100)
 
     rs = avg_gain / avg_loss
     rsi = Decimal(100) - (Decimal(100) / (Decimal(1) + rs))
