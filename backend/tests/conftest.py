@@ -58,6 +58,7 @@ async def mock_user(db_session: AsyncSession):
     await db_session.execute(text(f"DELETE FROM trading_positions WHERE user_id = '{user_id}'"))
     await db_session.execute(text(f"DELETE FROM trading_strategies WHERE user_id = '{user_id}'"))
     await db_session.execute(text(f"DELETE FROM trading_accounts WHERE user_id = '{user_id}'"))
+    await db_session.execute(text(f"DELETE FROM simulations WHERE user_id = '{user_id}'"))
     await db_session.execute(text(f"DELETE FROM watchlists WHERE user_id = '{user_id}'"))
     await db_session.execute(text(f"DELETE FROM access_logs WHERE user_id = '{user_id}'"))
     await db_session.execute(text(f"DELETE FROM users WHERE id = '{user_id}'"))
