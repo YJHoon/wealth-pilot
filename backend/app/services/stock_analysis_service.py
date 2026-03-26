@@ -122,6 +122,7 @@ def _fetch_history_sync(candidates: list[str], period: str = "1y") -> list[dict]
                     })
                 return rows
         except Exception as e:
+            logger.debug("Candidate %s failed: %s: %s", candidate, type(e).__name__, e)
             last_err = e
             continue
     if last_err:
@@ -275,8 +276,7 @@ async def get_technical_analysis(
     bb_lower: Decimal | None = None
     if bb_middle and len(closes) >= 20:
         window = closes[-20:]
-        mean = sum(window) / Decimal(20)
-        variance = sum((p - mean) ** 2 for p in window) / Decimal(20)
+        variance = sum((p - bb_middle) ** 2 for p in window) / Decimal(20)
         std_dev = variance.sqrt()
         bb_upper = (bb_middle + Decimal(2) * std_dev).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP,
