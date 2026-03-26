@@ -47,14 +47,37 @@ class Settings(BaseSettings):
     # 싱글유저 모드: 허용된 이메일만 로그인 가능 (빈 문자열이면 제한 없음)
     allowed_email: str = ""
 
-    # KIS API (싱글유저: 환경변수에서 직접 로드)
-    kis_app_key: str = ""
-    kis_app_secret: str = ""
-    kis_account_number: str = ""
-    kis_account_product_code: str = "01"
+    # KIS API — 모의투자
+    kis_paper_app_key: str = ""
+    kis_paper_app_secret: str = ""
+    kis_paper_account_number: str = ""
+    kis_paper_account_product_code: str = "01"
     kis_paper_base_url: str = "https://openapivts.koreainvestment.com:29443"
+
+    # KIS API — 실전
+    kis_live_app_key: str = ""
+    kis_live_app_secret: str = ""
+    kis_live_account_number: str = ""
+    kis_live_account_product_code: str = "01"
     kis_live_base_url: str = "https://openapi.koreainvestment.com:9443"
+
     trading_enabled: bool = False  # 자동매매 글로벌 킬 스위치
+
+    def kis_credentials(self, mode: str) -> dict:
+        """모드별 KIS 인증정보 반환."""
+        if mode == "paper":
+            return {
+                "app_key": self.kis_paper_app_key,
+                "app_secret": self.kis_paper_app_secret,
+                "account_number": self.kis_paper_account_number,
+                "account_product_code": self.kis_paper_account_product_code,
+            }
+        return {
+            "app_key": self.kis_live_app_key,
+            "app_secret": self.kis_live_app_secret,
+            "account_number": self.kis_live_account_number,
+            "account_product_code": self.kis_live_account_product_code,
+        }
 
     # 환경
     env: str = "development"

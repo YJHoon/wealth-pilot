@@ -45,6 +45,17 @@ wealthpilot/
 
 > 상세 규칙: `docs/SECURITY.md`
 
+### 민감 정보 유출 절대 금지
+
+**API 키, 시크릿, 토큰, 비밀번호 등 민감 정보는 어떤 상황에서도 코드, 커밋, PR, 로그에 포함되어서는 안 된다.**
+
+- 사용자가 프롬프트에 API 키나 시크릿 값을 직접 입력하더라도, 해당 값을 소스 코드, 커밋 메시지, PR 본문, 로그 출력 등 Git에 기록되는 어떤 곳에도 작성하지 않는다.
+- 민감 정보는 반드시 `.env` 파일(gitignore 대상)에만 저장하고, 코드에서는 `settings.xxx` 등 환경변수 참조로만 접근한다.
+- `.env`, `.env.local` 등 실제 환경변수 파일은 절대 `git add` 하지 않는다. `.env.example`에는 키 이름만 작성하고 값은 비워둔다.
+- 민감 정보가 포함된 파일을 커밋하려는 시도가 감지되면, 즉시 중단하고 사용자에게 경고한다.
+
+### 암호화 및 인증
+
 - **암호화 필수 필드** (AES-256): `assets.quantity`, `purchase_price`, `sold_price`, `realized_pnl` / `asset_snapshots.total_value_krw` / `transactions.amount`
 - JWT: Access 15분, Refresh 7일 / 30분 미사용 자동 로그아웃
 - 모든 API: JWT 인증 + 소유권 검증 + 액세스 로그 + Rate Limit (100 req/min)

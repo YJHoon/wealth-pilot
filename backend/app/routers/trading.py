@@ -140,11 +140,12 @@ async def get_account_balance(
     """KIS 실시간 잔고 조회."""
     account = await _get_user_account(db, account_id, user.id)
 
+    creds = settings.kis_credentials(account.mode.value)
     kis = KISClient(
-        app_key=settings.kis_app_key,
-        app_secret=settings.kis_app_secret,
-        account_number=settings.kis_account_number,
-        account_product_code=settings.kis_account_product_code,
+        app_key=creds["app_key"],
+        app_secret=creds["app_secret"],
+        account_number=creds["account_number"],
+        account_product_code=creds["account_product_code"],
         mode=account.mode,
     )
     try:

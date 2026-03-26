@@ -119,12 +119,13 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         await db.commit()
         return
 
-    # 3. KIS 클라이언트 생성 (인증정보는 .env에서 로드)
+    # 3. KIS 클라이언트 생성 (인증정보는 .env에서 모드별 로드)
+    creds = settings.kis_credentials(account.mode.value)
     kis = KISClient(
-        app_key=settings.kis_app_key,
-        app_secret=settings.kis_app_secret,
-        account_number=settings.kis_account_number,
-        account_product_code=settings.kis_account_product_code,
+        app_key=creds["app_key"],
+        app_secret=creds["app_secret"],
+        account_number=creds["account_number"],
+        account_product_code=creds["account_product_code"],
         mode=account.mode,
         access_token=decrypt_value(account.access_token) if account.access_token else None,
         token_expires_at=account.token_expires_at,
