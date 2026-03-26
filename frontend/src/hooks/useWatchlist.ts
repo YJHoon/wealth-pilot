@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 관심종목 CRUD 훅 — 목록 조회/추가/수정/삭제
+ */
+
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { apiFetch, ApiError } from "@/lib/api";
