@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.middleware.rate_limit import limiter
@@ -78,6 +79,13 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Google 토큰에 이메일 정보가 없습니다.",
+        )
+
+    # 싱글유저 모드: 허용된 이메일만 로그인 가능
+    if settings.allowed_email and verified_email != settings.allowed_email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 서비스에 접근 권한이 없습니다.",
         )
 
     user = await get_or_create_user(db, email=verified_email, name=body.name)

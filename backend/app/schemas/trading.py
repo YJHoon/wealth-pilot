@@ -20,7 +20,6 @@ from app.models.trading import (
 from app.services.crypto_service import (
     decrypt_decimal,
     decrypt_decimal_optional,
-    decrypt_value,
 )
 
 if TYPE_CHECKING:
@@ -39,17 +38,12 @@ if TYPE_CHECKING:
 
 class TradingAccountCreate(BaseModel):
     mode: TradingMode = TradingMode.PAPER
-    app_key: str = Field(min_length=1)
-    app_secret: str = Field(min_length=1)
-    account_number: str = Field(min_length=1)
-    account_product_code: str = Field(default="01", max_length=2)
     initial_capital: Decimal = Field(gt=0)
 
 
 class TradingAccountResponse(BaseModel):
     id: UUID
     mode: TradingMode
-    account_number_masked: str
     initial_capital: Decimal
     is_active: bool
     token_expires_at: datetime | None
@@ -58,12 +52,9 @@ class TradingAccountResponse(BaseModel):
 
 
 def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:
-    acct_num = decrypt_value(account.account_number)
-    masked = acct_num[:4] + "****" + acct_num[-2:] if len(acct_num) >= 6 else "****"
     return TradingAccountResponse(
         id=account.id,
         mode=account.mode,
-        account_number_masked=masked,
         initial_capital=decrypt_decimal(account.initial_capital),
         is_active=account.is_active,
         token_expires_at=account.token_expires_at,

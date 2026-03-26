@@ -161,14 +161,14 @@ export default function TradingPage() {
               <SelectTrigger className="w-48">
                 <span>
                   {selectedAccount
-                    ? `${tradingModeLabels[selectedAccount.mode]} · ${selectedAccount.accountNumberMasked}`
+                    ? tradingModeLabels[selectedAccount.mode]
                     : "계좌 선택"}
                 </span>
               </SelectTrigger>
               <SelectContent>
                 {trading.accounts.map((account) => (
                   <SelectItem key={account.id} value={account.id}>
-                    {tradingModeLabels[account.mode]} · {account.accountNumberMasked}
+                    {tradingModeLabels[account.mode]}
                   </SelectItem>
                 ))}
               </SelectContent>

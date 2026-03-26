@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.trading import (
     OrderSide,
@@ -118,12 +119,12 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         await db.commit()
         return
 
-    # 3. KIS 클라이언트 생성
+    # 3. KIS 클라이언트 생성 (인증정보는 .env에서 로드)
     kis = KISClient(
-        app_key=decrypt_value(account.app_key),
-        app_secret=decrypt_value(account.app_secret),
-        account_number=decrypt_value(account.account_number),
-        account_product_code=account.account_product_code,
+        app_key=settings.kis_app_key,
+        app_secret=settings.kis_app_secret,
+        account_number=settings.kis_account_number,
+        account_product_code=settings.kis_account_product_code,
         mode=account.mode,
         access_token=decrypt_value(account.access_token) if account.access_token else None,
         token_expires_at=account.token_expires_at,
