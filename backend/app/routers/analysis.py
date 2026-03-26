@@ -151,11 +151,10 @@ async def simulate(
 
     try:
         await log_access(db, user.id, AccessAction.SIMULATION_RUN, request)
-        await db.commit()
     except Exception:
-        await db.rollback()
         logger.warning("SIMULATION_RUN access logging failed", exc_info=True)
 
+    await db.commit()
     return result
 
 
