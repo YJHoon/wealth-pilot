@@ -90,6 +90,7 @@ def _fetch_info_sync(candidates: list[str]) -> dict:
             if info:
                 return info
         except Exception as e:
+            logger.debug("Candidate %s failed: %s: %s", candidate, type(e).__name__, e)
             last_err = e
             continue
     if last_err:
@@ -452,7 +453,7 @@ def _to_decimal(value: Any) -> Decimal | None:
         return None
     try:
         d = Decimal(str(value))
-        if d != d:  # NaN check
+        if d.is_nan():
             return None
         return d
     except Exception:
