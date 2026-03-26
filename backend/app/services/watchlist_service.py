@@ -69,11 +69,15 @@ async def create_watchlist(
     db.add(watchlist)
     try:
         await db.flush()
-    except IntegrityError:
+    except IntegrityError as e:
         await db.rollback()
-        raise WatchlistDuplicateError(
-            f"이미 등록된 관심종목입니다: {body.ticker} ({body.market.value})"
-        ) from None
+        # unique constraint(uq_watchlist_user_ticker_market) 위반만 중복 에러로 변환
+        orig_msg = str(getattr(e, "orig", e)).lower()
+        if "uq_watchlist_user_ticker_market" in orig_msg:
+            raise WatchlistDuplicateError(
+                f"이미 등록된 관심종목입니다: {body.ticker} ({body.market.value})"
+            ) from None
+        raise
     await db.refresh(watchlist)
     return watchlist_to_response(watchlist)
 

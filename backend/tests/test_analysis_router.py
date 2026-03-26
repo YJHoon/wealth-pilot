@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import select, text
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from unittest.mock import AsyncMock, patch
 
@@ -81,7 +81,7 @@ async def _cleanup_watchlists(db_session: AsyncSession, mock_user: User):
     """테스트 후 watchlists 정리."""
     yield
     await db_session.execute(
-        text(f"DELETE FROM watchlists WHERE user_id = '{mock_user.id}'")
+        delete(Watchlist).where(Watchlist.user_id == mock_user.id)
     )
     await db_session.commit()
 
@@ -364,7 +364,7 @@ class TestWatchlistOwnership:
 
         # cleanup
         await db_session.execute(
-            text(f"DELETE FROM watchlists WHERE user_id = '{other_user.id}'")
+            delete(Watchlist).where(Watchlist.user_id == other_user.id)
         )
         await db_session.commit()
 
@@ -389,7 +389,7 @@ class TestWatchlistOwnership:
 
         # cleanup
         await db_session.execute(
-            text(f"DELETE FROM watchlists WHERE user_id = '{other_user.id}'")
+            delete(Watchlist).where(Watchlist.user_id == other_user.id)
         )
         await db_session.commit()
 
@@ -414,6 +414,6 @@ class TestWatchlistOwnership:
 
         # cleanup
         await db_session.execute(
-            text(f"DELETE FROM watchlists WHERE user_id = '{other_user.id}'")
+            delete(Watchlist).where(Watchlist.user_id == other_user.id)
         )
         await db_session.commit()
