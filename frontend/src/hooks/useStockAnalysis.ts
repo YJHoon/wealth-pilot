@@ -14,6 +14,7 @@ import {
   TechnicalAnalysisApi,
   TradingSignals,
   TradingSignalsApi,
+  MARKETS,
   MarketType,
   toFundamentalAnalysis,
   toTechnicalAnalysis,
@@ -39,7 +40,7 @@ interface UseStockAnalysisReturn {
 
 export function useStockAnalysis({
   ticker,
-  market = "KRX",
+  market = MARKETS[0],
   enabled = true,
 }: UseStockAnalysisOptions): UseStockAnalysisReturn {
   const { data: session } = useSession();

@@ -284,7 +284,8 @@ const DEFAULT_TYPE_ENTRY = { valueKrw: 0, ratio: 0 } as const;
 
 export type ValuationSignal = "undervalued" | "fair" | "overvalued";
 export type TradingSignalAction = "buy" | "sell" | "hold";
-export type MarketType = "KRX" | "NASDAQ" | "NYSE" | "CRYPTO";
+export const MARKETS = ["KRX", "NASDAQ", "NYSE", "CRYPTO"] as const;
+export type MarketType = (typeof MARKETS)[number];
 export type RiskLevel = "상" | "중" | "하";
 export type SimulationType = "dca" | "portfolio" | "scenario";
 
