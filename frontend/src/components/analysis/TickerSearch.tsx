@@ -15,7 +15,7 @@ import { Search, Loader2 } from "lucide-react";
 import { MARKETS, type MarketType } from "@/types";
 
 interface TickerSearchProps {
-  onSearch?: (ticker: string, market: MarketType) => void;
+  onSearch?: (ticker: string, market: MarketType) => void | Promise<void>;
 }
 
 const POPULAR_TICKERS = [
@@ -41,7 +41,7 @@ export function TickerSearch({ onSearch }: TickerSearchProps) {
       setSearching(true);
       try {
         if (onSearch) {
-          onSearch(t, m);
+          await onSearch(t, m);
         } else {
           await router.push(`/analysis/${encodeURIComponent(t)}?market=${m}`);
         }
