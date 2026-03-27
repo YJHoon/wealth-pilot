@@ -1,0 +1,122 @@
+"use client";
+
+import { useState, useCallback, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+import { Search, Loader2 } from "lucide-react";
+import type { MarketType } from "@/types";
+
+interface TickerSearchProps {
+  onSearch?: (ticker: string, market: MarketType) => void;
+}
+
+const MARKETS: { value: MarketType; label: string }[] = [
+  { value: "KRX", label: "KRX" },
+  { value: "NASDAQ", label: "NASDAQ" },
+  { value: "NYSE", label: "NYSE" },
+  { value: "CRYPTO", label: "CRYPTO" },
+];
+
+const POPULAR_TICKERS = [
+  { ticker: "005930", name: "삼성전자", market: "KRX" as MarketType },
+  { ticker: "000660", name: "SK하이닉스", market: "KRX" as MarketType },
+  { ticker: "AAPL", name: "Apple", market: "NASDAQ" as MarketType },
+  { ticker: "TSLA", name: "Tesla", market: "NASDAQ" as MarketType },
+  { ticker: "NVDA", name: "NVIDIA", market: "NASDAQ" as MarketType },
+];
+
+export function TickerSearch({ onSearch }: TickerSearchProps) {
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+  const [market, setMarket] = useState<MarketType>("KRX");
+  const [searching, setSearching] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSubmit = useCallback(
+    (ticker?: string, mkt?: MarketType) => {
+      const t = (ticker ?? query).trim().toUpperCase();
+      const m = mkt ?? market;
+      if (!t) return;
+
+      setSearching(true);
+      if (onSearch) {
+        onSearch(t, m);
+        setSearching(false);
+      } else {
+        router.push(`/analysis/${encodeURIComponent(t)}?market=${m}`);
+      }
+    },
+    [query, market, onSearch, router],
+  );
+
+  const handleInputChange = useCallback(
+    (value: string) => {
+      setQuery(value);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      // debounce: 자동 검색은 하지 않고 입력 정리만 수행
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      {/* 검색 바 */}
+      <div className="flex gap-2">
+        <Select value={market} onValueChange={(v) => setMarket(v as MarketType)}>
+          <SelectTrigger className="w-28">
+            <span>{market}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {MARKETS.map((m) => (
+              <SelectItem key={m.value} value={m.value}>
+                {m.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            placeholder="종목코드 또는 티커 입력 (예: 005930, AAPL)"
+            className="pl-9"
+          />
+        </div>
+        <Button onClick={() => handleSubmit()} disabled={!query.trim() || searching}>
+          {searching ? <Loader2 className="size-4 animate-spin" /> : "검색"}
+        </Button>
+      </div>
+
+      {/* 인기 종목 */}
+      <div className="flex flex-wrap gap-2">
+        <span className="self-center text-xs text-muted-foreground">인기 종목:</span>
+        {POPULAR_TICKERS.map((item) => (
+          <Badge
+            key={item.ticker}
+            variant="outline"
+            className="cursor-pointer hover:bg-accent"
+            onClick={() => handleSubmit(item.ticker, item.market)}
+          >
+            {item.name} ({item.ticker})
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+}
