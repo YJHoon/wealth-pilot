@@ -97,7 +97,7 @@ export function DCASimulator() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="dca-months">기간(개월)</Label>
-              <Input id="dca-months" type="number" defaultValue={12} {...register("months", { setValueAs: toNumber })} />
+              <Input id="dca-months" type="number" {...register("months", { setValueAs: toNumber })} />
               {errors.months && <p className="text-xs text-destructive">{errors.months.message}</p>}
             </div>
           </div>

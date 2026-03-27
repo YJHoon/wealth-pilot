@@ -28,9 +28,9 @@ import { toNumber } from "@/lib/form-utils";
 const watchlistSchema = z.object({
   ticker: z.string().min(1, "종목코드를 입력해주세요").max(20),
   market: z.enum(MARKETS),
-  targetBuyPrice: z.union([z.number().positive(), z.nan(), z.undefined()]).optional(),
-  targetSellPrice: z.union([z.number().positive(), z.nan(), z.undefined()]).optional(),
-  alertThresholdPct: z.union([z.number().min(0).max(100), z.nan(), z.undefined()]).optional(),
+  targetBuyPrice: z.number().positive().optional(),
+  targetSellPrice: z.number().positive().optional(),
+  alertThresholdPct: z.number().min(0).max(100).optional(),
   notes: z.string().max(500).optional(),
 });
 

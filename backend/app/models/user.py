@@ -29,6 +29,9 @@ class User(Base):
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # 텔레그램 알림
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     # 온보딩
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 

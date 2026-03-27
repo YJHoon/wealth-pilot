@@ -4,6 +4,16 @@ import { useState, useCallback } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useWatchlist } from "@/hooks/useWatchlist";
 import { WatchlistTable } from "@/components/watchlist/WatchlistTable";
 import {
@@ -24,6 +34,7 @@ export default function WatchlistPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<WatchlistItem | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingDeleteItem, setPendingDeleteItem] = useState<WatchlistItem | null>(null);
 
   const handleAddClick = useCallback(() => {
     setEditingItem(null);
@@ -35,18 +46,21 @@ export default function WatchlistPage() {
     setDialogOpen(true);
   }, []);
 
-  const handleDeleteClick = useCallback(
-    async (item: WatchlistItem) => {
-      if (!window.confirm(`"${item.ticker}" 종목을 관심목록에서 삭제하시겠습니까?`)) return;
-      try {
-        await removeItem(item.id);
-        toast.success("관심종목이 삭제되었습니다.");
-      } catch (err) {
-        toast.error(err instanceof ApiError ? err.message : "삭제에 실패했습니다.");
-      }
-    },
-    [removeItem],
-  );
+  const handleDeleteClick = useCallback((item: WatchlistItem) => {
+    setPendingDeleteItem(item);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!pendingDeleteItem) return;
+    try {
+      await removeItem(pendingDeleteItem.id);
+      toast.success("관심종목이 삭제되었습니다.");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "삭제에 실패했습니다.");
+    } finally {
+      setPendingDeleteItem(null);
+    }
+  }, [pendingDeleteItem, removeItem]);
 
   const handleSubmit = useCallback(
     async (values: WatchlistFormValues) => {
@@ -140,6 +154,26 @@ export default function WatchlistPage() {
         onSubmit={handleSubmit}
         isSubmitting={isSubmitting}
       />
+
+      <AlertDialog
+        open={!!pendingDeleteItem}
+        onOpenChange={(open) => { if (!open) setPendingDeleteItem(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>관심종목 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              &ldquo;{pendingDeleteItem?.ticker}&rdquo; 종목을 관심목록에서 삭제하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleDeleteConfirm()}>
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

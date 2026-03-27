@@ -36,15 +36,16 @@ WATCHLIST_ALERT_TEMPLATES = {
 }
 
 
-async def send_telegram_message(message: str) -> bool:
-    """텔레그램 메시지 전송. 토큰 미설정 시 skip."""
-    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+async def send_telegram_message(message: str, *, chat_id: str | None = None) -> bool:
+    """텔레그램 메시지 전송. chat_id 지정 시 해당 채팅으로, 미지정 시 시스템 chat_id 사용."""
+    resolved_chat_id = chat_id or settings.telegram_chat_id
+    if not settings.telegram_bot_token or not resolved_chat_id:
         logger.debug("Telegram credentials not configured, skipping alert")
         return False
 
     url = TELEGRAM_API_URL.format(token=settings.telegram_bot_token)
     payload = {
-        "chat_id": settings.telegram_chat_id,
+        "chat_id": resolved_chat_id,
         "text": message,
         "parse_mode": "HTML",
     }

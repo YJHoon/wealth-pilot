@@ -23,7 +23,11 @@ const portfolioSchema = z.object({
         weight: z.number().min(0).max(100),
       }),
     )
-    .min(2, "최소 2개 종목이 필요합니다"),
+    .min(2, "최소 2개 종목이 필요합니다")
+    .refine(
+      (assets) => Math.abs(assets.reduce((sum, a) => sum + a.weight, 0) - 100) < 0.01,
+      { message: "가중치 합계는 100이어야 합니다" },
+    ),
   initialAmount: z.number({ error: "초기 투자금을 입력해주세요" }).positive(),
   months: z.number().int().min(1).max(120),
   rebalanceIntervalMonths: z.number().int().min(1).max(12).optional(),
@@ -142,7 +146,6 @@ export function PortfolioSimulator() {
               <Input
                 id="pf-months"
                 type="number"
-                defaultValue={12}
                 {...register("months", { setValueAs: toNumber })}
               />
             </div>
@@ -151,7 +154,6 @@ export function PortfolioSimulator() {
               <Input
                 id="pf-rebalance"
                 type="number"
-                defaultValue={3}
                 {...register("rebalanceIntervalMonths", { setValueAs: toNumber })}
               />
             </div>

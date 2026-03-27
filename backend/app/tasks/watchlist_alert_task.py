@@ -2,12 +2,16 @@
 
 주기적으로 관심종목의 현재가를 확인하여
 목표 매수/매도가 도달 또는 변동률 초과 시 텔레그램 알림을 전송한다.
+
+Edge-triggered: 조건 충족 시 1회만 전송하고, 조건이 해제된 후 재진입 시 재전송한다.
 """
 
 import logging
 from decimal import Decimal
+from html import escape
 
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from app.database import AsyncSessionLocal
 from app.models.analysis import Watchlist
@@ -34,7 +38,9 @@ async def check_watchlist_alerts() -> None:
 
 async def _run_alert_check(db) -> None:
     """알림 조건 체크 핵심 로직."""
-    result = await db.execute(select(Watchlist))
+    result = await db.execute(
+        select(Watchlist).options(joinedload(Watchlist.user))
+    )
     watchlist_items = result.scalars().all()
 
     if not watchlist_items:
@@ -63,31 +69,46 @@ async def _check_single_item(price_service: PriceService, item: Watchlist) -> No
         logger.debug("Cannot fetch price for %s, skipping", item.ticker)
         return
 
+    # 사용자별 텔레그램 chat_id 해석 (미설정 시 시스템 chat_id로 폴백)
+    user_chat_id = getattr(item.user, "telegram_chat_id", None) if item.user else None
+
     target_buy = decrypt_decimal_optional(item.target_buy_price)
     target_sell = decrypt_decimal_optional(item.target_sell_price)
     threshold_pct = item.alert_threshold_pct
 
-    # 목표 매수가 도달 (현재가 <= 매수가)
+    # HTML-safe 값 (parse_mode="HTML" 대응)
+    safe_ticker = escape(item.ticker)
+    safe_market = escape(item.market)
+
+    # 목표 매수가 도달 (현재가 <= 매수가) — edge-triggered
     if target_buy is not None and current_price <= target_buy:
-        message = WATCHLIST_ALERT_TEMPLATES["target_buy_reached"].format(
-            ticker=item.ticker,
-            market=item.market,
-            current_price=f"{current_price:,.0f}",
-            target_price=f"{target_buy:,.0f}",
-        )
-        await send_telegram_message(message)
+        if not item.alerted_target_buy:
+            message = WATCHLIST_ALERT_TEMPLATES["target_buy_reached"].format(
+                ticker=safe_ticker,
+                market=safe_market,
+                current_price=f"{current_price:,.0f}",
+                target_price=f"{target_buy:,.0f}",
+            )
+            await send_telegram_message(message, chat_id=user_chat_id)
+            item.alerted_target_buy = True
+    else:
+        item.alerted_target_buy = False
 
-    # 목표 매도가 도달 (현재가 >= 매도가)
+    # 목표 매도가 도달 (현재가 >= 매도가) — edge-triggered
     if target_sell is not None and current_price >= target_sell:
-        message = WATCHLIST_ALERT_TEMPLATES["target_sell_reached"].format(
-            ticker=item.ticker,
-            market=item.market,
-            current_price=f"{current_price:,.0f}",
-            target_price=f"{target_sell:,.0f}",
-        )
-        await send_telegram_message(message)
+        if not item.alerted_target_sell:
+            message = WATCHLIST_ALERT_TEMPLATES["target_sell_reached"].format(
+                ticker=safe_ticker,
+                market=safe_market,
+                current_price=f"{current_price:,.0f}",
+                target_price=f"{target_sell:,.0f}",
+            )
+            await send_telegram_message(message, chat_id=user_chat_id)
+            item.alerted_target_sell = True
+    else:
+        item.alerted_target_sell = False
 
-    # 변동률 초과 알림 (기준가 = 목표 매수가 or 매도가 중 존재하는 값)
+    # 변동률 초과 알림 (기준가 = 목표 매수가 or 매도가 중 존재하는 값) — edge-triggered
     if threshold_pct is not None and threshold_pct > 0:
         ref_price = target_buy or target_sell
         if ref_price is not None and ref_price > 0:
@@ -95,11 +116,15 @@ async def _check_single_item(price_service: PriceService, item: Watchlist) -> No
                 (current_price - ref_price) / ref_price * Decimal("100")
             )
             if change_pct >= threshold_pct:
-                message = WATCHLIST_ALERT_TEMPLATES["threshold_exceeded"].format(
-                    ticker=item.ticker,
-                    market=item.market,
-                    current_price=f"{current_price:,.0f}",
-                    change_pct=f"{change_pct:.1f}",
-                    threshold_pct=f"{threshold_pct:.1f}",
-                )
-                await send_telegram_message(message)
+                if not item.alerted_threshold:
+                    message = WATCHLIST_ALERT_TEMPLATES["threshold_exceeded"].format(
+                        ticker=safe_ticker,
+                        market=safe_market,
+                        current_price=f"{current_price:,.0f}",
+                        change_pct=f"{change_pct:.1f}",
+                        threshold_pct=f"{threshold_pct:.1f}",
+                    )
+                    await send_telegram_message(message, chat_id=user_chat_id)
+                    item.alerted_threshold = True
+            else:
+                item.alerted_threshold = False

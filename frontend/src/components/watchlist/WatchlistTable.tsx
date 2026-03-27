@@ -91,10 +91,10 @@ export function WatchlistTable({ items, loading, onEdit, onDelete }: WatchlistTa
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => onEdit(item)}>
+                  <Button variant="ghost" size="sm" aria-label={`${item.ticker} 수정`} onClick={() => onEdit(item)}>
                     <Pencil className="size-3.5" />
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => onDelete(item)}>
+                  <Button variant="ghost" size="sm" aria-label={`${item.ticker} 삭제`} onClick={() => onDelete(item)}>
                     <Trash2 className="size-3.5 text-destructive" />
                   </Button>
                 </div>

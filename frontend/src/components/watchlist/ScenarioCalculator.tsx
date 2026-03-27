@@ -154,7 +154,7 @@ export function ScenarioCalculator() {
                 {isMasked ? `${MASK}원` : `-${formatMaskedKrw(Math.abs(scenarioResult.potentialLoss), false)}`}
               </p>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                {scenarioResult.lossPct.toFixed(2)}%
+                {isMasked ? `${MASK}%` : `-${Math.abs(scenarioResult.lossPct).toFixed(2)}%`}
               </p>
             </div>
 
