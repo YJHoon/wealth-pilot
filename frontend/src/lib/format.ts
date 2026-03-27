@@ -1,6 +1,6 @@
 import type { Currency, AssetType, AssetStatus } from "@/types";
 
-const MASK = "●●●●●●";
+export const MASK = "●●●●●●";
 
 const currencyConfig: Record<Currency, { symbol: string; locale: string }> = {
   KRW: { symbol: "원", locale: "ko-KR" },

@@ -18,7 +18,11 @@ export default function TickerDetailPage() {
   const searchParams = useSearchParams();
 
   const ticker = decodeURIComponent(params.ticker as string);
-  const market = (searchParams.get("market") ?? "KRX") as MarketType;
+  const VALID_MARKETS: MarketType[] = ["KRX", "NASDAQ", "NYSE", "CRYPTO"];
+  const rawMarket = searchParams.get("market");
+  const market: MarketType = VALID_MARKETS.includes(rawMarket as MarketType)
+    ? (rawMarket as MarketType)
+    : "KRX";
 
   const { fundamental, technical, signals, loading, error, refetch } =
     useStockAnalysis({ ticker, market });

@@ -3,15 +3,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useAppStore } from "@/stores/appStore";
-import { formatMaskedKrw } from "@/lib/format";
+import { MASK, formatMaskedKrw } from "@/lib/format";
 import { DataFreshnessBadge } from "./DataFreshnessBadge";
 import type { FundamentalAnalysis, ValuationSignal } from "@/types";
 
 interface FundamentalCardProps {
   data: FundamentalAnalysis;
 }
-
-const MASK = "●●●●●●";
 
 const signalConfig: Record<ValuationSignal, { label: string; className: string }> = {
   undervalued: { label: "저평가", className: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" },
@@ -39,7 +37,7 @@ export function FundamentalCard({ data }: FundamentalCardProps) {
   const isMasked = useAppStore((s) => s.isMasked);
 
   const fmt = (v: number | null) => (v != null ? v.toFixed(2) : null);
-  const fmtPrice = (v: number | null) => (v != null ? formatMaskedKrw(v, isMasked) : isMasked ? `${MASK}원` : "-");
+  const fmtPrice = (v: number | null) => (v == null ? "-" : formatMaskedKrw(v, isMasked));
 
   return (
     <Card>

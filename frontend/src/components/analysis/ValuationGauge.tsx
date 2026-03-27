@@ -9,8 +9,6 @@ interface ValuationGaugeProps {
   data: FundamentalAnalysis;
 }
 
-const MASK = "●●●●●●";
-
 export function ValuationGauge({ data }: ValuationGaugeProps) {
   const isMasked = useAppStore((s) => s.isMasked);
 
@@ -72,13 +70,13 @@ export function ValuationGauge({ data }: ValuationGaugeProps) {
           <div className="rounded-lg border border-border p-3 text-center">
             <p className="text-xs text-muted-foreground">현재가</p>
             <p className="mt-1 text-lg font-semibold">
-              {isMasked ? `${MASK}원` : formatMaskedKrw(currentPrice, false)}
+              {formatMaskedKrw(currentPrice, isMasked)}
             </p>
           </div>
           <div className="rounded-lg border border-border p-3 text-center">
             <p className="text-xs text-muted-foreground">PER 기반 적정가</p>
             <p className="mt-1 text-lg font-semibold">
-              {isMasked ? `${MASK}원` : formatMaskedKrw(fairValue, false)}
+              {formatMaskedKrw(fairValue, isMasked)}
             </p>
           </div>
         </div>

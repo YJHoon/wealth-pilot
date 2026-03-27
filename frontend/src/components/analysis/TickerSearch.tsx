@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -38,39 +38,26 @@ export function TickerSearch({ onSearch }: TickerSearchProps) {
   const [query, setQuery] = useState("");
   const [market, setMarket] = useState<MarketType>("KRX");
   const [searching, setSearching] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSubmit = useCallback(
-    (ticker?: string, mkt?: MarketType) => {
+    async (ticker?: string, mkt?: MarketType) => {
       const t = (ticker ?? query).trim().toUpperCase();
       const m = mkt ?? market;
       if (!t) return;
 
       setSearching(true);
-      if (onSearch) {
-        onSearch(t, m);
+      try {
+        if (onSearch) {
+          onSearch(t, m);
+        } else {
+          await router.push(`/analysis/${encodeURIComponent(t)}?market=${m}`);
+        }
+      } finally {
         setSearching(false);
-      } else {
-        router.push(`/analysis/${encodeURIComponent(t)}?market=${m}`);
       }
     },
     [query, market, onSearch, router],
   );
-
-  const handleInputChange = useCallback(
-    (value: string) => {
-      setQuery(value);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      // debounce: 자동 검색은 하지 않고 입력 정리만 수행
-    },
-    [],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, []);
 
   return (
     <div className="space-y-4">
@@ -92,7 +79,7 @@ export function TickerSearch({ onSearch }: TickerSearchProps) {
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
-            onChange={(e) => handleInputChange(e.target.value)}
+            onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             placeholder="종목코드 또는 티커 입력 (예: 005930, AAPL)"
             className="pl-9"

@@ -5,6 +5,7 @@ import {
   ComposedChart,
   Line,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   Tooltip as RechartsTooltip,
@@ -14,9 +15,8 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, CardAction } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { useAppStore } from "@/stores/appStore";
-import { formatAmountAbbreviated } from "@/lib/format";
+import { MASK, formatAmountAbbreviated } from "@/lib/format";
 import { DataFreshnessBadge } from "./DataFreshnessBadge";
 import type { TechnicalAnalysis } from "@/types";
 
@@ -64,7 +64,7 @@ export function TechnicalChart({ data }: TechnicalChartProps) {
     { name: "MACD", macd: data.macd, signal: data.macdSignal, histogram: data.macdHistogram },
   ];
 
-  const tickFormatter = (v: number) => (isMasked ? "●●●" : formatAmountAbbreviated(v));
+  const tickFormatter = (v: number) => (isMasked ? `${MASK}원` : formatAmountAbbreviated(v));
 
   return (
     <Card>
@@ -143,12 +143,12 @@ export function TechnicalChart({ data }: TechnicalChartProps) {
               <div className="flex gap-4 text-sm">
                 {data.supportLevel != null && (
                   <span className="text-muted-foreground">
-                    지지선: <span className="font-medium text-emerald-400">{isMasked ? "●●●" : data.supportLevel.toLocaleString("ko-KR")}</span>
+                    지지선: <span className="font-medium text-emerald-400">{isMasked ? `${MASK}원` : data.supportLevel.toLocaleString("ko-KR")}</span>
                   </span>
                 )}
                 {data.resistanceLevel != null && (
                   <span className="text-muted-foreground">
-                    저항선: <span className="font-medium text-red-400">{isMasked ? "●●●" : data.resistanceLevel.toLocaleString("ko-KR")}</span>
+                    저항선: <span className="font-medium text-red-400">{isMasked ? `${MASK}원` : data.resistanceLevel.toLocaleString("ko-KR")}</span>
                   </span>
                 )}
               </div>
@@ -266,7 +266,11 @@ export function TechnicalChart({ data }: TechnicalChartProps) {
                         tickLine={false}
                         width={50}
                       />
-                      <Bar dataKey="histogram" fill={(data.macdHistogram ?? 0) >= 0 ? "#10b981" : "#ef4444"} barSize={40} />
+                      <Bar dataKey="histogram" barSize={40}>
+                        {macdData.map((entry, index) => (
+                          <Cell key={index} fill={(entry.histogram ?? 0) >= 0 ? "#10b981" : "#ef4444"} />
+                        ))}
+                      </Bar>
                       <Line type="monotone" dataKey="macd" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
                       <Line type="monotone" dataKey="signal" stroke="#f59e0b" strokeWidth={2} dot={{ r: 4 }} />
                       <ReferenceLine y={0} stroke="hsl(var(--border))" />

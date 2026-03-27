@@ -9,14 +9,17 @@ interface DataFreshnessBadgeProps {
 }
 
 export function DataFreshnessBadge({ dataSource, updatedAt }: DataFreshnessBadgeProps) {
-  const formattedTime = updatedAt
-    ? new Date(updatedAt).toLocaleString("ko-KR", {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : null;
+  const formattedTime = (() => {
+    if (!updatedAt) return null;
+    const date = new Date(updatedAt);
+    if (isNaN(date.getTime())) return null;
+    return date.toLocaleString("ko-KR", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  })();
 
   return (
     <div className="flex items-center gap-2">

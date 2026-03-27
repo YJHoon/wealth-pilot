@@ -12,8 +12,6 @@ interface SignalCardProps {
   data: TradingSignals;
 }
 
-const MASK = "●●●●●●";
-
 const actionConfig: Record<TradingSignalAction, { label: string; icon: typeof TrendingUp; className: string; bgClass: string }> = {
   buy: { label: "매수", icon: TrendingUp, className: "text-emerald-400", bgClass: "bg-emerald-500/10 border-emerald-500/30" },
   sell: { label: "매도", icon: TrendingDown, className: "text-red-400", bgClass: "bg-red-500/10 border-red-500/30" },
