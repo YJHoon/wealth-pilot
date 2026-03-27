@@ -12,18 +12,11 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Search, Loader2 } from "lucide-react";
-import type { MarketType } from "@/types";
+import { MARKETS, type MarketType } from "@/types";
 
 interface TickerSearchProps {
   onSearch?: (ticker: string, market: MarketType) => void;
 }
-
-const MARKETS: { value: MarketType; label: string }[] = [
-  { value: "KRX", label: "KRX" },
-  { value: "NASDAQ", label: "NASDAQ" },
-  { value: "NYSE", label: "NYSE" },
-  { value: "CRYPTO", label: "CRYPTO" },
-];
 
 const POPULAR_TICKERS = [
   { ticker: "005930", name: "삼성전자", market: "KRX" as MarketType },
@@ -69,8 +62,8 @@ export function TickerSearch({ onSearch }: TickerSearchProps) {
           </SelectTrigger>
           <SelectContent>
             {MARKETS.map((m) => (
-              <SelectItem key={m.value} value={m.value}>
-                {m.label}
+              <SelectItem key={m} value={m}>
+                {m}
               </SelectItem>
             ))}
           </SelectContent>
@@ -80,12 +73,12 @@ export function TickerSearch({ onSearch }: TickerSearchProps) {
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            onKeyDown={(e) => { if (e.key === "Enter") void handleSubmit(); }}
             placeholder="종목코드 또는 티커 입력 (예: 005930, AAPL)"
             className="pl-9"
           />
         </div>
-        <Button onClick={() => handleSubmit()} disabled={!query.trim() || searching}>
+        <Button onClick={() => void handleSubmit()} disabled={!query.trim() || searching}>
           {searching ? <Loader2 className="size-4 animate-spin" /> : "검색"}
         </Button>
       </div>
@@ -98,7 +91,7 @@ export function TickerSearch({ onSearch }: TickerSearchProps) {
             key={item.ticker}
             variant="outline"
             className="cursor-pointer hover:bg-accent"
-            onClick={() => handleSubmit(item.ticker, item.market)}
+            onClick={() => void handleSubmit(item.ticker, item.market)}
           >
             {item.name} ({item.ticker})
           </Badge>
