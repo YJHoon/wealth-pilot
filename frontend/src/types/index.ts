@@ -280,6 +280,600 @@ function isAssetType(key: string): key is AssetType {
 
 const DEFAULT_TYPE_ENTRY = { valueKrw: 0, ratio: 0 } as const;
 
+// ── Phase 3: 종목 분석 Enums ──
+
+export type ValuationSignal = "undervalued" | "fair" | "overvalued";
+export type TradingSignalAction = "buy" | "sell" | "hold";
+export type MarketType = "KRX" | "NASDAQ" | "NYSE" | "CRYPTO";
+export type RiskLevel = "상" | "중" | "하";
+export type SimulationType = "dca" | "portfolio" | "scenario";
+
+// ── Phase 3: 기본적 분석 (Fundamental) ──
+
+export interface FundamentalAnalysisApi {
+  ticker: string;
+  market: string;
+  company_name: string | null;
+  sector: string | null;
+  per: number | null;
+  pbr: number | null;
+  roe: number | null;
+  eps: number | null;
+  sector_avg_per: number | null;
+  sector_avg_pbr: number | null;
+  per_based_fair_value: number | null;
+  current_price: number | null;
+  price_gap_pct: number | null;
+  valuation_signal: ValuationSignal | null;
+  data_source: string | null;
+  updated_at: string | null;
+  disclaimer: string;
+}
+
+export interface FundamentalAnalysis {
+  ticker: string;
+  market: string;
+  companyName: string | null;
+  sector: string | null;
+  per: number | null;
+  pbr: number | null;
+  roe: number | null;
+  eps: number | null;
+  sectorAvgPer: number | null;
+  sectorAvgPbr: number | null;
+  perBasedFairValue: number | null;
+  currentPrice: number | null;
+  priceGapPct: number | null;
+  valuationSignal: ValuationSignal | null;
+  dataSource: string | null;
+  updatedAt: string | null;
+  disclaimer: string;
+}
+
+export function toFundamentalAnalysis(api: FundamentalAnalysisApi): FundamentalAnalysis {
+  return {
+    ticker: api.ticker,
+    market: api.market,
+    companyName: api.company_name,
+    sector: api.sector,
+    per: api.per,
+    pbr: api.pbr,
+    roe: api.roe,
+    eps: api.eps,
+    sectorAvgPer: api.sector_avg_per,
+    sectorAvgPbr: api.sector_avg_pbr,
+    perBasedFairValue: api.per_based_fair_value,
+    currentPrice: api.current_price,
+    priceGapPct: api.price_gap_pct,
+    valuationSignal: api.valuation_signal,
+    dataSource: api.data_source,
+    updatedAt: api.updated_at,
+    disclaimer: api.disclaimer,
+  };
+}
+
+// ── Phase 3: 기술적 분석 (Technical) ──
+
+export interface TechnicalAnalysisApi {
+  ticker: string;
+  market: string;
+  rsi: number | null;
+  macd: number | null;
+  macd_signal: number | null;
+  macd_histogram: number | null;
+  bollinger_upper: number | null;
+  bollinger_middle: number | null;
+  bollinger_lower: number | null;
+  sma_5: number | null;
+  sma_20: number | null;
+  sma_60: number | null;
+  sma_120: number | null;
+  support_level: number | null;
+  resistance_level: number | null;
+  current_price: number | null;
+  data_source: string | null;
+  updated_at: string | null;
+  disclaimer: string;
+}
+
+export interface TechnicalAnalysis {
+  ticker: string;
+  market: string;
+  rsi: number | null;
+  macd: number | null;
+  macdSignal: number | null;
+  macdHistogram: number | null;
+  bollingerUpper: number | null;
+  bollingerMiddle: number | null;
+  bollingerLower: number | null;
+  sma5: number | null;
+  sma20: number | null;
+  sma60: number | null;
+  sma120: number | null;
+  supportLevel: number | null;
+  resistanceLevel: number | null;
+  currentPrice: number | null;
+  dataSource: string | null;
+  updatedAt: string | null;
+  disclaimer: string;
+}
+
+export function toTechnicalAnalysis(api: TechnicalAnalysisApi): TechnicalAnalysis {
+  return {
+    ticker: api.ticker,
+    market: api.market,
+    rsi: api.rsi,
+    macd: api.macd,
+    macdSignal: api.macd_signal,
+    macdHistogram: api.macd_histogram,
+    bollingerUpper: api.bollinger_upper,
+    bollingerMiddle: api.bollinger_middle,
+    bollingerLower: api.bollinger_lower,
+    sma5: api.sma_5,
+    sma20: api.sma_20,
+    sma60: api.sma_60,
+    sma120: api.sma_120,
+    supportLevel: api.support_level,
+    resistanceLevel: api.resistance_level,
+    currentPrice: api.current_price,
+    dataSource: api.data_source,
+    updatedAt: api.updated_at,
+    disclaimer: api.disclaimer,
+  };
+}
+
+// ── Phase 3: 매매 시그널 ──
+
+export interface TradingSignalsApi {
+  ticker: string;
+  market: string;
+  action: TradingSignalAction;
+  confidence: number;
+  risk_level: RiskLevel;
+  reasons: string[];
+  fundamental_score: number | null;
+  technical_score: number | null;
+  current_price: number | null;
+  data_source: string | null;
+  updated_at: string | null;
+  disclaimer: string;
+}
+
+export interface TradingSignals {
+  ticker: string;
+  market: string;
+  action: TradingSignalAction;
+  confidence: number;
+  riskLevel: RiskLevel;
+  reasons: string[];
+  fundamentalScore: number | null;
+  technicalScore: number | null;
+  currentPrice: number | null;
+  dataSource: string | null;
+  updatedAt: string | null;
+  disclaimer: string;
+}
+
+export function toTradingSignals(api: TradingSignalsApi): TradingSignals {
+  return {
+    ticker: api.ticker,
+    market: api.market,
+    action: api.action,
+    confidence: api.confidence,
+    riskLevel: api.risk_level,
+    reasons: api.reasons,
+    fundamentalScore: api.fundamental_score,
+    technicalScore: api.technical_score,
+    currentPrice: api.current_price,
+    dataSource: api.data_source,
+    updatedAt: api.updated_at,
+    disclaimer: api.disclaimer,
+  };
+}
+
+// ── Phase 3: 관심종목 (Watchlist) ──
+
+export interface WatchlistItemApi {
+  id: string;
+  ticker: string;
+  market: string;
+  target_buy_price: number | null;
+  target_sell_price: number | null;
+  alert_threshold_pct: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WatchlistItem {
+  id: string;
+  ticker: string;
+  market: string;
+  targetBuyPrice: number | null;
+  targetSellPrice: number | null;
+  alertThresholdPct: number | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function toWatchlistItem(api: WatchlistItemApi): WatchlistItem {
+  return {
+    id: api.id,
+    ticker: api.ticker,
+    market: api.market,
+    targetBuyPrice: api.target_buy_price,
+    targetSellPrice: api.target_sell_price,
+    alertThresholdPct: api.alert_threshold_pct,
+    notes: api.notes,
+    createdAt: api.created_at,
+    updatedAt: api.updated_at,
+  };
+}
+
+// 프론트엔드 camelCase 요청 타입
+export interface WatchlistCreateRequest {
+  ticker: string;
+  market: MarketType;
+  targetBuyPrice?: number | null;
+  targetSellPrice?: number | null;
+  alertThresholdPct?: number | null;
+  notes?: string | null;
+}
+
+export interface WatchlistUpdateRequest {
+  targetBuyPrice?: number | null;
+  targetSellPrice?: number | null;
+  alertThresholdPct?: number | null;
+  notes?: string | null;
+}
+
+// 백엔드 snake_case API 타입
+export interface WatchlistCreateRequestApi {
+  ticker: string;
+  market: MarketType;
+  target_buy_price?: number | null;
+  target_sell_price?: number | null;
+  alert_threshold_pct?: number | null;
+  notes?: string | null;
+}
+
+export interface WatchlistUpdateRequestApi {
+  target_buy_price?: number | null;
+  target_sell_price?: number | null;
+  alert_threshold_pct?: number | null;
+  notes?: string | null;
+}
+
+export function toWatchlistCreateRequestApi(req: WatchlistCreateRequest): WatchlistCreateRequestApi {
+  return {
+    ticker: req.ticker,
+    market: req.market,
+    target_buy_price: req.targetBuyPrice,
+    target_sell_price: req.targetSellPrice,
+    alert_threshold_pct: req.alertThresholdPct,
+    notes: req.notes,
+  };
+}
+
+export function toWatchlistUpdateRequestApi(req: WatchlistUpdateRequest): WatchlistUpdateRequestApi {
+  return {
+    target_buy_price: req.targetBuyPrice,
+    target_sell_price: req.targetSellPrice,
+    alert_threshold_pct: req.alertThresholdPct,
+    notes: req.notes,
+  };
+}
+
+// ── Phase 3: 시뮬레이션 ──
+
+// 프론트엔드 camelCase 타입
+export interface DcaSimulationParams {
+  type: "dca";
+  ticker: string;
+  market: MarketType;
+  monthlyAmount: number;
+  months: number;
+}
+
+export interface PortfolioSimulationParams {
+  type: "portfolio";
+  tickers: string[];
+  weights: number[];
+  initialAmount: number;
+  months: number;
+  rebalanceIntervalMonths?: number;
+}
+
+export interface ScenarioSimulationParams {
+  type: "scenario";
+  ticker: string;
+  market: MarketType;
+  entryPrice: number;
+  quantity: number;
+  targetPrice: number;
+  stopLossPrice: number;
+}
+
+export type SimulationParams =
+  | DcaSimulationParams
+  | PortfolioSimulationParams
+  | ScenarioSimulationParams;
+
+// 백엔드 snake_case API 타입
+export interface DcaSimulationParamsApi {
+  type: "dca";
+  ticker: string;
+  market: MarketType;
+  monthly_amount: number;
+  months: number;
+}
+
+export interface PortfolioSimulationParamsApi {
+  type: "portfolio";
+  tickers: string[];
+  weights: number[];
+  initial_amount: number;
+  months: number;
+  rebalance_interval_months?: number;
+}
+
+export interface ScenarioSimulationParamsApi {
+  type: "scenario";
+  ticker: string;
+  market: MarketType;
+  entry_price: number;
+  quantity: number;
+  target_price: number;
+  stop_loss_price: number;
+}
+
+export type SimulationParamsApi =
+  | DcaSimulationParamsApi
+  | PortfolioSimulationParamsApi
+  | ScenarioSimulationParamsApi;
+
+export interface SimulationRequestApi {
+  params: SimulationParamsApi;
+}
+
+export function toSimulationParamsApi(params: SimulationParams): SimulationParamsApi {
+  switch (params.type) {
+    case "dca":
+      return {
+        type: "dca",
+        ticker: params.ticker,
+        market: params.market,
+        monthly_amount: params.monthlyAmount,
+        months: params.months,
+      };
+    case "portfolio":
+      return {
+        type: "portfolio",
+        tickers: params.tickers,
+        weights: params.weights,
+        initial_amount: params.initialAmount,
+        months: params.months,
+        rebalance_interval_months: params.rebalanceIntervalMonths,
+      };
+    case "scenario":
+      return {
+        type: "scenario",
+        ticker: params.ticker,
+        market: params.market,
+        entry_price: params.entryPrice,
+        quantity: params.quantity,
+        target_price: params.targetPrice,
+        stop_loss_price: params.stopLossPrice,
+      };
+  }
+}
+
+function toSimulationParams(api: SimulationParamsApi): SimulationParams {
+  switch (api.type) {
+    case "dca":
+      return {
+        type: "dca",
+        ticker: api.ticker,
+        market: api.market,
+        monthlyAmount: api.monthly_amount,
+        months: api.months,
+      };
+    case "portfolio":
+      return {
+        type: "portfolio",
+        tickers: api.tickers,
+        weights: api.weights,
+        initialAmount: api.initial_amount,
+        months: api.months,
+        rebalanceIntervalMonths: api.rebalance_interval_months,
+      };
+    case "scenario":
+      return {
+        type: "scenario",
+        ticker: api.ticker,
+        market: api.market,
+        entryPrice: api.entry_price,
+        quantity: api.quantity,
+        targetPrice: api.target_price,
+        stopLossPrice: api.stop_loss_price,
+      };
+  }
+}
+
+// Simulation Results (API snake_case)
+
+export interface MonthlyBreakdownItemApi {
+  month: number;
+  invested: number;
+  cumulative_invested: number;
+  shares_bought: number;
+  cumulative_shares: number;
+  price: number;
+  portfolio_value: number;
+}
+
+export interface DcaSimulationResultApi {
+  total_invested: number;
+  final_value: number;
+  return_rate: number;
+  monthly_breakdown: MonthlyBreakdownItemApi[];
+}
+
+export interface RebalanceEventApi {
+  month: number;
+  pre_rebalance_value: number;
+  post_rebalance_value: number;
+  allocations: Record<string, number>;
+}
+
+export interface PortfolioSimulationResultApi {
+  total_invested: number;
+  final_value: number;
+  return_rate: number;
+  rebalance_events: RebalanceEventApi[];
+}
+
+export interface ScenarioSimulationResultApi {
+  potential_profit: number;
+  potential_loss: number;
+  risk_reward_ratio: number;
+  profit_pct: number;
+  loss_pct: number;
+}
+
+export type SimulationResultApi =
+  | DcaSimulationResultApi
+  | PortfolioSimulationResultApi
+  | ScenarioSimulationResultApi;
+
+export interface SimulationResponseApi {
+  id: string;
+  type: SimulationType;
+  params: SimulationParamsApi;
+  result: SimulationResultApi;
+  created_at: string;
+  expires_at: string;
+}
+
+// Simulation Results (camelCase)
+
+export interface MonthlyBreakdownItem {
+  month: number;
+  invested: number;
+  cumulativeInvested: number;
+  sharesBought: number;
+  cumulativeShares: number;
+  price: number;
+  portfolioValue: number;
+}
+
+export interface DcaSimulationResult {
+  totalInvested: number;
+  finalValue: number;
+  returnRate: number;
+  monthlyBreakdown: MonthlyBreakdownItem[];
+}
+
+export interface RebalanceEvent {
+  month: number;
+  preRebalanceValue: number;
+  postRebalanceValue: number;
+  allocations: Record<string, number>;
+}
+
+export interface PortfolioSimulationResult {
+  totalInvested: number;
+  finalValue: number;
+  returnRate: number;
+  rebalanceEvents: RebalanceEvent[];
+}
+
+export interface ScenarioSimulationResult {
+  potentialProfit: number;
+  potentialLoss: number;
+  riskRewardRatio: number;
+  profitPct: number;
+  lossPct: number;
+}
+
+export type SimulationResult =
+  | DcaSimulationResult
+  | PortfolioSimulationResult
+  | ScenarioSimulationResult;
+
+export interface SimulationResponse {
+  id: string;
+  type: SimulationType;
+  params: SimulationParams;
+  result: SimulationResult;
+  createdAt: string;
+  expiresAt: string;
+}
+
+function toDcaResult(api: DcaSimulationResultApi): DcaSimulationResult {
+  return {
+    totalInvested: api.total_invested,
+    finalValue: api.final_value,
+    returnRate: api.return_rate,
+    monthlyBreakdown: api.monthly_breakdown.map((item) => ({
+      month: item.month,
+      invested: item.invested,
+      cumulativeInvested: item.cumulative_invested,
+      sharesBought: item.shares_bought,
+      cumulativeShares: item.cumulative_shares,
+      price: item.price,
+      portfolioValue: item.portfolio_value,
+    })),
+  };
+}
+
+function toPortfolioResult(api: PortfolioSimulationResultApi): PortfolioSimulationResult {
+  return {
+    totalInvested: api.total_invested,
+    finalValue: api.final_value,
+    returnRate: api.return_rate,
+    rebalanceEvents: api.rebalance_events.map((event) => ({
+      month: event.month,
+      preRebalanceValue: event.pre_rebalance_value,
+      postRebalanceValue: event.post_rebalance_value,
+      allocations: event.allocations,
+    })),
+  };
+}
+
+function toScenarioResult(api: ScenarioSimulationResultApi): ScenarioSimulationResult {
+  return {
+    potentialProfit: api.potential_profit,
+    potentialLoss: api.potential_loss,
+    riskRewardRatio: api.risk_reward_ratio,
+    profitPct: api.profit_pct,
+    lossPct: api.loss_pct,
+  };
+}
+
+export function toSimulationResponse(api: SimulationResponseApi): SimulationResponse {
+  let result: SimulationResult;
+  if (api.type === "dca") {
+    result = toDcaResult(api.result as DcaSimulationResultApi);
+  } else if (api.type === "portfolio") {
+    result = toPortfolioResult(api.result as PortfolioSimulationResultApi);
+  } else {
+    result = toScenarioResult(api.result as ScenarioSimulationResultApi);
+  }
+
+  return {
+    id: api.id,
+    type: api.type,
+    params: toSimulationParams(api.params),
+    result,
+    createdAt: api.created_at,
+    expiresAt: api.expires_at,
+  };
+}
+
+// ── 대시보드 변환 ──
+
 export function toDashboardSummary(api: DashboardSummaryApi): DashboardSummary {
   const byType: DashboardSummary["byType"] = Object.fromEntries(
     ASSET_TYPE_VALUES.map((t) => [t, { ...DEFAULT_TYPE_ENTRY }]),
