@@ -9,7 +9,7 @@ import { FundamentalCard } from "@/components/analysis/FundamentalCard";
 import { TechnicalChart } from "@/components/analysis/TechnicalChart";
 import { SignalCard } from "@/components/analysis/SignalCard";
 import { ValuationGauge } from "@/components/analysis/ValuationGauge";
-import type { MarketType } from "@/types";
+import { MARKETS, type MarketType } from "@/types";
 import { ArrowLeft, Loader2, RefreshCw } from "lucide-react";
 import Link from "next/link";
 
@@ -17,10 +17,12 @@ export default function TickerDetailPage() {
   const params = useParams();
   const searchParams = useSearchParams();
 
-  const ticker = decodeURIComponent(params.ticker as string);
-  const VALID_MARKETS: MarketType[] = ["KRX", "NASDAQ", "NYSE", "CRYPTO"];
+  const rawTicker = params.ticker;
+  const ticker = decodeURIComponent(
+    Array.isArray(rawTicker) ? rawTicker[0] : rawTicker ?? "",
+  );
   const rawMarket = searchParams.get("market");
-  const market: MarketType = VALID_MARKETS.includes(rawMarket as MarketType)
+  const market: MarketType = MARKETS.includes(rawMarket as MarketType)
     ? (rawMarket as MarketType)
     : "KRX";
 
