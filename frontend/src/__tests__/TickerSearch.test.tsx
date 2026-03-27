@@ -75,25 +75,27 @@ describe("TickerSearch", () => {
 
   it("async onSearch가 완료될 때까지 searching 상태가 유지된다", async () => {
     const user = userEvent.setup();
-    let resolveSearch: () => void;
+    let resolveSearch: (() => void) | undefined;
     const mockOnSearch = jest.fn(
       () => new Promise<void>((resolve) => { resolveSearch = resolve; }),
     );
     render(<TickerSearch onSearch={mockOnSearch} />);
 
     const input = screen.getByPlaceholderText(/종목코드 또는 티커 입력/);
+    const button = screen.getByRole("button", { name: "검색" });
     await user.type(input, "AAPL");
-    await user.click(screen.getByRole("button", { name: "검색" }));
+    await user.click(button);
 
     // 검색 중에는 버튼이 비활성화 (로딩 스피너 표시)
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "" })).toBeDisabled();
+      expect(button).toBeDisabled();
     });
 
     // resolve 후 버튼 다시 활성화
-    resolveSearch!();
+    if (!resolveSearch) throw new Error("resolveSearch was not assigned by mockOnSearch");
+    resolveSearch();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "검색" })).not.toBeDisabled();
+      expect(button).not.toBeDisabled();
     });
   });
 
