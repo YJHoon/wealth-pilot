@@ -24,7 +24,7 @@ export default function TickerDetailPage() {
   const rawMarket = searchParams.get("market");
   const market: MarketType = MARKETS.includes(rawMarket as MarketType)
     ? (rawMarket as MarketType)
-    : "KRX";
+    : MARKETS[0];
 
   const { fundamental, technical, signals, loading, error, refetch } =
     useStockAnalysis({ ticker, market });

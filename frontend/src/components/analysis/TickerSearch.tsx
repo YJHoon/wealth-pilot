@@ -29,7 +29,7 @@ const POPULAR_TICKERS = [
 export function TickerSearch({ onSearch }: TickerSearchProps) {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [market, setMarket] = useState<MarketType>("KRX");
+  const [market, setMarket] = useState<MarketType>(MARKETS[0]);
   const [searching, setSearching] = useState(false);
 
   const handleSubmit = useCallback(
