@@ -511,7 +511,25 @@ export function toWatchlistItem(api: WatchlistItemApi): WatchlistItem {
   };
 }
 
+// 프론트엔드 camelCase 요청 타입
 export interface WatchlistCreateRequest {
+  ticker: string;
+  market: MarketType;
+  targetBuyPrice?: number | null;
+  targetSellPrice?: number | null;
+  alertThresholdPct?: number | null;
+  notes?: string | null;
+}
+
+export interface WatchlistUpdateRequest {
+  targetBuyPrice?: number | null;
+  targetSellPrice?: number | null;
+  alertThresholdPct?: number | null;
+  notes?: string | null;
+}
+
+// 백엔드 snake_case API 타입
+export interface WatchlistCreateRequestApi {
   ticker: string;
   market: MarketType;
   target_buy_price?: number | null;
@@ -520,16 +538,70 @@ export interface WatchlistCreateRequest {
   notes?: string | null;
 }
 
-export interface WatchlistUpdateRequest {
+export interface WatchlistUpdateRequestApi {
   target_buy_price?: number | null;
   target_sell_price?: number | null;
   alert_threshold_pct?: number | null;
   notes?: string | null;
 }
 
+export function toWatchlistCreateRequestApi(req: WatchlistCreateRequest): WatchlistCreateRequestApi {
+  return {
+    ticker: req.ticker,
+    market: req.market,
+    target_buy_price: req.targetBuyPrice,
+    target_sell_price: req.targetSellPrice,
+    alert_threshold_pct: req.alertThresholdPct,
+    notes: req.notes,
+  };
+}
+
+export function toWatchlistUpdateRequestApi(req: WatchlistUpdateRequest): WatchlistUpdateRequestApi {
+  return {
+    target_buy_price: req.targetBuyPrice,
+    target_sell_price: req.targetSellPrice,
+    alert_threshold_pct: req.alertThresholdPct,
+    notes: req.notes,
+  };
+}
+
 // ── Phase 3: 시뮬레이션 ──
 
+// 프론트엔드 camelCase 타입
 export interface DcaSimulationParams {
+  type: "dca";
+  ticker: string;
+  market: MarketType;
+  monthlyAmount: number;
+  months: number;
+}
+
+export interface PortfolioSimulationParams {
+  type: "portfolio";
+  tickers: string[];
+  weights: number[];
+  initialAmount: number;
+  months: number;
+  rebalanceIntervalMonths?: number;
+}
+
+export interface ScenarioSimulationParams {
+  type: "scenario";
+  ticker: string;
+  market: MarketType;
+  entryPrice: number;
+  quantity: number;
+  targetPrice: number;
+  stopLossPrice: number;
+}
+
+export type SimulationParams =
+  | DcaSimulationParams
+  | PortfolioSimulationParams
+  | ScenarioSimulationParams;
+
+// 백엔드 snake_case API 타입
+export interface DcaSimulationParamsApi {
   type: "dca";
   ticker: string;
   market: MarketType;
@@ -537,7 +609,7 @@ export interface DcaSimulationParams {
   months: number;
 }
 
-export interface PortfolioSimulationParams {
+export interface PortfolioSimulationParamsApi {
   type: "portfolio";
   tickers: string[];
   weights: number[];
@@ -546,7 +618,7 @@ export interface PortfolioSimulationParams {
   rebalance_interval_months?: number;
 }
 
-export interface ScenarioSimulationParams {
+export interface ScenarioSimulationParamsApi {
   type: "scenario";
   ticker: string;
   market: MarketType;
@@ -556,13 +628,77 @@ export interface ScenarioSimulationParams {
   stop_loss_price: number;
 }
 
-export type SimulationParams =
-  | DcaSimulationParams
-  | PortfolioSimulationParams
-  | ScenarioSimulationParams;
+export type SimulationParamsApi =
+  | DcaSimulationParamsApi
+  | PortfolioSimulationParamsApi
+  | ScenarioSimulationParamsApi;
 
-export interface SimulationRequest {
-  params: SimulationParams;
+export interface SimulationRequestApi {
+  params: SimulationParamsApi;
+}
+
+export function toSimulationParamsApi(params: SimulationParams): SimulationParamsApi {
+  switch (params.type) {
+    case "dca":
+      return {
+        type: "dca",
+        ticker: params.ticker,
+        market: params.market,
+        monthly_amount: params.monthlyAmount,
+        months: params.months,
+      };
+    case "portfolio":
+      return {
+        type: "portfolio",
+        tickers: params.tickers,
+        weights: params.weights,
+        initial_amount: params.initialAmount,
+        months: params.months,
+        rebalance_interval_months: params.rebalanceIntervalMonths,
+      };
+    case "scenario":
+      return {
+        type: "scenario",
+        ticker: params.ticker,
+        market: params.market,
+        entry_price: params.entryPrice,
+        quantity: params.quantity,
+        target_price: params.targetPrice,
+        stop_loss_price: params.stopLossPrice,
+      };
+  }
+}
+
+function toSimulationParams(api: SimulationParamsApi): SimulationParams {
+  switch (api.type) {
+    case "dca":
+      return {
+        type: "dca",
+        ticker: api.ticker,
+        market: api.market,
+        monthlyAmount: api.monthly_amount,
+        months: api.months,
+      };
+    case "portfolio":
+      return {
+        type: "portfolio",
+        tickers: api.tickers,
+        weights: api.weights,
+        initialAmount: api.initial_amount,
+        months: api.months,
+        rebalanceIntervalMonths: api.rebalance_interval_months,
+      };
+    case "scenario":
+      return {
+        type: "scenario",
+        ticker: api.ticker,
+        market: api.market,
+        entryPrice: api.entry_price,
+        quantity: api.quantity,
+        targetPrice: api.target_price,
+        stopLossPrice: api.stop_loss_price,
+      };
+  }
 }
 
 // Simulation Results (API snake_case)
@@ -614,7 +750,7 @@ export type SimulationResultApi =
 export interface SimulationResponseApi {
   id: string;
   type: SimulationType;
-  params: SimulationParams;
+  params: SimulationParamsApi;
   result: SimulationResultApi;
   created_at: string;
   expires_at: string;
@@ -729,7 +865,7 @@ export function toSimulationResponse(api: SimulationResponseApi): SimulationResp
   return {
     id: api.id,
     type: api.type,
-    params: api.params,
+    params: toSimulationParams(api.params),
     result,
     createdAt: api.created_at,
     expiresAt: api.expires_at,

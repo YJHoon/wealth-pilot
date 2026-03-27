@@ -13,6 +13,8 @@ import {
   WatchlistCreateRequest,
   WatchlistUpdateRequest,
   toWatchlistItem,
+  toWatchlistCreateRequestApi,
+  toWatchlistUpdateRequestApi,
 } from "@/types";
 
 const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
@@ -68,13 +70,24 @@ export function useWatchlist(): UseWatchlistReturn {
   const addItem = useCallback(
     async (data: WatchlistCreateRequest): Promise<WatchlistItem> => {
       if (!canFetch) throw new Error("인증이 필요합니다.");
-      const res = await apiFetch<WatchlistItemApi>("/api/analysis/watchlist", {
-        method: "POST",
-        body: JSON.stringify(data),
-        ...(accessToken && { accessToken }),
-      });
-      await fetchItems().catch(() => {});
-      return toWatchlistItem(res);
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await apiFetch<WatchlistItemApi>("/api/analysis/watchlist", {
+          method: "POST",
+          body: JSON.stringify(toWatchlistCreateRequestApi(data)),
+          ...(accessToken && { accessToken }),
+        });
+        await fetchItems().catch(() => {});
+        return toWatchlistItem(res);
+      } catch (err) {
+        const message =
+          err instanceof ApiError ? err.message : "관심종목 추가에 실패했습니다.";
+        setError(message);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
     },
     [canFetch, accessToken, fetchItems],
   );
@@ -82,13 +95,24 @@ export function useWatchlist(): UseWatchlistReturn {
   const updateItem = useCallback(
     async (id: string, data: WatchlistUpdateRequest): Promise<WatchlistItem> => {
       if (!canFetch) throw new Error("인증이 필요합니다.");
-      const res = await apiFetch<WatchlistItemApi>(`/api/analysis/watchlist/${id}`, {
-        method: "PUT",
-        body: JSON.stringify(data),
-        ...(accessToken && { accessToken }),
-      });
-      await fetchItems().catch(() => {});
-      return toWatchlistItem(res);
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await apiFetch<WatchlistItemApi>(`/api/analysis/watchlist/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(toWatchlistUpdateRequestApi(data)),
+          ...(accessToken && { accessToken }),
+        });
+        await fetchItems().catch(() => {});
+        return toWatchlistItem(res);
+      } catch (err) {
+        const message =
+          err instanceof ApiError ? err.message : "관심종목 수정에 실패했습니다.";
+        setError(message);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
     },
     [canFetch, accessToken, fetchItems],
   );
@@ -96,11 +120,22 @@ export function useWatchlist(): UseWatchlistReturn {
   const removeItem = useCallback(
     async (id: string): Promise<void> => {
       if (!canFetch) throw new Error("인증이 필요합니다.");
-      await apiFetch<void>(`/api/analysis/watchlist/${id}`, {
-        method: "DELETE",
-        ...(accessToken && { accessToken }),
-      });
-      await fetchItems().catch(() => {});
+      setLoading(true);
+      setError(null);
+      try {
+        await apiFetch<void>(`/api/analysis/watchlist/${id}`, {
+          method: "DELETE",
+          ...(accessToken && { accessToken }),
+        });
+        await fetchItems().catch(() => {});
+      } catch (err) {
+        const message =
+          err instanceof ApiError ? err.message : "관심종목 삭제에 실패했습니다.";
+        setError(message);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
     },
     [canFetch, accessToken, fetchItems],
   );

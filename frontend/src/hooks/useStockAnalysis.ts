@@ -54,6 +54,11 @@ export function useStockAnalysis({
 
   const fetchAnalysis = useCallback(async () => {
     if (!canFetch || !enabled || !ticker) {
+      setFundamental(null);
+      setTechnical(null);
+      setSignals(null);
+      setError(null);
+      setLoading(false);
       return;
     }
 
