@@ -90,24 +90,37 @@ export function PortfolioSimulator() {
           <div className="space-y-2">
             <Label>종목 배분</Label>
             {fields.map((field, index) => (
-              <div key={field.id} className="flex items-center gap-2">
-                <Input
-                  placeholder="종목코드"
-                  className="flex-1"
-                  {...register(`assets.${index}.ticker`)}
-                />
-                <div className="flex items-center gap-1">
+              <div key={field.id} className="space-y-1">
+                <div className="flex items-center gap-2">
                   <Input
-                    type="number"
-                    className="w-20"
-                    {...register(`assets.${index}.weight`, { setValueAs: toNumber })}
+                    placeholder="종목코드"
+                    className="flex-1"
+                    {...register(`assets.${index}.ticker`)}
                   />
-                  <span className="text-sm text-muted-foreground">%</span>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      className="w-20"
+                      {...register(`assets.${index}.weight`, { setValueAs: toNumber })}
+                    />
+                    <span className="text-sm text-muted-foreground">%</span>
+                  </div>
+                  {fields.length > 2 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`종목 ${index + 1} 삭제`}
+                      onClick={() => remove(index)}
+                    >
+                      <Trash2 className="size-3.5 text-destructive" />
+                    </Button>
+                  )}
                 </div>
-                {fields.length > 2 && (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => remove(index)}>
-                    <Trash2 className="size-3.5 text-destructive" />
-                  </Button>
+                {(errors.assets?.[index]?.ticker || errors.assets?.[index]?.weight) && (
+                  <p className="text-xs text-destructive">
+                    {errors.assets?.[index]?.ticker?.message || errors.assets?.[index]?.weight?.message}
+                  </p>
                 )}
               </div>
             ))}
@@ -148,6 +161,9 @@ export function PortfolioSimulator() {
                 type="number"
                 {...register("months", { setValueAs: toNumber })}
               />
+              {errors.months && (
+                <p className="text-xs text-destructive">{errors.months.message}</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="pf-rebalance">리밸런싱 주기(월)</Label>
@@ -156,6 +172,9 @@ export function PortfolioSimulator() {
                 type="number"
                 {...register("rebalanceIntervalMonths", { setValueAs: toNumber })}
               />
+              {errors.rebalanceIntervalMonths && (
+                <p className="text-xs text-destructive">{errors.rebalanceIntervalMonths.message}</p>
+              )}
             </div>
           </div>
 

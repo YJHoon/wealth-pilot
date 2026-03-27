@@ -26,7 +26,7 @@ import { MARKETS, type MarketType, type WatchlistItem } from "@/types";
 import { toNumber } from "@/lib/form-utils";
 
 const watchlistSchema = z.object({
-  ticker: z.string().min(1, "종목코드를 입력해주세요").max(20),
+  ticker: z.string().trim().min(1, "종목코드를 입력해주세요").max(20),
   market: z.enum(MARKETS),
   targetBuyPrice: z.number().positive().optional(),
   targetSellPrice: z.number().positive().optional(),
@@ -155,6 +155,9 @@ export function WatchlistAddDialog({
                 placeholder="선택사항"
                 {...register("targetBuyPrice", { setValueAs: toNumber })}
               />
+              {errors.targetBuyPrice && (
+                <p className="text-xs text-destructive">{errors.targetBuyPrice.message}</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="targetSellPrice">목표 매도가</Label>
@@ -165,6 +168,9 @@ export function WatchlistAddDialog({
                 placeholder="선택사항"
                 {...register("targetSellPrice", { setValueAs: toNumber })}
               />
+              {errors.targetSellPrice && (
+                <p className="text-xs text-destructive">{errors.targetSellPrice.message}</p>
+              )}
             </div>
           </div>
 
@@ -178,6 +184,9 @@ export function WatchlistAddDialog({
               placeholder="예: 5 (±5% 변동 시 알림)"
               {...register("alertThresholdPct", { setValueAs: toNumber })}
             />
+            {errors.alertThresholdPct && (
+              <p className="text-xs text-destructive">{errors.alertThresholdPct.message}</p>
+            )}
           </div>
 
           {/* 메모 */}
@@ -189,6 +198,9 @@ export function WatchlistAddDialog({
               rows={3}
               {...register("notes")}
             />
+            {errors.notes && (
+              <p className="text-xs text-destructive">{errors.notes.message}</p>
+            )}
           </div>
 
           <DialogFooter>

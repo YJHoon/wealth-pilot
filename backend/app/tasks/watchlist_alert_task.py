@@ -128,3 +128,8 @@ async def _check_single_item(price_service: PriceService, item: Watchlist) -> No
                     item.alerted_threshold = True
             else:
                 item.alerted_threshold = False
+        else:
+            # 기준가 없음 (목표 매수/매도가 모두 미설정) — 플래그 리셋
+            item.alerted_threshold = False
+    else:
+        item.alerted_threshold = False

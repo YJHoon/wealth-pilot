@@ -35,6 +35,7 @@ export default function WatchlistPage() {
   const [editingItem, setEditingItem] = useState<WatchlistItem | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingDeleteItem, setPendingDeleteItem] = useState<WatchlistItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleAddClick = useCallback(() => {
     setEditingItem(null);
@@ -52,13 +53,15 @@ export default function WatchlistPage() {
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!pendingDeleteItem) return;
+    setIsDeleting(true);
     try {
       await removeItem(pendingDeleteItem.id);
       toast.success("관심종목이 삭제되었습니다.");
+      setPendingDeleteItem(null);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "삭제에 실패했습니다.");
     } finally {
-      setPendingDeleteItem(null);
+      setIsDeleting(false);
     }
   }, [pendingDeleteItem, removeItem]);
 
@@ -157,7 +160,7 @@ export default function WatchlistPage() {
 
       <AlertDialog
         open={!!pendingDeleteItem}
-        onOpenChange={(open) => { if (!open) setPendingDeleteItem(null); }}
+        onOpenChange={(open) => { if (!open && !isDeleting) setPendingDeleteItem(null); }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -167,9 +170,12 @@ export default function WatchlistPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void handleDeleteConfirm()}>
-              삭제
+            <AlertDialogCancel disabled={isDeleting}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleDeleteConfirm()}
+              disabled={isDeleting}
+            >
+              {isDeleting ? "삭제 중..." : "삭제"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
