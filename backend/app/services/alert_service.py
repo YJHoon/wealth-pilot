@@ -28,16 +28,24 @@ TRADING_ALERT_TEMPLATES = {
     "cycle_error": "❌ [매매 사이클 오류] {error}",
 }
 
+# 관심종목 알림
+WATCHLIST_ALERT_TEMPLATES = {
+    "target_buy_reached": "📉 [목표 매수가 도달] {ticker}({market}) 현재가 {current_price}원 ≤ 목표 {target_price}원",
+    "target_sell_reached": "📈 [목표 매도가 도달] {ticker}({market}) 현재가 {current_price}원 ≥ 목표 {target_price}원",
+    "threshold_exceeded": "⚡ [변동률 초과] {ticker}({market}) 현재가 {current_price}원 (변동 {change_pct}% ≥ 기준 {threshold_pct}%)",
+}
 
-async def send_telegram_message(message: str) -> bool:
-    """텔레그램 메시지 전송. 토큰 미설정 시 skip."""
-    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+
+async def send_telegram_message(message: str, *, chat_id: str | None = None) -> bool:
+    """텔레그램 메시지 전송. chat_id 지정 시 해당 채팅으로, 미지정 시 시스템 chat_id 사용."""
+    resolved_chat_id = chat_id or settings.telegram_chat_id
+    if not settings.telegram_bot_token or not resolved_chat_id:
         logger.debug("Telegram credentials not configured, skipping alert")
         return False
 
     url = TELEGRAM_API_URL.format(token=settings.telegram_bot_token)
     payload = {
-        "chat_id": settings.telegram_chat_id,
+        "chat_id": resolved_chat_id,
         "text": message,
         "parse_mode": "HTML",
     }

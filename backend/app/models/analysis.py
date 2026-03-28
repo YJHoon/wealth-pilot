@@ -69,6 +69,17 @@ class Watchlist(Base):
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # 알림 상태 (edge-triggered: 조건 충족 시 1회만 전송, 해제 후 재진입 시 재전송)
+    alerted_target_buy: Mapped[bool] = mapped_column(
+        "alerted_target_buy", default=False, nullable=False, server_default="false"
+    )
+    alerted_target_sell: Mapped[bool] = mapped_column(
+        "alerted_target_sell", default=False, nullable=False, server_default="false"
+    )
+    alerted_threshold: Mapped[bool] = mapped_column(
+        "alerted_threshold", default=False, nullable=False, server_default="false"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
