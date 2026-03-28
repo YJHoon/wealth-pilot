@@ -62,7 +62,7 @@ def _make_mock_history_df(
 
     단순 상승 추세 데이터.
     """
-    dates = pd.date_range(end=datetime.now(), periods=length, freq="B")
+    dates = pd.date_range(end=datetime.now(), periods=length, freq="D")
     data = {
         "Open": [],
         "High": [],

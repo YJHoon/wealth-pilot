@@ -145,16 +145,18 @@ async def simulate(
     """시뮬레이션 실행 (DCA / 포트폴리오 / 시나리오)."""
     try:
         result = await run_simulation(db, user.id, body.params)
+        await db.commit()
     except SimulationError as e:
         await db.rollback()
         raise HTTPException(status_code=422, detail=str(e)) from None
 
     try:
         await log_access(db, user.id, AccessAction.SIMULATION_RUN, request)
+        await db.commit()
     except Exception:
+        await db.rollback()
         logger.warning("SIMULATION_RUN access logging failed", exc_info=True)
 
-    await db.commit()
     return result
 
 
@@ -195,15 +197,18 @@ async def add_watchlist(
     """관심종목 추가."""
     try:
         result = await create_watchlist(db, user.id, body)
+        await db.commit()
     except WatchlistDuplicateError as e:
+        await db.rollback()
         raise HTTPException(status_code=409, detail=str(e)) from None
 
     try:
         await log_access(db, user.id, AccessAction.WATCHLIST_CREATE, request)
+        await db.commit()
     except Exception:
+        await db.rollback()
         logger.warning("WATCHLIST_CREATE access logging failed", exc_info=True)
 
-    await db.commit()
     return result
 
 
@@ -218,15 +223,18 @@ async def modify_watchlist(
     """관심종목 수정."""
     try:
         result = await update_watchlist(db, user.id, watchlist_id, body)
+        await db.commit()
     except WatchlistNotFoundError as e:
+        await db.rollback()
         raise HTTPException(status_code=404, detail=str(e)) from None
 
     try:
         await log_access(db, user.id, AccessAction.WATCHLIST_UPDATE, request)
+        await db.commit()
     except Exception:
+        await db.rollback()
         logger.warning("WATCHLIST_UPDATE access logging failed", exc_info=True)
 
-    await db.commit()
     return result
 
 
@@ -243,12 +251,14 @@ async def remove_watchlist(
     """관심종목 삭제."""
     try:
         await delete_watchlist(db, user.id, watchlist_id)
+        await db.commit()
     except WatchlistNotFoundError as e:
+        await db.rollback()
         raise HTTPException(status_code=404, detail=str(e)) from None
 
     try:
         await log_access(db, user.id, AccessAction.WATCHLIST_DELETE, request)
+        await db.commit()
     except Exception:
+        await db.rollback()
         logger.warning("WATCHLIST_DELETE access logging failed", exc_info=True)
-
-    await db.commit()
