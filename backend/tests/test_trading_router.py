@@ -102,10 +102,22 @@ class TestAccountEndpoints:
     async def test_create_duplicate_mode_rejected(
         self, auth_client: AsyncClient, trading_account: TradingAccount,
     ):
-        resp = await auth_client.post(
-            "/api/trading/accounts",
-            json={"mode": "paper"},
-        )
+        mock_balance = {
+            "cash": Decimal("5000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                "/api/trading/accounts",
+                json={"mode": "paper"},
+            )
         assert resp.status_code == 409
 
     async def test_list_accounts(
