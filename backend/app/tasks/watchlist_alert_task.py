@@ -11,6 +11,7 @@ from decimal import Decimal
 from html import escape
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.database import AsyncSessionLocal
@@ -36,7 +37,7 @@ async def check_watchlist_alerts() -> None:
             logger.exception("Watchlist alert check failed")
 
 
-async def _run_alert_check(db) -> None:
+async def _run_alert_check(db: AsyncSession) -> None:
     """알림 조건 체크 핵심 로직."""
     result = await db.execute(
         select(Watchlist).options(joinedload(Watchlist.user))
@@ -112,7 +113,7 @@ async def _check_single_item(price_service: PriceService, item: Watchlist) -> No
 
     # 변동률 초과 알림 (기준가 = 목표 매수가 or 매도가 중 존재하는 값) — edge-triggered
     if threshold_pct is not None and threshold_pct > 0:
-        ref_price = target_buy or target_sell
+        ref_price = target_buy if target_buy is not None else target_sell
         if ref_price is not None and ref_price > 0:
             change_pct = abs(
                 (current_price - ref_price) / ref_price * Decimal("100")
