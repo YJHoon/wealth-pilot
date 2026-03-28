@@ -118,7 +118,9 @@ async def create_trading_account(
 
 
 @router.get("/accounts", response_model=list[TradingAccountResponse])
+@limiter.limit("100/minute")
 async def list_trading_accounts(
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -133,6 +135,7 @@ async def list_trading_accounts(
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("100/minute")
 async def deactivate_trading_account(
     account_id: UUID,
     request: Request,
@@ -154,11 +157,19 @@ async def deactivate_trading_account(
         strategy.is_scheduled = False
         trading_scheduler.remove_schedule(user.id, strategy.id)
 
-    await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_DELETE, request)
     await db.commit()
+
+    # 액세스 로그 (실패해도 비활성화는 보존)
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_DELETE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_DELETE access logging failed", exc_info=True)
 
 
 @router.get("/accounts/{account_id}/balance")
+@limiter.limit("100/minute")
 async def get_account_balance(
     account_id: UUID,
     request: Request,
@@ -167,9 +178,17 @@ async def get_account_balance(
 ):
     """KIS 실시간 잔고 조회."""
     account = await _get_user_account(db, account_id, user.id)
-    await log_access(db, user.id, AccessAction.TRADING_BALANCE_INQUIRY, request)
+    mode_value = account.mode.value
 
-    creds = settings.kis_credentials(account.mode.value)
+    # 액세스 로그 커밋 (KIS 호출 전에 DB 작업 완료)
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_BALANCE_INQUIRY, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_BALANCE_INQUIRY access logging failed", exc_info=True)
+
+    creds = settings.kis_credentials(mode_value)
     kis = KISClient(
         app_key=creds["app_key"],
         app_secret=creds["app_secret"],
