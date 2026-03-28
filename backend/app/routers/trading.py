@@ -62,7 +62,7 @@ async def create_trading_account(
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """KIS 인증정보 등록."""
+    """KIS 인증정보 등록 — KIS API에서 잔액을 조회하여 초기자금 자동 설정."""
     # 같은 모드의 계좌가 이미 있는지 확인
     existing = await db.execute(
         select(TradingAccount).where(
@@ -76,10 +76,30 @@ async def create_trading_account(
             detail=f"{body.mode.value} 모드 계좌가 이미 등록되어 있습니다.",
         )
 
+    # KIS API에서 현재 잔액 조회
+    creds = settings.kis_credentials(body.mode.value)
+    kis = KISClient(
+        app_key=creds["app_key"],
+        app_secret=creds["app_secret"],
+        account_number=creds["account_number"],
+        account_product_code=creds["account_product_code"],
+        mode=body.mode,
+    )
+    try:
+        balance = await kis.get_balance()
+        initial_capital = balance["cash"] + balance["total_eval"]
+    except KISClientError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"KIS API 잔액 조회에 실패했습니다: {e}",
+        ) from None
+    finally:
+        await kis.close()
+
     account = TradingAccount(
         user_id=user.id,
         mode=body.mode,
-        initial_capital=encrypt_decimal(body.initial_capital),
+        initial_capital=encrypt_decimal(initial_capital),
     )
     db.add(account)
 

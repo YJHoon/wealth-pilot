@@ -183,7 +183,6 @@ export interface ScheduleStatus {
 
 export interface TradingAccountCreateRequest {
   mode: TradingMode;
-  initial_capital: number;
 }
 
 export interface TradingStrategyCreateRequest {

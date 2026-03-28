@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 
 class TradingAccountCreate(BaseModel):
     mode: TradingMode = TradingMode.PAPER
-    initial_capital: Decimal = Field(gt=0)
 
 
 class TradingAccountResponse(BaseModel):

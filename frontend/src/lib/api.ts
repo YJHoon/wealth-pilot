@@ -23,9 +23,9 @@ export async function apiFetch<T>(
 
   const headers = new Headers(fetchOptions.headers);
 
-  // FormData는 브라우저가 Content-Type(multipart/form-data; boundary=...)을 자동 설정
-  // body가 없거나 JSON인 경우에만 application/json을 기본값으로 설정
-  if (!(fetchOptions.body instanceof FormData) && !headers.has("Content-Type")) {
+  // FormData는 브라우저가 Content-Type을 자동 설정
+  // body가 있고 JSON인 경우에만 application/json 설정 (body 없는 DELETE 등에는 불필요)
+  if (fetchOptions.body && !(fetchOptions.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 

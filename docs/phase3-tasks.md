@@ -176,6 +176,57 @@
 
 ---
 
+## Task 3-10: 자동매매 UI + API 통합 점검 및 수정
+
+자동매매(trading) 관련 프론트엔드 UI와 백엔드 API를 하나씩 점검하며 실제 동작하도록 수정한다.
+
+### 점검 대상 API 엔드포인트
+
+| # | 엔드포인트 | 설명 |
+|---|---|---|
+| 1 | `POST /api/trading/accounts` | 계좌 등록 (KIS 잔액 자동 조회) |
+| 2 | `GET /api/trading/accounts` | 계좌 목록 조회 |
+| 3 | `DELETE /api/trading/accounts/{id}` | 계좌 비활성화 |
+| 4 | `GET /api/trading/accounts/{id}/balance` | KIS 실시간 잔고 조회 |
+| 5 | `POST /api/trading/strategies` | 전략 생성 |
+| 6 | `GET /api/trading/strategies` | 전략 목록 조회 |
+| 7 | `PUT /api/trading/strategies/{id}` | 전략 수정 |
+| 8 | `POST /api/trading/strategies/{id}/schedule/start` | 스케줄 시작 |
+| 9 | `POST /api/trading/strategies/{id}/schedule/stop` | 스케줄 중지 |
+| 10 | `POST /api/trading/strategies/{id}/run-now` | 즉시 실행 |
+| 11 | `GET /api/trading/strategies/{id}/schedule/status` | 스케줄 상태 |
+| 12 | `GET /api/trading/orders` | 주문 내역 조회 |
+| 13 | `GET /api/trading/positions` | 포지션 조회 |
+| 14 | `GET /api/trading/performance` | 수익률 조회 |
+
+### 점검 대상 프론트엔드 컴포넌트
+
+- `AccountFormDialog.tsx` — 계좌 등록 다이얼로그
+- `AccountsStrategiesTab.tsx` — 계좌/전략 탭
+- `StrategyFormDialog.tsx` — 전략 생성/수정 다이얼로그
+- `OrdersTab.tsx` / `PositionsTab.tsx` / `PerformanceTab.tsx` — 주문/포지션/수익률 탭
+- `useTrading.ts` — API 호출 훅
+- `api.ts` — fetch 유틸리티
+
+### 알려진 이슈
+
+1. **계좌 삭제 (DELETE)**: 백엔드 204 정상 반환되나 프론트에서 `Fetch failed` 발생. `api.ts`에서 body 없는 요청의 `Content-Type` 헤더 제거했으나 미해결 — 브라우저 네트워크 탭 상세 분석 필요
+2. **계좌 생성 시 초기자금**: KIS API 자동 조회로 변경 완료 — 실제 KIS 연동 테스트 필요
+3. **CORS / 네트워크**: 로컬 IP(`100.80.76.62`) 접근 시 `--host 0.0.0.0` 필수, CORS_ORIGINS에 해당 IP 추가 필요
+
+### 점검 방법
+
+각 항목을 아래 순서로 진행:
+1. 브라우저에서 UI 조작 → 정상 동작 확인
+2. 실패 시 브라우저 Network 탭에서 요청/응답 확인
+3. 백엔드 로그 대조
+4. 원인 파악 후 코드 수정
+5. 수정 후 재테스트
+
+**검증**: 모든 API 엔드포인트 브라우저에서 정상 동작 + 기존 pytest 통과
+
+---
+
 ## 검증 계획
 
 1. **백엔드 단위 테스트**: `pytest -x -q --tb=short` (각 Task마다)

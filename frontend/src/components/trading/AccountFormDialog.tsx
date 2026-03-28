@@ -13,7 +13,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -21,21 +20,15 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { toNumber as toNum } from "@/lib/form-utils";
 import type { TradingMode, TradingAccountCreateRequest } from "@/types/trading";
 import { tradingModeLabels } from "@/types/trading";
 
 interface AccountFormValues {
   mode: TradingMode;
-  initial_capital: number | undefined;
 }
 
 const schema = z.object({
   mode: z.enum(["paper", "live"]),
-  initial_capital: z.preprocess(
-    toNum,
-    z.number({ message: "숫자를 입력해주세요" }).positive("초기자금은 0보다 커야 합니다"),
-  ),
 });
 
 interface AccountFormDialogProps {
@@ -55,7 +48,6 @@ export function AccountFormDialog({
     resolver: zodResolver(schema) as Resolver<AccountFormValues>,
     defaultValues: {
       mode: "paper",
-      initial_capital: undefined,
     },
   });
 
@@ -68,7 +60,6 @@ export function AccountFormDialog({
   const handleSubmit = form.handleSubmit(async (values) => {
     await onSubmit({
       mode: values.mode,
-      initial_capital: values.initial_capital!,
     });
   });
 
@@ -78,7 +69,7 @@ export function AccountFormDialog({
         <DialogHeader>
           <DialogTitle>매매 계좌 등록</DialogTitle>
           <DialogDescription>
-            투자 모드와 초기자금을 설정합니다. KIS API 인증정보는 서버 환경변수에서 관리됩니다.
+            투자 모드를 선택하면 KIS API에서 계좌 잔액을 자동으로 조회합니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -99,22 +90,6 @@ export function AccountFormDialog({
                 <SelectItem value="live">실전</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="grid gap-1.5">
-            <Label htmlFor="initial_capital">초기자금 (원)</Label>
-            <Input
-              id="initial_capital"
-              type="number"
-              step="any"
-              placeholder="10,000,000"
-              {...form.register("initial_capital")}
-            />
-            {form.formState.errors.initial_capital && (
-              <p className="text-xs text-destructive">
-                {form.formState.errors.initial_capital.message}
-              </p>
-            )}
           </div>
 
           <DialogFooter>
