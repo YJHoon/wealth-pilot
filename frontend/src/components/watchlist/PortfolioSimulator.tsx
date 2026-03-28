@@ -19,7 +19,7 @@ const portfolioSchema = z.object({
   assets: z
     .array(
       z.object({
-        ticker: z.string().min(1, "종목코드 필요"),
+        ticker: z.string().trim().min(1, "종목코드 필요"),
         weight: z.number().min(0).max(100),
       }),
     )

@@ -52,7 +52,7 @@ export default function WatchlistPage() {
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (!pendingDeleteItem) return;
+    if (!pendingDeleteItem || isDeleting) return;
     setIsDeleting(true);
     try {
       await removeItem(pendingDeleteItem.id);
@@ -63,7 +63,7 @@ export default function WatchlistPage() {
     } finally {
       setIsDeleting(false);
     }
-  }, [pendingDeleteItem, removeItem]);
+  }, [pendingDeleteItem, isDeleting, removeItem]);
 
   const handleSubmit = useCallback(
     async (values: WatchlistFormValues) => {
