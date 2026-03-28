@@ -67,7 +67,7 @@ async def _check_single_item(price_service: PriceService, item: Watchlist) -> No
         cached = await price_service.fetch_stock_price(item.ticker)
         current_price = cached.price
     except Exception:
-        logger.debug("Cannot fetch price for %s, skipping", item.ticker)
+        logger.exception("Cannot fetch price for %s, skipping", item.ticker)
         return
 
     # 사용자별 텔레그램 chat_id 해석 (미설정 시 시스템 chat_id로 폴백)
