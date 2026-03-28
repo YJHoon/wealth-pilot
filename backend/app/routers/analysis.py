@@ -188,6 +188,7 @@ async def get_watchlist(
     response_model=WatchlistResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("100/minute")
 async def add_watchlist(
     body: WatchlistCreate,
     request: Request,
@@ -213,6 +214,7 @@ async def add_watchlist(
 
 
 @router.put("/watchlist/{watchlist_id}", response_model=WatchlistResponse)
+@limiter.limit("100/minute")
 async def modify_watchlist(
     watchlist_id: UUID,
     body: WatchlistUpdate,
@@ -242,6 +244,7 @@ async def modify_watchlist(
     "/watchlist/{watchlist_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
+@limiter.limit("100/minute")
 async def remove_watchlist(
     watchlist_id: UUID,
     request: Request,
