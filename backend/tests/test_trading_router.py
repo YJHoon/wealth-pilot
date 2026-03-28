@@ -17,6 +17,7 @@ from app.models.trading import (
 )
 from app.models.user import User
 from app.services.crypto_service import encrypt_decimal
+from app.services.kis_client import KISClientError
 
 
 @pytest_asyncio.fixture
@@ -83,6 +84,20 @@ class TestAccountEndpoints:
         assert data["mode"] == "paper"
         assert data["is_active"] is True
         assert float(data["initial_capital"]) == 5000000
+
+    async def test_create_account_kis_failure_returns_502(self, auth_client: AsyncClient):
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.get_balance = AsyncMock(side_effect=KISClientError("connection refused"))
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                "/api/trading/accounts",
+                json={"mode": "paper"},
+            )
+        assert resp.status_code == 502
+        instance.close.assert_awaited_once()
 
     async def test_create_duplicate_mode_rejected(
         self, auth_client: AsyncClient, trading_account: TradingAccount,

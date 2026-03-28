@@ -6,9 +6,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.middleware.rate_limit import limiter
 from app.dependencies.auth import get_current_active_user
 from app.models.trading import (
     OrderSide,
@@ -56,6 +58,7 @@ router = APIRouter(prefix="/api/trading", tags=["자동매매"])
 # ──────────────────────────────────────────────
 
 @router.post("/accounts", response_model=TradingAccountResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("100/minute")
 async def create_trading_account(
     body: TradingAccountCreate,
     request: Request,
@@ -104,7 +107,14 @@ async def create_trading_account(
     db.add(account)
 
     await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_CREATE, request)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"{body.mode.value} 모드 계좌가 이미 등록되어 있습니다.",
+        ) from None
     await db.refresh(account)
 
     return account_to_response(account)

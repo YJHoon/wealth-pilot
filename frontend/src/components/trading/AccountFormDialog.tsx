@@ -69,7 +69,7 @@ export function AccountFormDialog({
         <DialogHeader>
           <DialogTitle>매매 계좌 등록</DialogTitle>
           <DialogDescription>
-            투자 모드를 선택하면 KIS API에서 계좌 잔액을 자동으로 조회합니다.
+            등록 시 선택한 투자 모드로 KIS API에서 계좌 잔액을 자동으로 조회합니다.
           </DialogDescription>
         </DialogHeader>
 

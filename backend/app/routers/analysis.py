@@ -15,6 +15,7 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -59,6 +60,7 @@ router = APIRouter(prefix="/api/analysis", tags=["투자 분석"])
 # ──────────────────────────────────────────────
 
 @router.get("/stock/{ticker}", response_model=FundamentalAnalysisResponse)
+@limiter.limit("100/minute")
 async def fundamental_analysis(
     ticker: str,
     request: Request,
@@ -75,7 +77,7 @@ async def fundamental_analysis(
     try:
         await log_access(db, user.id, AccessAction.ANALYSIS_VIEW, request)
         await db.commit()
-    except Exception:
+    except SQLAlchemyError:
         await db.rollback()
         logger.warning("ANALYSIS_VIEW access logging failed", exc_info=True)
 
@@ -83,6 +85,7 @@ async def fundamental_analysis(
 
 
 @router.get("/stock/{ticker}/technical", response_model=TechnicalAnalysisResponse)
+@limiter.limit("100/minute")
 async def technical_analysis(
     ticker: str,
     request: Request,
@@ -99,7 +102,7 @@ async def technical_analysis(
     try:
         await log_access(db, user.id, AccessAction.ANALYSIS_VIEW, request)
         await db.commit()
-    except Exception:
+    except SQLAlchemyError:
         await db.rollback()
         logger.warning("ANALYSIS_VIEW access logging failed", exc_info=True)
 
@@ -107,6 +110,7 @@ async def technical_analysis(
 
 
 @router.get("/stock/{ticker}/signals", response_model=TradingSignalsResponse)
+@limiter.limit("100/minute")
 async def trading_signals(
     ticker: str,
     request: Request,
@@ -123,7 +127,7 @@ async def trading_signals(
     try:
         await log_access(db, user.id, AccessAction.ANALYSIS_VIEW, request)
         await db.commit()
-    except Exception:
+    except SQLAlchemyError:
         await db.rollback()
         logger.warning("ANALYSIS_VIEW access logging failed", exc_info=True)
 
@@ -153,7 +157,7 @@ async def simulate(
     try:
         await log_access(db, user.id, AccessAction.SIMULATION_RUN, request)
         await db.commit()
-    except Exception:
+    except SQLAlchemyError:
         await db.rollback()
         logger.warning("SIMULATION_RUN access logging failed", exc_info=True)
 
@@ -165,6 +169,7 @@ async def simulate(
 # ──────────────────────────────────────────────
 
 @router.get("/watchlist", response_model=list[WatchlistResponse])
+@limiter.limit("100/minute")
 async def get_watchlist(
     request: Request,
     user: User = Depends(get_current_active_user),
@@ -176,7 +181,7 @@ async def get_watchlist(
     try:
         await log_access(db, user.id, AccessAction.WATCHLIST_VIEW, request)
         await db.commit()
-    except Exception:
+    except SQLAlchemyError:
         await db.rollback()
         logger.warning("WATCHLIST_VIEW access logging failed", exc_info=True)
 
@@ -200,13 +205,12 @@ async def add_watchlist(
         result = await create_watchlist(db, user.id, body)
         await db.commit()
     except WatchlistDuplicateError as e:
-        await db.rollback()
         raise HTTPException(status_code=409, detail=str(e)) from None
 
     try:
         await log_access(db, user.id, AccessAction.WATCHLIST_CREATE, request)
         await db.commit()
-    except Exception:
+    except SQLAlchemyError:
         await db.rollback()
         logger.warning("WATCHLIST_CREATE access logging failed", exc_info=True)
 
@@ -233,7 +237,7 @@ async def modify_watchlist(
     try:
         await log_access(db, user.id, AccessAction.WATCHLIST_UPDATE, request)
         await db.commit()
-    except Exception:
+    except SQLAlchemyError:
         await db.rollback()
         logger.warning("WATCHLIST_UPDATE access logging failed", exc_info=True)
 
@@ -262,6 +266,6 @@ async def remove_watchlist(
     try:
         await log_access(db, user.id, AccessAction.WATCHLIST_DELETE, request)
         await db.commit()
-    except Exception:
+    except SQLAlchemyError:
         await db.rollback()
         logger.warning("WATCHLIST_DELETE access logging failed", exc_info=True)
