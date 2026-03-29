@@ -37,6 +37,7 @@ class AccessAction:
     SNAPSHOT_CREATE = "snapshot_create"
     ONBOARDING_COMPLETE = "onboarding_complete"
     TRADING_ACCOUNT_CREATE = "trading_account_create"
+    TRADING_ACCOUNT_LIST = "trading_account_list"
     TRADING_ACCOUNT_DELETE = "trading_account_delete"
     TRADING_BALANCE_INQUIRY = "trading_balance_inquiry"
     TRADING_SCHEDULE_START = "trading_schedule_start"

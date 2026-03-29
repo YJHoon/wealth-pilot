@@ -105,6 +105,7 @@ async def create_trading_account(
             ) from None
         raise
     await db.refresh(account)
+    response = account_to_response(account)
 
     # 액세스 로그 (실패해도 계좌 생성은 보존)
     try:
@@ -114,7 +115,7 @@ async def create_trading_account(
         await db.rollback()
         logger.warning("TRADING_ACCOUNT_CREATE access logging failed", exc_info=True)
 
-    return account_to_response(account)
+    return response
 
 
 @router.get("/accounts", response_model=list[TradingAccountResponse])
@@ -131,7 +132,16 @@ async def list_trading_accounts(
         ).order_by(TradingAccount.created_at.desc())
     )
     accounts = result.scalars().all()
-    return [account_to_response(a) for a in accounts]
+    response = [account_to_response(a) for a in accounts]
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_LIST, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_LIST access logging failed", exc_info=True)
+
+    return response
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -178,7 +188,8 @@ async def get_account_balance(
 ):
     """KIS 실시간 잔고 조회."""
     account = await _get_user_account(db, account_id, user.id)
-    mode_value = account.mode.value
+    account_mode = account.mode
+    mode_value = account_mode.value
 
     # 액세스 로그 커밋 (KIS 호출 전에 DB 작업 완료)
     try:
@@ -194,7 +205,7 @@ async def get_account_balance(
         app_secret=creds["app_secret"],
         account_number=creds["account_number"],
         account_product_code=creds["account_product_code"],
-        mode=account.mode,
+        mode=account_mode,
     )
     try:
         balance = await kis.get_balance()
