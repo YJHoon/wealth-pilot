@@ -16,7 +16,8 @@ from app.models.trading import (
     TradingStrategy,
 )
 from app.models.user import User
-from app.services.crypto_service import encrypt_decimal, encrypt_value
+from app.services.crypto_service import encrypt_decimal
+from app.services.kis_client import KISClientError
 
 
 @pytest_asyncio.fixture
@@ -26,10 +27,6 @@ async def trading_account(db_session: AsyncSession, mock_user: User):
         id=uuid.uuid4(),
         user_id=mock_user.id,
         mode=TradingMode.PAPER,
-        app_key=encrypt_value("test_key"),
-        app_secret=encrypt_value("test_secret"),
-        account_number=encrypt_value("12345678"),
-        account_product_code="01",
         initial_capital=encrypt_decimal(Decimal("10000000")),
     )
     db_session.add(account)
@@ -66,35 +63,61 @@ async def trading_strategy(
 @pytest.mark.asyncio
 class TestAccountEndpoints:
     async def test_create_account(self, auth_client: AsyncClient):
-        resp = await auth_client.post(
-            "/api/trading/accounts",
-            json={
-                "mode": "paper",
-                "app_key": "my_key",
-                "app_secret": "my_secret",
-                "account_number": "99887766",
-                "initial_capital": 5000000,
-            },
-        )
+        mock_balance = {
+            "cash": Decimal("5000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                "/api/trading/accounts",
+                json={"mode": "paper"},
+            )
         assert resp.status_code == 201
         data = resp.json()
         assert data["mode"] == "paper"
         assert data["is_active"] is True
-        assert "****" in data["account_number_masked"]
+        assert float(data["initial_capital"]) == 5000000
+
+    async def test_create_account_kis_failure_returns_502(self, auth_client: AsyncClient):
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.get_balance = AsyncMock(side_effect=KISClientError("connection refused"))
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                "/api/trading/accounts",
+                json={"mode": "paper"},
+            )
+        assert resp.status_code == 502
+        instance.close.assert_awaited_once()
 
     async def test_create_duplicate_mode_rejected(
         self, auth_client: AsyncClient, trading_account: TradingAccount,
     ):
-        resp = await auth_client.post(
-            "/api/trading/accounts",
-            json={
-                "mode": "paper",
-                "app_key": "key2",
-                "app_secret": "secret2",
-                "account_number": "11111111",
-                "initial_capital": 1000000,
-            },
-        )
+        mock_balance = {
+            "cash": Decimal("5000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                "/api/trading/accounts",
+                json={"mode": "paper"},
+            )
         assert resp.status_code == 409
 
     async def test_list_accounts(

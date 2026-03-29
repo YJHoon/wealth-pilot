@@ -6,9 +6,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.middleware.rate_limit import limiter
 from app.dependencies.auth import get_current_active_user
 from app.models.trading import (
     OrderSide,
@@ -56,42 +58,70 @@ router = APIRouter(prefix="/api/trading", tags=["자동매매"])
 # ──────────────────────────────────────────────
 
 @router.post("/accounts", response_model=TradingAccountResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("100/minute")
 async def create_trading_account(
     body: TradingAccountCreate,
     request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """KIS 인증정보 등록."""
-    # 같은 모드의 계좌가 이미 있는지 확인
-    existing = await db.execute(
-        select(TradingAccount).where(
-            TradingAccount.user_id == user.id,
-            TradingAccount.mode == body.mode,
-        )
+    """KIS 인증정보 등록 — KIS API에서 잔액을 조회하여 초기자금 자동 설정."""
+    # KIS API에서 현재 잔액 조회 (DB 세션 사용 전에 외부 호출 완료)
+    creds = settings.kis_credentials(body.mode.value)
+    kis = KISClient(
+        app_key=creds["app_key"],
+        app_secret=creds["app_secret"],
+        account_number=creds["account_number"],
+        account_product_code=creds["account_product_code"],
+        mode=body.mode,
     )
-    if existing.scalar_one_or_none():
+    try:
+        balance = await kis.get_balance()
+        initial_capital = balance["cash"] + balance["total_eval"]
+    except KISClientError as e:
         raise HTTPException(
-            status_code=409,
-            detail=f"{body.mode.value} 모드 계좌가 이미 등록되어 있습니다.",
-        )
+            status_code=502,
+            detail=f"KIS API 잔액 조회에 실패했습니다: {e}",
+        ) from None
+    finally:
+        await kis.close()
 
+    # 계좌 생성 + 커밋 (짧은 DB 트랜잭션)
     account = TradingAccount(
         user_id=user.id,
         mode=body.mode,
-        initial_capital=encrypt_decimal(body.initial_capital),
+        initial_capital=encrypt_decimal(initial_capital),
     )
     db.add(account)
-
-    await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_CREATE, request)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        orig_msg = str(getattr(e, "orig", e)).lower()
+        if "uq_trading_account_user_mode" in orig_msg:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{body.mode.value} 모드 계좌가 이미 등록되어 있습니다.",
+            ) from None
+        raise
     await db.refresh(account)
+    response = account_to_response(account)
 
-    return account_to_response(account)
+    # 액세스 로그 (실패해도 계좌 생성은 보존)
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_CREATE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_CREATE access logging failed", exc_info=True)
+
+    return response
 
 
 @router.get("/accounts", response_model=list[TradingAccountResponse])
+@limiter.limit("100/minute")
 async def list_trading_accounts(
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -102,10 +132,20 @@ async def list_trading_accounts(
         ).order_by(TradingAccount.created_at.desc())
     )
     accounts = result.scalars().all()
-    return [account_to_response(a) for a in accounts]
+    response = [account_to_response(a) for a in accounts]
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_LIST, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_LIST access logging failed", exc_info=True)
+
+    return response
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("100/minute")
 async def deactivate_trading_account(
     account_id: UUID,
     request: Request,
@@ -127,11 +167,19 @@ async def deactivate_trading_account(
         strategy.is_scheduled = False
         trading_scheduler.remove_schedule(user.id, strategy.id)
 
-    await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_DELETE, request)
     await db.commit()
+
+    # 액세스 로그 (실패해도 비활성화는 보존)
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_DELETE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_DELETE access logging failed", exc_info=True)
 
 
 @router.get("/accounts/{account_id}/balance")
+@limiter.limit("100/minute")
 async def get_account_balance(
     account_id: UUID,
     request: Request,
@@ -140,15 +188,24 @@ async def get_account_balance(
 ):
     """KIS 실시간 잔고 조회."""
     account = await _get_user_account(db, account_id, user.id)
-    await log_access(db, user.id, AccessAction.TRADING_BALANCE_INQUIRY, request)
+    account_mode = account.mode
+    mode_value = account_mode.value
 
-    creds = settings.kis_credentials(account.mode.value)
+    # 액세스 로그 커밋 (KIS 호출 전에 DB 작업 완료)
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_BALANCE_INQUIRY, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_BALANCE_INQUIRY access logging failed", exc_info=True)
+
+    creds = settings.kis_credentials(mode_value)
     kis = KISClient(
         app_key=creds["app_key"],
         app_secret=creds["app_secret"],
         account_number=creds["account_number"],
         account_product_code=creds["account_product_code"],
-        mode=account.mode,
+        mode=account_mode,
     )
     try:
         balance = await kis.get_balance()
