@@ -2,7 +2,8 @@
 
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -11,56 +12,21 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { useTrading } from "@/hooks/useTrading";
-import { AccountFormDialog } from "@/components/trading/AccountFormDialog";
 import { StrategyFormDialog } from "@/components/trading/StrategyFormDialog";
-import { AccountsStrategiesTab } from "@/components/trading/AccountsStrategiesTab";
-import { OrdersTab } from "@/components/trading/OrdersTab";
-import { PositionsPerformanceTab } from "@/components/trading/PositionsPerformanceTab";
 import type {
-  TradingAccountCreateRequest,
   TradingStrategyCreateRequest,
   TradingStrategyUpdateRequest,
   TradingStrategy,
 } from "@/types/trading";
-import { tradingModeLabels } from "@/types/trading";
-import { Plus } from "lucide-react";
+import { tradingModeLabels, strategyTypeLabels } from "@/types/trading";
+import Link from "next/link";
+import { Bot, Pencil, Play, Plus, Square, Zap } from "lucide-react";
 
 export default function TradingPage() {
   const trading = useTrading();
-  const [accountFormOpen, setAccountFormOpen] = useState(false);
   const [strategyFormOpen, setStrategyFormOpen] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState<TradingStrategy | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // ── Account handlers ──
-
-  const handleCreateAccount = useCallback(
-    async (data: TradingAccountCreateRequest) => {
-      setIsSubmitting(true);
-      try {
-        await trading.createAccount(data);
-        toast.success("계좌가 등록되었습니다.");
-        setAccountFormOpen(false);
-      } catch {
-        toast.error("계좌 등록에 실패했습니다.");
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    [trading],
-  );
-
-  const handleDeactivateAccount = useCallback(
-    async (id: string) => {
-      try {
-        await trading.deactivateAccount(id);
-        toast.success("계좌가 비활성화되었습니다.");
-      } catch {
-        toast.error("계좌 비활성화에 실패했습니다.");
-      }
-    },
-    [trading],
-  );
 
   // ── Strategy handlers ──
 
@@ -146,9 +112,12 @@ export default function TradingPage() {
   );
 
   const selectedAccount = trading.accounts.find((a) => a.id === trading.selectedAccountId);
+  const accountStrategies = trading.strategies.filter(
+    (s) => s.accountId === trading.selectedAccountId,
+  );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* 헤더 */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-bold">자동매매</h1>
@@ -174,60 +143,145 @@ export default function TradingPage() {
               </SelectContent>
             </Select>
           )}
-          <Button size="sm" onClick={() => setAccountFormOpen(true)}>
-            <Plus className="size-3.5 mr-1" />
-            계좌 등록
-          </Button>
+          {selectedAccount && (
+            <Button size="sm" onClick={handleAddStrategy}>
+              <Plus className="size-3.5 mr-1" />
+              전략 추가
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* 탭 */}
-      <Tabs defaultValue="accounts">
-        <TabsList>
-          <TabsTrigger value="accounts">계좌/전략</TabsTrigger>
-          <TabsTrigger value="orders">주문내역</TabsTrigger>
-          <TabsTrigger value="positions">포지션/성과</TabsTrigger>
-        </TabsList>
+      {/* 계좌 미등록 안내 */}
+      {trading.accounts.length === 0 && !trading.loading.accounts && (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+          <Bot className="size-10 mb-3 opacity-40" />
+          <p className="text-sm font-medium mb-1">등록된 계좌가 없습니다</p>
+          <p className="text-xs mb-4">
+            자동매매를 시작하려면 먼저 내 자산 페이지에서 계좌를 등록해주세요.
+          </p>
+          <Link
+            href="/assets"
+            className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent transition-colors"
+          >
+            내 자산에서 계좌 등록하기
+          </Link>
+        </div>
+      )}
 
-        <TabsContent value="accounts" className="mt-4">
-          <AccountsStrategiesTab
-            accounts={trading.accounts}
-            strategies={trading.strategies}
-            selectedAccountId={trading.selectedAccountId}
-            onDeactivateAccount={handleDeactivateAccount}
-            onStartSchedule={handleStartSchedule}
-            onStopSchedule={handleStopSchedule}
-            onRunNow={handleRunNow}
-            onEditStrategy={handleEditStrategy}
-            onAddStrategy={handleAddStrategy}
-          />
-        </TabsContent>
+      {/* 계좌 선택 안내 */}
+      {trading.accounts.length > 0 && !selectedAccount && (
+        <p className="text-sm text-muted-foreground text-center py-8">
+          계좌를 선택해주세요.
+        </p>
+      )}
 
-        <TabsContent value="orders" className="mt-4">
-          <OrdersTab
-            orders={trading.orders}
-            loading={trading.loading.orders}
-            onRefetch={trading.refetchOrders}
-          />
-        </TabsContent>
+      {/* 전략 카드 목록 */}
+      {selectedAccount && (
+        <>
+          {accountStrategies.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <Bot className="size-10 mb-3 opacity-40" />
+              <p className="text-sm font-medium mb-1">등록된 전략이 없습니다</p>
+              <p className="text-xs mb-4">AI가 자동으로 매매합니다. 첫 전략을 만들어보세요.</p>
+              <Button size="sm" onClick={handleAddStrategy}>
+                <Plus className="size-3.5 mr-1" />
+                전략 만들기
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {accountStrategies.map((strategy) => (
+                <Card key={strategy.id}>
+                  <CardContent className="pt-4 pb-4">
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-2 flex-1">
+                        {/* 전략명 + 상태 */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium">{strategy.name}</span>
+                          <Badge variant="outline">
+                            {strategyTypeLabels[strategy.strategyType]}
+                          </Badge>
+                          <Badge
+                            variant={strategy.isScheduled ? "default" : "secondary"}
+                            className={
+                              strategy.isScheduled
+                                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                : ""
+                            }
+                          >
+                            {strategy.isScheduled ? "실행 중" : "중지"}
+                          </Badge>
+                        </div>
 
-        <TabsContent value="positions" className="mt-4">
-          <PositionsPerformanceTab
-            positions={trading.positions}
-            performance={trading.performance}
-            loading={trading.loading.positions || trading.loading.performance}
-          />
-        </TabsContent>
-      </Tabs>
+                        {/* 대상 종목 */}
+                        <div className="flex flex-wrap gap-1">
+                          {strategy.targetTickers.map((ticker) => (
+                            <Badge key={ticker} variant="secondary" className="text-xs font-mono">
+                              {ticker}
+                            </Badge>
+                          ))}
+                        </div>
 
-      {/* 다이얼로그 */}
-      <AccountFormDialog
-        open={accountFormOpen}
-        onOpenChange={setAccountFormOpen}
-        onSubmit={handleCreateAccount}
-        isSubmitting={isSubmitting}
-      />
+                        {/* 부가 정보 */}
+                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                          <span>{strategy.intervalMinutes}분 간격</span>
+                          {strategy.marketHoursOnly && <span>장중전용</span>}
+                        </div>
+                      </div>
 
+                      {/* 액션 버튼 */}
+                      <div className="flex items-center gap-1 ml-2">
+                        {strategy.isScheduled ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-red-400 hover:text-red-300"
+                            onClick={() => handleStopSchedule(strategy.id)}
+                            title="중지"
+                          >
+                            <Square className="size-3.5" />
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-emerald-400 hover:text-emerald-300"
+                            onClick={() => handleStartSchedule(strategy.id)}
+                            title="시작"
+                          >
+                            <Play className="size-3.5" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          onClick={() => handleRunNow(strategy.id)}
+                          title="즉시 실행"
+                        >
+                          <Zap className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          onClick={() => handleEditStrategy(strategy)}
+                          title="수정"
+                        >
+                          <Pencil className="size-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* 전략 다이얼로그 */}
       {trading.selectedAccountId && (
         <StrategyFormDialog
           open={strategyFormOpen}

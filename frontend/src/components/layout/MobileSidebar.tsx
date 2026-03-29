@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { navItems } from "@/config/navigation";
+import { navSections } from "@/config/navigation";
 
 export function MobileSidebar() {
   const [open, setOpen] = useState(false);
@@ -134,28 +134,35 @@ export function MobileSidebar() {
 
             {/* 네비게이션 */}
             <nav className="flex-1 overflow-y-auto py-3">
-              <ul className="space-y-0.5 px-2">
-                {navItems.map(({ href, label, icon: Icon }) => {
-                  const isActive = pathname === href || pathname.startsWith(`${href}/`);
-                  return (
-                    <li key={href}>
-                      <Link
-                        href={href}
-                        onClick={close}
-                        className={cn(
-                          "flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors",
-                          isActive
-                            ? "bg-accent text-accent-foreground font-medium"
-                            : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                        )}
-                      >
-                        <Icon className="h-4 w-4 shrink-0" />
-                        {label}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
+              {navSections.map((section) => (
+                <div key={section.label} className="mb-3">
+                  <p className="px-4 mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                    {section.label}
+                  </p>
+                  <ul className="space-y-0.5 px-2">
+                    {section.items.map(({ href, label, icon: Icon }) => {
+                      const isActive = pathname === href || pathname.startsWith(`${href}/`);
+                      return (
+                        <li key={href}>
+                          <Link
+                            href={href}
+                            onClick={close}
+                            className={cn(
+                              "flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors",
+                              isActive
+                                ? "bg-accent text-accent-foreground font-medium"
+                                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                            )}
+                          >
+                            <Icon className="h-4 w-4 shrink-0" />
+                            {label}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
             </nav>
           </aside>
         </div>
