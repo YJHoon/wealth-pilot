@@ -5,10 +5,13 @@ import { toast } from "sonner";
 import { AssetList } from "@/components/assets/AssetList";
 import { AssetForm, type AssetFormValues } from "@/components/assets/AssetForm";
 import { SellDialog } from "@/components/assets/SellDialog";
+import { TradingAccountSection } from "@/components/assets/TradingAccountSection";
 import { useAssets } from "@/hooks/useAssets";
 import { useGroups } from "@/hooks/useGroups";
 import { usePrices } from "@/hooks/usePrices";
+import { useTrading } from "@/hooks/useTrading";
 import type { Asset, AssetCreateRequest, AssetUpdateRequest } from "@/types";
+import type { TradingAccountCreateRequest } from "@/types/trading";
 import { ApiError } from "@/lib/api";
 
 export default function AssetsPage() {
@@ -16,6 +19,7 @@ export default function AssetsPage() {
     useAssets();
   const { groups } = useGroups();
   const { refreshPrices, lastRefreshedAt, priceMode, toKrw } = usePrices();
+  const trading = useTrading();
 
   // 폼 다이얼로그 상태
   const [formOpen, setFormOpen] = useState(false);
@@ -153,8 +157,44 @@ export default function AssetsPage() {
     }
   }, [refreshPrices, refetch]);
 
+  // ── 계좌 핸들러 ──
+
+  const handleCreateAccount = useCallback(
+    async (data: TradingAccountCreateRequest) => {
+      try {
+        await trading.createAccount(data);
+        toast.success("계좌가 등록되었습니다.");
+      } catch (err) {
+        toast.error("계좌 등록에 실패했습니다.");
+        throw err;
+      }
+    },
+    [trading],
+  );
+
+  const handleDeactivateAccount = useCallback(
+    async (id: string) => {
+      try {
+        await trading.deactivateAccount(id);
+        toast.success("계좌가 비활성화되었습니다.");
+      } catch {
+        toast.error("계좌 비활성화에 실패했습니다.");
+      }
+    },
+    [trading],
+  );
+
   return (
-    <>
+    <div className="space-y-8">
+      {/* KIS 연결 계좌 */}
+      <TradingAccountSection
+        accounts={trading.accounts}
+        loading={trading.loading.accounts}
+        onCreateAccount={handleCreateAccount}
+        onDeactivateAccount={handleDeactivateAccount}
+      />
+
+      {/* 수동 자산 목록 */}
       <AssetList
         assets={assets}
         groups={groups}
@@ -191,6 +231,6 @@ export default function AssetsPage() {
         asset={sellingAsset}
         onSubmit={handleSellSubmit}
       />
-    </>
+    </div>
   );
 }

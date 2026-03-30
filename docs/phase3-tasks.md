@@ -14,9 +14,13 @@
                         → 3-5 (시뮬레이션)  ──→  ↓
                                               3-6 (FE 타입/훅) → 3-7 (분석 UI)
                                                                → 3-8 (관심종목/시뮬 UI)
+3-9 (트랜잭션 분리)
+3-10 (자동매매 UX 재설계 + API 점검)
+3-11 (자동 종목 탐색 전략) — 독립 태스크, 기존 전략 엔진 + KIS API 기반
 ```
 - 3-3과 3-5는 병렬 가능
 - 3-7과 3-8은 병렬 가능
+- 3-11은 독립적으로 진행 가능 (기존 모델/서비스 확장)
 
 ---
 
@@ -224,6 +228,140 @@
 5. 수정 후 재테스트
 
 **검증**: 모든 API 엔드포인트 브라우저에서 정상 동작 + 기존 pytest 통과
+
+---
+
+## Task 3-11: 자동 종목 탐색 전략 (Auto Screener)
+
+기존 자동매매는 사용자가 대상 종목(`target_tickers`)을 직접 지정해야 한다. 종목을 지정하지 않아도 알고리즘이 유니버스(종목 풀)에서 조건에 맞는 종목을 자동으로 찾아 매매하는 전략 타입을 추가한다.
+
+### 핵심 개념
+
+```text
+[유니버스 정의]          [스크리닝 조건]           [매매 판단]
+KOSPI 200 등 종목 풀 → 거래량·RSI·이평선 필터 → 기존 전략 엔진 평가 → 주문
+```
+
+- 기존 `ma_crossover`, `mean_reversion`은 **사용자 지정 종목**만 분석
+- 새 `auto_screener`는 **유니버스 전체를 스캔** → 조건 충족 종목만 전략 엔진에 전달
+
+### 유니버스 종류
+
+| 유니버스 | 종목 수 | 스캔 소요시간 (예상) | 비고 |
+|---------|---------|---------------------|------|
+| `kospi50` | ~50 | ~3초 | 시가총액 상위 50 |
+| `kospi200` | ~200 | ~10초 | KOSPI 200 지수 구성종목 |
+| `kosdaq150` | ~150 | ~8초 | KOSDAQ 150 지수 구성종목 |
+| `custom` | 사용자 정의 | 종목 수에 비례 | 사용자가 종목 풀 직접 구성 |
+
+- KIS API 초당 호출 제한(20회/초)을 고려한 소요시간
+- 유니버스 구성종목은 정적 JSON으로 관리 (월 1회 수동 갱신 또는 KIS 업종 API 활용)
+
+### 스크리닝 조건 (params_json)
+
+```json
+{
+  "universe": "kospi200",
+  "min_volume": 100000,
+  "volume_surge_ratio": 2.0,
+  "rsi_oversold": 30,
+  "rsi_overbought": 70,
+  "ma_cross_periods": [5, 20],
+  "max_candidates": 5,
+  "eval_strategy": "ma_crossover",
+  "eval_params": {
+    "fast_period": 5,
+    "slow_period": 20,
+    "rsi_period": 14
+  }
+}
+```
+
+- `universe`: 스캔 대상 종목 풀
+- `min_volume`: 최소 거래량 (유동성 필터)
+- `volume_surge_ratio`: 평균 대비 거래량 급증 비율 (선택)
+- `rsi_oversold` / `rsi_overbought`: RSI 기반 사전 필터
+- `ma_cross_periods`: 이동평균 교차 사전 필터 (선택)
+- `max_candidates`: 스크리닝 후 최대 후보 수 (API 호출 절약)
+- `eval_strategy`: 후보 종목에 적용할 매매 전략 (기존 전략 재활용)
+- `eval_params`: 매매 전략 파라미터
+
+### 매매 사이클 흐름 (auto_screener)
+
+```text
+1. 유니버스 종목 목록 로드
+2. 1차 스크리닝: KIS 현재가 API로 거래량·가격 필터
+   - API 호출 최적화: 배치 조회 또는 rate-limit 준수 sleep
+3. 후보 종목 추출 (max_candidates개)
+4. 2차 분석: 후보별 일봉 시세 조회 → 기존 전략 엔진(eval_strategy)으로 매매 판단
+5. 리스크 관리: 기존 RiskManager 그대로 적용
+6. 주문 실행
+```
+
+### 변경 대상
+
+#### 백엔드
+
+**수정 파일**:
+- `backend/app/models/trading.py`
+  - `StrategyType` enum에 `AUTO_SCREENER = "auto_screener"` 추가
+  - `target_tickers` 컬럼: `default=list` 유지 (빈 리스트 허용, nullable 변경 불필요)
+- `backend/app/schemas/trading.py`
+  - `TradingStrategyCreate.target_tickers`: validator 변경 — `auto_screener`일 때 빈 리스트 허용
+  - `StrategyType` Pydantic enum에 `auto_screener` 추가
+- `backend/app/services/trading_strategy.py`
+  - `create_strategy()`: `auto_screener` 분기 추가
+- `backend/app/tasks/trading_cycle.py`
+  - `_run_cycle()`: `strategy_type == auto_screener`일 때 스크리닝 → 후보 추출 → 기존 평가 파이프라인으로 전달
+
+**새 파일**:
+- `backend/app/services/stock_screener.py`
+  - `StockScreener` 클래스: 유니버스 로드, 1차 스크리닝(거래량·RSI·이평선), 후보 반환
+  - `load_universe(name: str) -> list[str]`: 유니버스 종목 코드 목록 반환
+  - `screen(kis: KISClient, universe: list[str], params: dict) -> list[str]`: 스크리닝 실행
+- `backend/app/data/universes/kospi50.json` — 종목 코드 목록
+- `backend/app/data/universes/kospi200.json` — 종목 코드 목록
+- `backend/app/data/universes/kosdaq150.json` — 종목 코드 목록
+
+**마이그레이션**: `alembic revision --autogenerate -m "add_auto_screener_strategy_type"`
+
+#### 프론트엔드
+
+**수정 파일**:
+- `frontend/src/types/trading.ts`
+  - `StrategyType`에 `"auto_screener"` 추가
+  - `strategyTypeLabels`에 `auto_screener: "자동 종목 탐색"` 추가
+- `frontend/src/components/trading/StrategyFormDialog.tsx`
+  - `auto_screener` 선택 시: `target_tickers` 입력 숨기기, 유니버스 선택 드롭다운 + 스크리닝 파라미터 폼 표시
+  - `DEFAULT_PARAMS`에 `auto_screener` 기본값 추가
+
+### KIS API 호출 최적화
+
+스크리닝은 대량의 API 호출이 발생하므로 최적화 필수:
+
+1. **Rate-limit 준수**: KIS 초당 20건 제한 → `asyncio.Semaphore(15)` + 안전 마진
+2. **병렬 배치**: `asyncio.gather()`로 15건씩 병렬 호출 → 50종목 ~4초
+3. **캐싱**: 동일 사이클 내 중복 종목 조회 방지 (인메모리)
+4. **조기 종료**: `max_candidates` 도달 시 나머지 스캔 중단
+
+### 리스크 관리
+
+기존 `RiskManager` 그대로 적용:
+- 최대 포지션 수 제한
+- 종목당 최대 투자 비율
+- 일일 손실 한도
+- 손절 라인
+
+추가 고려:
+- `auto_screener`는 종목 분산이 넓어질 수 있으므로 `max_positions` 파라미터 중요
+- 스크리닝 결과 로그: 어떤 종목이 후보로 올라왔고 왜 선택/제외됐는지 기록
+
+### 검증
+
+1. **유닛 테스트**: `StockScreener` 스크리닝 로직 — mocked KIS 데이터
+2. **통합 테스트**: `auto_screener` 전략 생성 → 사이클 실행 → 주문 생성 확인
+3. **API 호출 카운트**: 유니버스 크기 대비 실제 KIS API 호출 수 검증
+4. **프론트엔드**: `StrategyFormDialog`에서 `auto_screener` 선택 시 UI 전환 확인
 
 ---
 
