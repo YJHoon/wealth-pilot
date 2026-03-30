@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,8 +56,12 @@ export default function OrdersPage() {
     [accessToken],
   );
 
+  const latestRequestIdRef = useRef(0);
+
   const fetchOrders = useCallback(
     async (side: string, status: string, newOffset: number) => {
+      const requestId = ++latestRequestIdRef.current;
+
       if (!canFetch) {
         setOrders([]);
         setLoading(false);
@@ -76,13 +80,17 @@ export default function OrdersPage() {
           `/api/trading/orders?${params.toString()}`,
           fetchOpts,
         );
+        if (requestId !== latestRequestIdRef.current) return;
         const mapped = res.map(toTradingOrder);
         setHasNextPage(mapped.length > PAGE_SIZE);
         setOrders(mapped.slice(0, PAGE_SIZE));
       } catch {
+        if (requestId !== latestRequestIdRef.current) return;
         setFetchError("주문 내역을 불러오는데 실패했습니다. 잠시 후 다시 시도해주세요.");
       } finally {
-        setLoading(false);
+        if (requestId === latestRequestIdRef.current) {
+          setLoading(false);
+        }
       }
     },
     [canFetch, fetchOpts],
