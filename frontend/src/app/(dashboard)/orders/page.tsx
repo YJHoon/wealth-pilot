@@ -296,6 +296,7 @@ export default function OrdersPage() {
                 className="size-8"
                 onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
                 disabled={offset === 0}
+                aria-label="이전 페이지"
               >
                 <ChevronLeft className="size-4" />
               </Button>
@@ -305,6 +306,7 @@ export default function OrdersPage() {
                 className="size-8"
                 onClick={() => setOffset(offset + PAGE_SIZE)}
                 disabled={!hasNextPage}
+                aria-label="다음 페이지"
               >
                 <ChevronRight className="size-4" />
               </Button>
