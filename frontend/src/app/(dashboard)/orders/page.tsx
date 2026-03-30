@@ -24,7 +24,7 @@ import { formatMaskedKrw, formatQuantity } from "@/lib/format";
 import type { TradingOrder, TradingOrderApi, OrderSide, OrderStatus } from "@/types/trading";
 import { orderSideLabels, orderStatusLabels, toTradingOrder } from "@/types/trading";
 import { apiFetch } from "@/lib/api";
-import { ChevronLeft, ChevronRight, ClipboardList } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ClipboardList } from "lucide-react";
 
 const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 const PAGE_SIZE = 50;
@@ -43,6 +43,8 @@ export default function OrdersPage() {
   const { isMasked } = useAppStore();
   const [orders, setOrders] = useState<TradingOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const [sideFilter, setSideFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [offset, setOffset] = useState(0);
@@ -59,22 +61,26 @@ export default function OrdersPage() {
       if (!canFetch) {
         setOrders([]);
         setLoading(false);
+        setFetchError(null);
         return;
       }
       setLoading(true);
+      setFetchError(null);
       try {
         const params = new URLSearchParams();
         if (side !== "all") params.set("side", side);
         if (status !== "all") params.set("status", status);
-        params.set("limit", String(PAGE_SIZE));
+        params.set("limit", String(PAGE_SIZE + 1));
         params.set("offset", String(newOffset));
         const res = await apiFetch<TradingOrderApi[]>(
           `/api/trading/orders?${params.toString()}`,
           fetchOpts,
         );
-        setOrders(res.map(toTradingOrder));
+        const mapped = res.map(toTradingOrder);
+        setHasNextPage(mapped.length > PAGE_SIZE);
+        setOrders(mapped.slice(0, PAGE_SIZE));
       } catch {
-        setOrders([]);
+        setFetchError("주문 내역을 불러오는데 실패했습니다. 잠시 후 다시 시도해주세요.");
       } finally {
         setLoading(false);
       }
@@ -139,6 +145,19 @@ export default function OrdersPage() {
 
       {loading ? (
         <p className="text-sm text-muted-foreground py-8 text-center">불러오는 중...</p>
+      ) : fetchError ? (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+          <AlertTriangle className="size-10 mb-3 opacity-40 text-yellow-500" />
+          <p className="text-sm font-medium mb-1">{fetchError}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => fetchOrders(sideFilter, statusFilter, offset)}
+          >
+            다시 시도
+          </Button>
+        </div>
       ) : orders.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
           <ClipboardList className="size-10 mb-3 opacity-40" />
@@ -285,7 +304,7 @@ export default function OrdersPage() {
                 size="icon"
                 className="size-8"
                 onClick={() => setOffset(offset + PAGE_SIZE)}
-                disabled={orders.length < PAGE_SIZE}
+                disabled={!hasNextPage}
               >
                 <ChevronRight className="size-4" />
               </Button>

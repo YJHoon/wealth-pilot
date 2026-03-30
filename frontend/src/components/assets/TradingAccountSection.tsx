@@ -84,13 +84,14 @@ export function TradingAccountSection({
                     size="icon"
                     className="size-7 text-muted-foreground hover:text-destructive"
                     onClick={() => onDeactivateAccount(account.id)}
+                    aria-label="계좌 비활성화"
                   >
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">총 자산</span>
+                    <span className="text-muted-foreground">초기 자금</span>
                     <span className="font-bold text-base">
                       {formatMaskedKrw(account.initialCapital, isMasked)}
                     </span>

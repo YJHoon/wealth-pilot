@@ -164,8 +164,9 @@ export default function AssetsPage() {
       try {
         await trading.createAccount(data);
         toast.success("계좌가 등록되었습니다.");
-      } catch {
+      } catch (err) {
         toast.error("계좌 등록에 실패했습니다.");
+        throw err;
       }
     },
     [trading],
