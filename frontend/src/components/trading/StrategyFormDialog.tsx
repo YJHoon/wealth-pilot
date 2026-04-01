@@ -36,13 +36,6 @@ const DEFAULT_PARAMS: Record<StrategyType, Record<string, number>> = {
   custom: {},
 };
 
-interface StrategyFormValues {
-  name: string;
-  strategy_type: StrategyType;
-  interval_minutes: number | undefined;
-  market_hours_only: boolean;
-}
-
 const schema = z.object({
   name: z.string().min(1, "전략명을 입력해주세요").max(100),
   strategy_type: z.enum(["ma_crossover", "mean_reversion", "custom"]),
@@ -52,6 +45,8 @@ const schema = z.object({
   ),
   market_hours_only: z.boolean(),
 });
+
+type StrategyFormValues = z.output<typeof schema>;
 
 interface StrategyFormDialogProps {
   open: boolean;
@@ -106,7 +101,7 @@ export function StrategyFormDialog({
     if (isEditing && editingStrategy) {
       await onSubmitUpdate(editingStrategy.id, {
         name: values.name,
-        interval_minutes: values.interval_minutes!,
+        interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
       });
     } else {
@@ -115,7 +110,7 @@ export function StrategyFormDialog({
         name: values.name,
         strategy_type: values.strategy_type,
         params_json: DEFAULT_PARAMS[values.strategy_type],
-        interval_minutes: values.interval_minutes!,
+        interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
       });
     }
