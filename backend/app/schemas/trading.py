@@ -80,7 +80,7 @@ class TradingStrategyCreate(BaseModel):
     name: str = Field(max_length=100)
     strategy_type: StrategyType = StrategyType.MA_CROSSOVER
     params_json: dict = Field(default_factory=lambda: _DEFAULT_MA_PARAMS.copy())
-    target_tickers: list[str] = Field(min_length=1)
+    target_tickers: list[str] = Field(default_factory=list)
     interval_minutes: int = Field(default=10, ge=1, le=60)
     market_hours_only: bool = True
 
@@ -88,7 +88,7 @@ class TradingStrategyCreate(BaseModel):
 class TradingStrategyUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=100)
     params_json: dict | None = None
-    target_tickers: list[str] | None = Field(default=None, min_length=1)
+    target_tickers: list[str] | None = None
     interval_minutes: int | None = Field(default=None, ge=1, le=60)
     market_hours_only: bool | None = None
 

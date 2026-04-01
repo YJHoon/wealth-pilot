@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/stores/appStore";
@@ -135,14 +135,6 @@ export function AccountsStrategiesTab({
                         >
                           {strategy.isScheduled ? "실행 중" : "중지"}
                         </Badge>
-                      </div>
-
-                      <div className="flex flex-wrap gap-1">
-                        {strategy.targetTickers.map((ticker) => (
-                          <Badge key={ticker} variant="secondary" className="text-xs font-mono">
-                            {ticker}
-                          </Badge>
-                        ))}
                       </div>
 
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">

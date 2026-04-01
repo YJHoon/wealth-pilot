@@ -190,7 +190,6 @@ export interface TradingStrategyCreateRequest {
   name: string;
   strategy_type: StrategyType;
   params_json: Record<string, number>;
-  target_tickers: string[];
   interval_minutes: number;
   market_hours_only: boolean;
 }
@@ -198,7 +197,6 @@ export interface TradingStrategyCreateRequest {
 export interface TradingStrategyUpdateRequest {
   name?: string;
   params_json?: Record<string, number>;
-  target_tickers?: string[];
   interval_minutes?: number;
   market_hours_only?: boolean;
 }

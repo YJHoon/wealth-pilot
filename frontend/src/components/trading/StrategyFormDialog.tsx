@@ -39,7 +39,6 @@ const DEFAULT_PARAMS: Record<StrategyType, Record<string, number>> = {
 interface StrategyFormValues {
   name: string;
   strategy_type: StrategyType;
-  target_tickers: string;
   interval_minutes: number | undefined;
   market_hours_only: boolean;
 }
@@ -47,7 +46,6 @@ interface StrategyFormValues {
 const schema = z.object({
   name: z.string().min(1, "전략명을 입력해주세요").max(100),
   strategy_type: z.enum(["ma_crossover", "mean_reversion", "custom"]),
-  target_tickers: z.string().min(1, "대상 종목을 입력해주세요"),
   interval_minutes: z.preprocess(
     toNum,
     z.number({ message: "숫자를 입력해주세요" }).int().min(1).max(60),
@@ -81,7 +79,6 @@ export function StrategyFormDialog({
     defaultValues: {
       name: "",
       strategy_type: "ma_crossover",
-      target_tickers: "",
       interval_minutes: 10,
       market_hours_only: true,
     },
@@ -92,7 +89,6 @@ export function StrategyFormDialog({
       form.reset({
         name: editingStrategy.name,
         strategy_type: editingStrategy.strategyType,
-        target_tickers: editingStrategy.targetTickers.join(", "),
         interval_minutes: editingStrategy.intervalMinutes,
         market_hours_only: editingStrategy.marketHoursOnly,
       });
@@ -100,7 +96,6 @@ export function StrategyFormDialog({
       form.reset({
         name: "",
         strategy_type: "ma_crossover",
-        target_tickers: "",
         interval_minutes: 10,
         market_hours_only: true,
       });
@@ -108,15 +103,9 @@ export function StrategyFormDialog({
   }, [editingStrategy, form, open]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
-    const tickers = values.target_tickers
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-
     if (isEditing && editingStrategy) {
       await onSubmitUpdate(editingStrategy.id, {
         name: values.name,
-        target_tickers: tickers,
         interval_minutes: values.interval_minutes!,
         market_hours_only: values.market_hours_only,
       });
@@ -126,7 +115,6 @@ export function StrategyFormDialog({
         name: values.name,
         strategy_type: values.strategy_type,
         params_json: DEFAULT_PARAMS[values.strategy_type],
-        target_tickers: tickers,
         interval_minutes: values.interval_minutes!,
         market_hours_only: values.market_hours_only,
       });
@@ -141,14 +129,14 @@ export function StrategyFormDialog({
         <DialogHeader>
           <DialogTitle>{isEditing ? "전략 수정" : "전략 생성"}</DialogTitle>
           <DialogDescription>
-            자동매매 전략을 설정합니다.
+            자동매매 전략을 설정합니다. 종목은 전략이 자동으로 탐색합니다.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="grid gap-3">
           <div className="grid gap-1.5">
             <Label htmlFor="name">전략명</Label>
-            <Input id="name" placeholder="예: 삼성전자 골든크로스" {...form.register("name")} />
+            <Input id="name" placeholder="예: 골든크로스 자동매매" {...form.register("name")} />
             {form.formState.errors.name && (
               <p className="text-xs text-destructive">{form.formState.errors.name.message}</p>
             )}
@@ -174,20 +162,6 @@ export function StrategyFormDialog({
                 ))}
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="grid gap-1.5">
-            <Label htmlFor="target_tickers">대상 종목 (쉼표 구분)</Label>
-            <Input
-              id="target_tickers"
-              placeholder="005930, 000660, 035720"
-              {...form.register("target_tickers")}
-            />
-            {form.formState.errors.target_tickers && (
-              <p className="text-xs text-destructive">
-                {form.formState.errors.target_tickers.message}
-              </p>
-            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">

@@ -214,15 +214,6 @@ export default function TradingPage() {
                           </Badge>
                         </div>
 
-                        {/* 대상 종목 */}
-                        <div className="flex flex-wrap gap-1">
-                          {strategy.targetTickers.map((ticker) => (
-                            <Badge key={ticker} variant="secondary" className="text-xs font-mono">
-                              {ticker}
-                            </Badge>
-                          ))}
-                        </div>
-
                         {/* 부가 정보 */}
                         <div className="flex items-center gap-4 text-xs text-muted-foreground">
                           <span>{strategy.intervalMinutes}분 간격</span>
