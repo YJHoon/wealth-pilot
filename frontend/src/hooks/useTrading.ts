@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { apiFetch, ApiError } from "@/lib/api";
 import {
@@ -85,6 +85,8 @@ export interface UseTradingReturn {
 export function useTrading(): UseTradingReturn {
   const { data: session } = useSession();
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
+  const accountsRef = useRef(accounts);
+  accountsRef.current = accounts;
   const [strategies, setStrategies] = useState<TradingStrategy[]>([]);
   const [orders, setOrders] = useState<TradingOrder[]>([]);
   const [positions, setPositions] = useState<TradingPosition[]>([]);
@@ -161,7 +163,7 @@ export function useTrading(): UseTradingReturn {
 
   const fetchAccountBalances = useCallback(
     async (accountList?: TradingAccount[]) => {
-      const target = accountList ?? accounts;
+      const target = accountList ?? accountsRef.current;
       if (!canFetch || target.length === 0) return;
       const results: Record<string, KisBalance> = {};
       await Promise.all(
@@ -172,14 +174,14 @@ export function useTrading(): UseTradingReturn {
               fetchOpts,
             );
             results[account.id] = toKisBalance(res);
-          } catch {
-            // KIS API 실패 시 해당 계좌는 스킵
+          } catch (e) {
+            console.error(`[useTrading] KIS balance fetch failed for account ${account.id}:`, e);
           }
         }),
       );
       setAccountBalances(results);
     },
-    [canFetch, fetchOpts, accounts],
+    [canFetch, fetchOpts],
   );
 
   // ── Strategies ──

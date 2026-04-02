@@ -220,7 +220,7 @@ export function TradingAccountSection({
                                     </div>
                                   </TableCell>
                                   <TableCell className="py-1.5 text-right font-mono">
-                                    {isMasked ? "***" : h.quantity.toLocaleString()}
+                                    {isMasked ? "●●●" : h.quantity.toLocaleString()}
                                   </TableCell>
                                   <TableCell className="py-1.5 text-right">
                                     {formatMaskedKrw(h.avgPrice, isMasked)}

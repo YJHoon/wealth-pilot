@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { toast } from "sonner";
 import { TradingAccountSection } from "@/components/assets/TradingAccountSection";
 import { useTrading } from "@/hooks/useTrading";
