@@ -14,7 +14,8 @@ const TWO_FA_PATHS = ["/security/2fa"];
 const ONBOARDING_PATHS = ["/onboarding"];
 
 // 인증 비활성화 시 모든 경로 통과
-function devMiddleware(req: NextRequest) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function devMiddleware(_req: NextRequest) {
   return NextResponse.next();
 }
 

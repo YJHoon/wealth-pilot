@@ -122,7 +122,7 @@ export function useTrading(): UseTradingReturn {
     } finally {
       setLoading((prev) => ({ ...prev, accounts: false }));
     }
-  }, [canFetch, accessToken, selectedAccountId]);
+  }, [canFetch, fetchOpts, selectedAccountId]);
 
   const createAccount = useCallback(
     async (data: TradingAccountCreateRequest): Promise<TradingAccount> => {
@@ -135,7 +135,7 @@ export function useTrading(): UseTradingReturn {
       await fetchAccounts();
       return toTradingAccount(res);
     },
-    [canFetch, accessToken, fetchAccounts],
+    [canFetch, fetchOpts, fetchAccounts],
   );
 
   const deactivateAccount = useCallback(
@@ -147,7 +147,7 @@ export function useTrading(): UseTradingReturn {
       });
       await fetchAccounts();
     },
-    [canFetch, accessToken, fetchAccounts],
+    [canFetch, fetchOpts, fetchAccounts],
   );
 
   // ── Strategies ──
@@ -166,7 +166,7 @@ export function useTrading(): UseTradingReturn {
     } finally {
       setLoading((prev) => ({ ...prev, strategies: false }));
     }
-  }, [canFetch, accessToken]);
+  }, [canFetch, fetchOpts]);
 
   const createStrategy = useCallback(
     async (data: TradingStrategyCreateRequest): Promise<TradingStrategy> => {
@@ -179,7 +179,7 @@ export function useTrading(): UseTradingReturn {
       await fetchStrategies();
       return toTradingStrategy(res);
     },
-    [canFetch, accessToken, fetchStrategies],
+    [canFetch, fetchOpts, fetchStrategies],
   );
 
   const updateStrategy = useCallback(
@@ -193,7 +193,7 @@ export function useTrading(): UseTradingReturn {
       await fetchStrategies();
       return toTradingStrategy(res);
     },
-    [canFetch, accessToken, fetchStrategies],
+    [canFetch, fetchOpts, fetchStrategies],
   );
 
   // ── Schedule ──
@@ -208,7 +208,7 @@ export function useTrading(): UseTradingReturn {
       });
       await fetchStrategies();
     },
-    [canFetch, accessToken, fetchStrategies],
+    [canFetch, fetchOpts, fetchStrategies],
   );
 
   const stopSchedule = useCallback(
@@ -221,7 +221,7 @@ export function useTrading(): UseTradingReturn {
       });
       await fetchStrategies();
     },
-    [canFetch, accessToken, fetchStrategies],
+    [canFetch, fetchOpts, fetchStrategies],
   );
 
   const runNow = useCallback(
@@ -233,7 +233,7 @@ export function useTrading(): UseTradingReturn {
         ...fetchOpts,
       });
     },
-    [canFetch, accessToken],
+    [canFetch, fetchOpts],
   );
 
   const getScheduleStatus = useCallback(
@@ -245,7 +245,7 @@ export function useTrading(): UseTradingReturn {
       );
       return toScheduleStatus(res);
     },
-    [canFetch, accessToken],
+    [canFetch, fetchOpts],
   );
 
   // ── Orders ──
@@ -275,7 +275,7 @@ export function useTrading(): UseTradingReturn {
         setLoading((prev) => ({ ...prev, orders: false }));
       }
     },
-    [canFetch, accessToken, selectedAccountId],
+    [canFetch, fetchOpts, selectedAccountId],
   );
 
   // ── Positions ──
@@ -297,7 +297,7 @@ export function useTrading(): UseTradingReturn {
     } finally {
       setLoading((prev) => ({ ...prev, positions: false }));
     }
-  }, [canFetch, accessToken, selectedAccountId]);
+  }, [canFetch, fetchOpts, selectedAccountId]);
 
   const fetchAllPositions = useCallback(async () => {
     if (!canFetch) {
@@ -316,7 +316,7 @@ export function useTrading(): UseTradingReturn {
     } finally {
       setLoading((prev) => ({ ...prev, positions: false }));
     }
-  }, [canFetch, accessToken]);
+  }, [canFetch, fetchOpts]);
 
   // ── Performance ──
 
@@ -337,7 +337,7 @@ export function useTrading(): UseTradingReturn {
     } finally {
       setLoading((prev) => ({ ...prev, performance: false }));
     }
-  }, [canFetch, accessToken, selectedAccountId]);
+  }, [canFetch, fetchOpts, selectedAccountId]);
 
   // ── Effects ──
 

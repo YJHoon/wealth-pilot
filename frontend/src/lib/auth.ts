@@ -1,6 +1,6 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import type { Account, User } from "next-auth";
+import type { User } from "next-auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -33,7 +33,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
 
   callbacks: {
-    async signIn({ user, account }: { user: User; account: Account | null }) {
+    async signIn({ user, account }) {
       // Google 로그인 성공 시 백엔드에 사용자 등록/조회
       // account.id_token: Google이 발급한 ID Token (백엔드에서 검증)
       if (!account?.id_token) {
