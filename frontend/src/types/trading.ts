@@ -181,6 +181,60 @@ export interface ScheduleStatus {
   lastRun: ScheduleLogSummaryApi | null;
 }
 
+// ── KIS 실시간 잔고 타입 ──
+
+export interface KisHolding {
+  ticker: string;
+  name: string;
+  quantity: number;
+  avgPrice: number;
+  currentPrice: number;
+  evalAmount: number;
+  pnl: number;
+  pnlRate: number;
+}
+
+export interface KisBalance {
+  cash: number;
+  totalEval: number;
+  totalPnl: number;
+  holdings: KisHolding[];
+}
+
+export interface KisBalanceApi {
+  cash: number;
+  total_eval: number;
+  total_pnl: number;
+  holdings: {
+    ticker: string;
+    name: string;
+    quantity: number;
+    avg_price: number;
+    current_price: number;
+    eval_amount: number;
+    pnl: number;
+    pnl_rate: number;
+  }[];
+}
+
+export function toKisBalance(api: KisBalanceApi): KisBalance {
+  return {
+    cash: api.cash,
+    totalEval: api.total_eval,
+    totalPnl: api.total_pnl,
+    holdings: api.holdings.map((h) => ({
+      ticker: h.ticker,
+      name: h.name,
+      quantity: h.quantity,
+      avgPrice: h.avg_price,
+      currentPrice: h.current_price,
+      evalAmount: h.eval_amount,
+      pnl: h.pnl,
+      pnlRate: h.pnl_rate,
+    })),
+  };
+}
+
 // ── 요청 타입 (snake_case, API 직접 전송) ──
 
 export interface TradingAccountCreateRequest {

@@ -10,12 +10,14 @@ import {
   type TradingPosition,
   type TradingPerformance,
   type ScheduleStatus,
+  type KisBalance,
   type TradingAccountApi,
   type TradingStrategyApi,
   type TradingOrderApi,
   type TradingPositionApi,
   type TradingPerformanceApi,
   type ScheduleStatusApi,
+  type KisBalanceApi,
   type TradingAccountCreateRequest,
   type TradingStrategyCreateRequest,
   type TradingStrategyUpdateRequest,
@@ -27,6 +29,7 @@ import {
   toTradingPosition,
   toTradingPerformance,
   toScheduleStatus,
+  toKisBalance,
 } from "@/types/trading";
 
 const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
@@ -53,6 +56,7 @@ export interface UseTradingReturn {
   positions: TradingPosition[];
   allPositions: TradingPosition[];
   performance: TradingPerformance | null;
+  accountBalances: Record<string, KisBalance>;
   selectedAccountId: string | null;
   setSelectedAccountId: (id: string | null) => void;
   loading: LoadingState;
@@ -68,6 +72,8 @@ export interface UseTradingReturn {
   stopSchedule: (strategyId: string) => Promise<void>;
   runNow: (strategyId: string) => Promise<void>;
   getScheduleStatus: (strategyId: string) => Promise<ScheduleStatus>;
+  // KIS balance
+  refreshAccountBalances: () => Promise<void>;
   // Refetch
   refetchOrders: (filters?: OrderFilters) => Promise<void>;
   refetchPositions: () => Promise<void>;
@@ -84,6 +90,7 @@ export function useTrading(): UseTradingReturn {
   const [positions, setPositions] = useState<TradingPosition[]>([]);
   const [allPositions, setAllPositions] = useState<TradingPosition[]>([]);
   const [performance, setPerformance] = useState<TradingPerformance | null>(null);
+  const [accountBalances, setAccountBalances] = useState<Record<string, KisBalance>>({});
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<LoadingState>({
@@ -148,6 +155,31 @@ export function useTrading(): UseTradingReturn {
       await fetchAccounts();
     },
     [canFetch, fetchOpts, fetchAccounts],
+  );
+
+  // ── KIS Balance (실시간 잔고) ──
+
+  const fetchAccountBalances = useCallback(
+    async (accountList?: TradingAccount[]) => {
+      const target = accountList ?? accounts;
+      if (!canFetch || target.length === 0) return;
+      const results: Record<string, KisBalance> = {};
+      await Promise.all(
+        target.filter((a) => a.isActive).map(async (account) => {
+          try {
+            const res = await apiFetch<KisBalanceApi>(
+              `/api/trading/accounts/${account.id}/balance`,
+              fetchOpts,
+            );
+            results[account.id] = toKisBalance(res);
+          } catch {
+            // KIS API 실패 시 해당 계좌는 스킵
+          }
+        }),
+      );
+      setAccountBalances(results);
+    },
+    [canFetch, fetchOpts, accounts],
   );
 
   // ── Strategies ──
@@ -346,6 +378,13 @@ export function useTrading(): UseTradingReturn {
     fetchAllPositions().catch(() => {});
   }, [fetchAccounts, fetchAllPositions]);
 
+  // 계좌 로드 후 KIS 잔고 자동 조회
+  useEffect(() => {
+    if (accounts.length > 0) {
+      fetchAccountBalances(accounts).catch(() => {});
+    }
+  }, [accounts, fetchAccountBalances]);
+
   useEffect(() => {
     if (selectedAccountId) {
       fetchStrategies().catch(() => {});
@@ -362,6 +401,7 @@ export function useTrading(): UseTradingReturn {
     positions,
     allPositions,
     performance,
+    accountBalances,
     selectedAccountId,
     setSelectedAccountId,
     loading,
@@ -374,6 +414,7 @@ export function useTrading(): UseTradingReturn {
     stopSchedule,
     runNow,
     getScheduleStatus,
+    refreshAccountBalances: fetchAccountBalances,
     refetchOrders: fetchOrders,
     refetchPositions: fetchPositions,
     refetchAllPositions: fetchAllPositions,
