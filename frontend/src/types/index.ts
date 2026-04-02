@@ -885,27 +885,27 @@ export function toDashboardSummary(api: DashboardSummaryApi): DashboardSummary {
       console.warn(`Unknown asset type from API: ${key}`);
       continue;
     }
-    byType[key] = { valueKrw: val.value_krw, ratio: val.ratio };
+    byType[key] = { valueKrw: Number(val.value_krw), ratio: Number(val.ratio) };
   }
 
   const byGroup: DashboardSummary["byGroup"] = {};
   for (const [key, val] of Object.entries(api.by_group)) {
-    byGroup[key] = { name: val.name, valueKrw: val.value_krw, ratio: val.ratio };
+    byGroup[key] = { name: val.name, valueKrw: Number(val.value_krw), ratio: Number(val.ratio) };
   }
 
   return {
-    totalValueKrw: api.total_value_krw,
+    totalValueKrw: Number(api.total_value_krw),
     byType,
     byGroup,
     pnl: {
-      total: api.pnl.total,
-      realized: api.pnl.realized,
-      unrealized: api.pnl.unrealized,
-      totalRatio: api.pnl.total_ratio,
+      total: Number(api.pnl.total),
+      realized: Number(api.pnl.realized),
+      unrealized: Number(api.pnl.unrealized),
+      totalRatio: Number(api.pnl.total_ratio),
     },
     previousDayChange: {
-      amount: api.previous_day_change.amount,
-      ratio: api.previous_day_change.ratio,
+      amount: Number(api.previous_day_change.amount),
+      ratio: Number(api.previous_day_change.ratio),
     },
     updatedAt: api.updated_at,
   };
