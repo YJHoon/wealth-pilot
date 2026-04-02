@@ -304,6 +304,7 @@ export function useTrading(): UseTradingReturn {
       setAllPositions([]);
       return;
     }
+    setLoading((prev) => ({ ...prev, positions: true }));
     try {
       const res = await apiFetch<TradingPositionApi[]>(
         "/api/trading/positions",
@@ -312,6 +313,8 @@ export function useTrading(): UseTradingReturn {
       setAllPositions(res.map(toTradingPosition));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "포지션을 불러오는데 실패했습니다.");
+    } finally {
+      setLoading((prev) => ({ ...prev, positions: false }));
     }
   }, [canFetch, accessToken]);
 
