@@ -44,6 +44,7 @@ class TradingAccountResponse(BaseModel):
     id: UUID
     mode: TradingMode
     initial_capital: Decimal
+    cash_balance: Decimal | None
     is_active: bool
     token_expires_at: datetime | None
     created_at: datetime
@@ -55,6 +56,7 @@ def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:
         id=account.id,
         mode=account.mode,
         initial_capital=decrypt_decimal(account.initial_capital),
+        cash_balance=decrypt_decimal_optional(account.cash_balance),
         is_active=account.is_active,
         token_expires_at=account.token_expires_at,
         created_at=account.created_at,
@@ -80,7 +82,7 @@ class TradingStrategyCreate(BaseModel):
     name: str = Field(max_length=100)
     strategy_type: StrategyType = StrategyType.MA_CROSSOVER
     params_json: dict = Field(default_factory=lambda: _DEFAULT_MA_PARAMS.copy())
-    target_tickers: list[str] = Field(min_length=1)
+    target_tickers: list[str] = Field(default_factory=list)
     interval_minutes: int = Field(default=10, ge=1, le=60)
     market_hours_only: bool = True
 
@@ -88,7 +90,7 @@ class TradingStrategyCreate(BaseModel):
 class TradingStrategyUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=100)
     params_json: dict | None = None
-    target_tickers: list[str] | None = Field(default=None, min_length=1)
+    target_tickers: list[str] | None = None
     interval_minutes: int | None = Field(default=None, ge=1, le=60)
     market_hours_only: bool | None = None
 

@@ -94,6 +94,9 @@ class TradingAccount(Base):
     # 초기 투자금 (AES-256 암호화)
     initial_capital: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # 현재 현금 잔고 (AES-256 암호화, KIS 잔고 동기화 시 갱신)
+    cash_balance: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # KIS Access Token 캐시 (AES-256 암호화, 임시)
     access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_expires_at: Mapped[datetime | None] = mapped_column(

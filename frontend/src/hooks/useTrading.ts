@@ -51,6 +51,7 @@ export interface UseTradingReturn {
   strategies: TradingStrategy[];
   orders: TradingOrder[];
   positions: TradingPosition[];
+  allPositions: TradingPosition[];
   performance: TradingPerformance | null;
   selectedAccountId: string | null;
   setSelectedAccountId: (id: string | null) => void;
@@ -70,6 +71,7 @@ export interface UseTradingReturn {
   // Refetch
   refetchOrders: (filters?: OrderFilters) => Promise<void>;
   refetchPositions: () => Promise<void>;
+  refetchAllPositions: () => Promise<void>;
   refetchPerformance: () => Promise<void>;
   refetchStrategies: () => Promise<void>;
 }
@@ -80,6 +82,7 @@ export function useTrading(): UseTradingReturn {
   const [strategies, setStrategies] = useState<TradingStrategy[]>([]);
   const [orders, setOrders] = useState<TradingOrder[]>([]);
   const [positions, setPositions] = useState<TradingPosition[]>([]);
+  const [allPositions, setAllPositions] = useState<TradingPosition[]>([]);
   const [performance, setPerformance] = useState<TradingPerformance | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -296,6 +299,25 @@ export function useTrading(): UseTradingReturn {
     }
   }, [canFetch, accessToken, selectedAccountId]);
 
+  const fetchAllPositions = useCallback(async () => {
+    if (!canFetch) {
+      setAllPositions([]);
+      return;
+    }
+    setLoading((prev) => ({ ...prev, positions: true }));
+    try {
+      const res = await apiFetch<TradingPositionApi[]>(
+        "/api/trading/positions",
+        fetchOpts,
+      );
+      setAllPositions(res.map(toTradingPosition));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "포지션을 불러오는데 실패했습니다.");
+    } finally {
+      setLoading((prev) => ({ ...prev, positions: false }));
+    }
+  }, [canFetch, accessToken]);
+
   // ── Performance ──
 
   const fetchPerformance = useCallback(async () => {
@@ -321,7 +343,8 @@ export function useTrading(): UseTradingReturn {
 
   useEffect(() => {
     fetchAccounts().catch(() => {});
-  }, [fetchAccounts]);
+    fetchAllPositions().catch(() => {});
+  }, [fetchAccounts, fetchAllPositions]);
 
   useEffect(() => {
     if (selectedAccountId) {
@@ -337,6 +360,7 @@ export function useTrading(): UseTradingReturn {
     strategies,
     orders,
     positions,
+    allPositions,
     performance,
     selectedAccountId,
     setSelectedAccountId,
@@ -352,6 +376,7 @@ export function useTrading(): UseTradingReturn {
     getScheduleStatus,
     refetchOrders: fetchOrders,
     refetchPositions: fetchPositions,
+    refetchAllPositions: fetchAllPositions,
     refetchPerformance: fetchPerformance,
     refetchStrategies: fetchStrategies,
   };

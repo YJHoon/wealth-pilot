@@ -12,6 +12,7 @@ from app.models.asset import Asset, AssetStatus, AssetType, Currency
 from app.models.asset_snapshot import AssetSnapshot
 from app.models.exchange_rate import ExchangeRate
 from app.models.portfolio_group import PortfolioGroup
+from app.models.trading import TradingAccount, TradingPosition
 from app.services.crypto_service import (
     decrypt_decimal,
     decrypt_decimal_optional,
@@ -135,6 +136,49 @@ async def get_dashboard_summary(
             if "ungrouped" not in by_group:
                 by_group["ungrouped"] = {"name": "미분류", "value_krw": Decimal("0")}
             by_group["ungrouped"]["value_krw"] += value_krw
+
+    # ── 증권 계좌 (Trading) 데이터 합산 ──
+    trading_total_value = Decimal("0")
+
+    acct_result = await db.execute(
+        select(TradingAccount).where(
+            TradingAccount.user_id == user_id,
+            TradingAccount.is_active.is_(True),
+        )
+    )
+    trading_accounts = acct_result.scalars().all()
+
+    for acct in trading_accounts:
+        # 현금 잔고
+        cash = decrypt_decimal_optional(acct.cash_balance)
+        if cash is not None and cash > 0:
+            total_value_krw += cash
+            trading_total_value += cash
+            by_type["cash"] = by_type.get("cash", Decimal("0")) + cash
+
+        # 보유 포지션
+        pos_result = await db.execute(
+            select(TradingPosition).where(
+                TradingPosition.account_id == acct.id,
+            )
+        )
+        for pos in pos_result.scalars().all():
+            qty = decrypt_decimal(pos.quantity)
+            avg_price = decrypt_decimal(pos.avg_buy_price)
+            cur_price = Decimal(str(pos.current_price)) if pos.current_price is not None else avg_price
+
+            pos_value = qty * cur_price
+            pos_cost = qty * avg_price
+
+            total_value_krw += pos_value
+            total_cost_krw += pos_cost
+            trading_total_value += pos_value
+
+            by_type["domestic_stock"] = by_type.get("domestic_stock", Decimal("0")) + pos_value
+
+    # 자동매매 그룹
+    if trading_total_value > 0:
+        by_group["trading"] = {"name": "자동매매", "value_krw": trading_total_value}
 
     # 비중 계산
     by_type_result = {}
