@@ -91,6 +91,7 @@ async def create_trading_account(
         user_id=user.id,
         mode=body.mode,
         initial_capital=encrypt_decimal(initial_capital),
+        cash_balance=encrypt_decimal(balance["cash"]),
     )
     db.add(account)
     try:

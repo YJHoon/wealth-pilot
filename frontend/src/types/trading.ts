@@ -13,6 +13,7 @@ export interface TradingAccountApi {
   id: string;
   mode: TradingMode;
   initial_capital: number;
+  cash_balance: number | null;
   is_active: boolean;
   token_expires_at: string | null;
   created_at: string;
@@ -105,6 +106,7 @@ export interface TradingAccount {
   id: string;
   mode: TradingMode;
   initialCapital: number;
+  cashBalance: number | null;
   isActive: boolean;
   tokenExpiresAt: string | null;
   createdAt: string;
@@ -208,6 +210,7 @@ export function toTradingAccount(api: TradingAccountApi): TradingAccount {
     id: api.id,
     mode: api.mode,
     initialCapital: api.initial_capital,
+    cashBalance: api.cash_balance,
     isActive: api.is_active,
     tokenExpiresAt: api.token_expires_at,
     createdAt: api.created_at,

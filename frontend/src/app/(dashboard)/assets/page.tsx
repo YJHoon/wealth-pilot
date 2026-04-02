@@ -189,6 +189,7 @@ export default function AssetsPage() {
       {/* KIS 연결 계좌 */}
       <TradingAccountSection
         accounts={trading.accounts}
+        positions={trading.allPositions}
         loading={trading.loading.accounts}
         onCreateAccount={handleCreateAccount}
         onDeactivateAccount={handleDeactivateAccount}

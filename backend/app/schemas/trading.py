@@ -44,6 +44,7 @@ class TradingAccountResponse(BaseModel):
     id: UUID
     mode: TradingMode
     initial_capital: Decimal
+    cash_balance: Decimal | None
     is_active: bool
     token_expires_at: datetime | None
     created_at: datetime
@@ -55,6 +56,7 @@ def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:
         id=account.id,
         mode=account.mode,
         initial_capital=decrypt_decimal(account.initial_capital),
+        cash_balance=decrypt_decimal_optional(account.cash_balance),
         is_active=account.is_active,
         token_expires_at=account.token_expires_at,
         created_at=account.created_at,

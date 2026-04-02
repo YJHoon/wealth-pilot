@@ -370,6 +370,10 @@ async def _sync_positions(db: AsyncSession, kis: KISClient, account: TradingAcco
     """KIS 잔고를 기반으로 TradingPosition 동기화."""
     try:
         balance = await kis.get_balance()
+
+        # 현금 잔고 동기화
+        account.cash_balance = encrypt_decimal(balance["cash"])
+
         kis_holdings = {h["ticker"]: h for h in balance["holdings"]}
 
         # 기존 포지션 조회
