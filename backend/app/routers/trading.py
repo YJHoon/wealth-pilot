@@ -130,6 +130,7 @@ async def list_trading_accounts(
     result = await db.execute(
         select(TradingAccount).where(
             TradingAccount.user_id == user.id,
+            TradingAccount.is_active.is_(True),
         ).order_by(TradingAccount.created_at.desc())
     )
     accounts = result.scalars().all()

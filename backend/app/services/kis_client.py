@@ -98,7 +98,12 @@ class KISClient:
                 "appsecret": self._app_secret,
             },
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            raise KISClientError(
+                f"KIS 토큰 발급 실패 (HTTP {resp.status_code})",
+                status_code=resp.status_code,
+                response_data=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {},
+            )
         data = resp.json()
 
         self._access_token = data["access_token"]
