@@ -66,6 +66,20 @@ async def create_trading_account(
     db: AsyncSession = Depends(get_db),
 ):
     """KIS 인증정보 등록 — KIS API에서 잔액을 조회하여 초기자금 자동 설정."""
+    # 동일 (user, mode) 계좌가 이미 활성 상태로 존재하면 KIS 호출 전에 즉시 차단
+    existing_result = await db.execute(
+        select(TradingAccount).where(
+            TradingAccount.user_id == user.id,
+            TradingAccount.mode == body.mode,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing is not None and existing.is_active:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{body.mode.value} 모드 계좌가 이미 등록되어 있습니다.",
+        )
+
     # KIS API에서 현재 잔액 조회 (DB 세션 사용 전에 외부 호출 완료)
     creds = settings.kis_credentials(body.mode.value)
     kis = KISClient(
@@ -86,20 +100,7 @@ async def create_trading_account(
     finally:
         await kis.close()
 
-    # 동일 (user, mode) 계좌가 이미 존재하는지 확인 — 비활성이면 재활성화
-    existing_result = await db.execute(
-        select(TradingAccount).where(
-            TradingAccount.user_id == user.id,
-            TradingAccount.mode == body.mode,
-        )
-    )
-    existing = existing_result.scalar_one_or_none()
     if existing is not None:
-        if existing.is_active:
-            raise HTTPException(
-                status_code=409,
-                detail=f"{body.mode.value} 모드 계좌가 이미 등록되어 있습니다.",
-            )
         # 비활성 계좌 재활성화 (잔액 갱신)
         existing.is_active = True
         existing.initial_capital = encrypt_decimal(initial_capital)
@@ -209,18 +210,19 @@ async def get_account_balance(
 ):
     """KIS 실시간 잔고 조회."""
     account = await _get_user_account(db, account_id, user.id)
-    if not account.is_active:
-        raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
-    account_mode = account.mode
-    mode_value = account_mode.value
 
-    # 액세스 로그 커밋 (KIS 호출 전에 DB 작업 완료)
+    # 액세스 로그 커밋 (활성 여부 검사 전에 시도 자체를 기록)
     try:
         await log_access(db, user.id, AccessAction.TRADING_BALANCE_INQUIRY, request)
         await db.commit()
     except SQLAlchemyError:
         await db.rollback()
         logger.warning("TRADING_BALANCE_INQUIRY access logging failed", exc_info=True)
+
+    if not account.is_active:
+        raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+    account_mode = account.mode
+    mode_value = account_mode.value
 
     creds = settings.kis_credentials(mode_value)
     kis = KISClient(
