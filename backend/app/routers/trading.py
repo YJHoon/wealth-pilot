@@ -86,14 +86,33 @@ async def create_trading_account(
     finally:
         await kis.close()
 
-    # 계좌 생성 + 커밋 (짧은 DB 트랜잭션)
-    account = TradingAccount(
-        user_id=user.id,
-        mode=body.mode,
-        initial_capital=encrypt_decimal(initial_capital),
-        cash_balance=encrypt_decimal(balance["cash"]),
+    # 동일 (user, mode) 계좌가 이미 존재하는지 확인 — 비활성이면 재활성화
+    existing_result = await db.execute(
+        select(TradingAccount).where(
+            TradingAccount.user_id == user.id,
+            TradingAccount.mode == body.mode,
+        )
     )
-    db.add(account)
+    existing = existing_result.scalar_one_or_none()
+    if existing is not None:
+        if existing.is_active:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{body.mode.value} 모드 계좌가 이미 등록되어 있습니다.",
+            )
+        # 비활성 계좌 재활성화 (잔액 갱신)
+        existing.is_active = True
+        existing.initial_capital = encrypt_decimal(initial_capital)
+        existing.cash_balance = encrypt_decimal(balance["cash"])
+        account = existing
+    else:
+        account = TradingAccount(
+            user_id=user.id,
+            mode=body.mode,
+            initial_capital=encrypt_decimal(initial_capital),
+            cash_balance=encrypt_decimal(balance["cash"]),
+        )
+        db.add(account)
     try:
         await db.commit()
     except IntegrityError as e:

@@ -8,7 +8,16 @@ import httpx
 import pytest
 
 from app.models.trading import TradingMode
-from app.services.kis_client import KISClient, KISClientError
+from app.services.kis_client import _THROTTLE_STATE, _TOKEN_CACHE, KISClient, KISClientError
+
+
+@pytest.fixture(autouse=True)
+def _clear_kis_state():
+    _TOKEN_CACHE.clear()
+    _THROTTLE_STATE.clear()
+    yield
+    _TOKEN_CACHE.clear()
+    _THROTTLE_STATE.clear()
 
 
 def _make_client(mode=TradingMode.PAPER, **kwargs):
