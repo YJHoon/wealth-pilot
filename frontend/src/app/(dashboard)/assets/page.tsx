@@ -41,8 +41,19 @@ export default function AssetsPage() {
 
   const handleRefreshBalances = useCallback(async () => {
     try {
-      await trading.refreshAccountBalances();
-      toast.success("잔고가 갱신되었습니다.");
+      const result = await trading.refreshAccountBalances();
+      if (result.total === 0) {
+        toast.info("갱신할 활성 계좌가 없습니다.");
+      } else if (result.failed === 0) {
+        toast.success("잔고가 갱신되었습니다.");
+      } else if (result.succeeded === 0) {
+        toast.error("잔고 조회에 실패했습니다.");
+      } else {
+        toast.warning(
+          `일부 계좌 갱신 실패 (${result.succeeded}/${result.total} 성공)` +
+            (result.errors.length ? `: ${result.errors.join(", ")}` : ""),
+        );
+      }
     } catch {
       toast.error("잔고 조회에 실패했습니다.");
     }

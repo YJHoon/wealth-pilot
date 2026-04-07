@@ -1,5 +1,7 @@
 "use client"
 
+import { forwardRef } from "react"
+
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 
@@ -41,8 +43,6 @@ const buttonVariants = cva(
     },
   }
 )
-
-import { forwardRef } from "react"
 
 const Button = forwardRef<HTMLButtonElement, ButtonPrimitive.Props & VariantProps<typeof buttonVariants>>(
   function Button({ className, variant = "default", size = "default", ...props }, ref) {

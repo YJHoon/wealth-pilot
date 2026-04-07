@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -99,10 +100,14 @@ class KISClient:
             },
         )
         if resp.status_code != 200:
+            try:
+                response_data = resp.json()
+            except (ValueError, json.JSONDecodeError):
+                response_data = {}
             raise KISClientError(
                 f"KIS 토큰 발급 실패 (HTTP {resp.status_code})",
                 status_code=resp.status_code,
-                response_data=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {},
+                response_data=response_data,
             )
         data = resp.json()
 

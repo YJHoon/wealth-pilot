@@ -41,6 +41,13 @@ export interface OrderFilters {
   offset?: number;
 }
 
+export interface BalanceRefreshResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  errors: string[];
+}
+
 interface LoadingState {
   accounts: boolean;
   strategies: boolean;
@@ -73,7 +80,7 @@ export interface UseTradingReturn {
   runNow: (strategyId: string) => Promise<void>;
   getScheduleStatus: (strategyId: string) => Promise<ScheduleStatus>;
   // KIS balance
-  refreshAccountBalances: () => Promise<void>;
+  refreshAccountBalances: () => Promise<BalanceRefreshResult>;
   // Refetch
   refetchOrders: (filters?: OrderFilters) => Promise<void>;
   refetchPositions: () => Promise<void>;
@@ -162,24 +169,35 @@ export function useTrading(): UseTradingReturn {
   // ── KIS Balance (실시간 잔고) ──
 
   const fetchAccountBalances = useCallback(
-    async (accountList?: TradingAccount[]) => {
+    async (accountList?: TradingAccount[]): Promise<BalanceRefreshResult> => {
       const target = accountList ?? accountsRef.current;
-      if (!canFetch || target.length === 0) return;
+      const activeTargets = target.filter((a) => a.isActive);
+      const result: BalanceRefreshResult = {
+        total: activeTargets.length,
+        succeeded: 0,
+        failed: 0,
+        errors: [],
+      };
+      if (!canFetch || activeTargets.length === 0) return result;
       const results: Record<string, KisBalance> = {};
       await Promise.all(
-        target.filter((a) => a.isActive).map(async (account) => {
+        activeTargets.map(async (account) => {
           try {
             const res = await apiFetch<KisBalanceApi>(
               `/api/trading/accounts/${account.id}/balance`,
               fetchOpts,
             );
             results[account.id] = toKisBalance(res);
+            result.succeeded += 1;
           } catch (e) {
             console.error(`[useTrading] KIS balance fetch failed for account ${account.id}:`, e);
+            result.failed += 1;
+            result.errors.push(account.id);
           }
         }),
       );
-      setAccountBalances(results);
+      setAccountBalances((prev) => ({ ...prev, ...results }));
+      return result;
     },
     [canFetch, fetchOpts],
   );

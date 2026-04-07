@@ -106,12 +106,12 @@ export function TradingAccountSection({
         <div className="space-y-4">
           {accounts.map((account) => {
             const balance = accountBalances[account.id];
+            const hasBalance = !!balance;
             const holdings = balance?.holdings ?? [];
-            const cash = balance?.cash ?? account.cashBalance ?? 0;
+            const cash = balance?.cash ?? 0;
             const totalEval = balance?.totalEval ?? 0;
             const totalPnl = balance?.totalPnl ?? 0;
-            const totalValue = cash + totalEval;
-            const hasBalance = !!balance;
+            const totalValue = hasBalance ? cash + totalEval : 0;
 
             return (
               <Card key={account.id}>
