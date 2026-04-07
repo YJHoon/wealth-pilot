@@ -18,29 +18,32 @@ import { AccountFormDialog } from "@/components/trading/AccountFormDialog";
 import type {
   TradingAccount,
   TradingAccountCreateRequest,
-  TradingPosition,
+  KisBalance,
 } from "@/types/trading";
 import { tradingModeLabels } from "@/types/trading";
-import { Loader2, Plus, Trash2, Wallet } from "lucide-react";
+import { Loader2, Plus, RefreshCw, Trash2, Wallet } from "lucide-react";
 
 interface TradingAccountSectionProps {
   accounts: TradingAccount[];
-  positions: TradingPosition[];
+  accountBalances: Record<string, KisBalance>;
   loading: boolean;
   onCreateAccount: (data: TradingAccountCreateRequest) => Promise<void>;
   onDeactivateAccount: (id: string) => Promise<void>;
+  onRefreshBalances: () => Promise<void>;
 }
 
 export function TradingAccountSection({
   accounts,
-  positions,
+  accountBalances,
   loading,
   onCreateAccount,
   onDeactivateAccount,
+  onRefreshBalances,
 }: TradingAccountSectionProps) {
   const { isMasked } = useAppStore();
   const [accountFormOpen, setAccountFormOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleSubmit = async (data: TradingAccountCreateRequest) => {
     setIsSubmitting(true);
@@ -52,14 +55,36 @@ export function TradingAccountSection({
     }
   };
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await onRefreshBalances();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-semibold">연결 계좌</h2>
-        <Button size="sm" onClick={() => setAccountFormOpen(true)}>
-          <Plus className="size-3.5 mr-1" />
-          계좌 연결
-        </Button>
+        <h2 className="text-lg font-semibold">내 자산</h2>
+        <div className="flex items-center gap-2">
+          {accounts.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`size-3.5 mr-1 ${isRefreshing ? "animate-spin" : ""}`} />
+              잔고 새로고침
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setAccountFormOpen(true)}>
+            <Plus className="size-3.5 mr-1" />
+            계좌 연결
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -80,14 +105,13 @@ export function TradingAccountSection({
       ) : (
         <div className="space-y-4">
           {accounts.map((account) => {
-            const accountPositions = positions.filter(
-              (p) => p.accountId === account.id,
-            );
-            const positionsValue = accountPositions.reduce((sum, p) => {
-              const value = p.quantity * (p.currentPrice ?? p.avgBuyPrice);
-              return sum + value;
-            }, 0);
-            const totalValue = (account.cashBalance ?? 0) + positionsValue;
+            const balance = accountBalances[account.id];
+            const hasBalance = !!balance;
+            const holdings = balance?.holdings ?? [];
+            const cash = balance?.cash ?? 0;
+            const totalEval = balance?.totalEval ?? 0;
+            const totalPnl = balance?.totalPnl ?? 0;
+            const totalValue = hasBalance ? cash + totalEval : 0;
 
             return (
               <Card key={account.id}>
@@ -103,6 +127,11 @@ export function TradingAccountSection({
                       <Badge variant={account.isActive ? "default" : "secondary"}>
                         {account.isActive ? "활성" : "비활성"}
                       </Badge>
+                      {!hasBalance && (
+                        <Badge variant="outline" className="text-xs text-muted-foreground">
+                          조회 중...
+                        </Badge>
+                      )}
                     </div>
                     <Button
                       variant="ghost"
@@ -124,30 +153,40 @@ export function TradingAccountSection({
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">현금 잔고</span>
+                      <span className="text-muted-foreground">예수금</span>
                       <span className="font-medium">
-                        {formatMaskedKrw(account.cashBalance ?? 0, isMasked)}
+                        {formatMaskedKrw(cash, isMasked)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">주식 평가</span>
                       <span className="font-medium">
-                        {formatMaskedKrw(positionsValue, isMasked)}
+                        {formatMaskedKrw(totalEval, isMasked)}
                       </span>
                     </div>
+                    {hasBalance && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">평가손익</span>
+                        <span className={`font-medium ${totalPnl > 0 ? "text-emerald-500" : totalPnl < 0 ? "text-red-500" : ""}`}>
+                          {isMasked
+                            ? "●●●●●●원"
+                            : `${totalPnl >= 0 ? "+" : ""}${totalPnl.toLocaleString()}원`}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>한국투자증권</span>
                       <span>
-                        등록일 {new Date(account.createdAt).toLocaleDateString("ko-KR")}
+                        {hasBalance ? "KIS 실시간 조회" : `등록일 ${new Date(account.createdAt).toLocaleDateString("ko-KR")}`}
                       </span>
                     </div>
                   </div>
 
-                  {/* 보유 종목 */}
-                  {accountPositions.length > 0 && (
+                  {/* 보유 종목 (KIS 실시간) */}
+                  {holdings.length > 0 && (
                     <div className="border-t pt-3">
                       <h4 className="text-xs font-medium text-muted-foreground mb-2">
-                        보유 종목 ({accountPositions.length})
+                        보유 종목 ({holdings.length})
                       </h4>
                       <div className="overflow-x-auto">
                         <Table>
@@ -157,41 +196,50 @@ export function TradingAccountSection({
                               <TableHead className="h-8 text-right">수량</TableHead>
                               <TableHead className="h-8 text-right">평균매입</TableHead>
                               <TableHead className="h-8 text-right">현재가</TableHead>
+                              <TableHead className="h-8 text-right">평가금액</TableHead>
                               <TableHead className="h-8 text-right">평가손익</TableHead>
+                              <TableHead className="h-8 text-right">수익률</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {accountPositions.map((pos) => {
-                              const pnl = pos.unrealizedPnl ?? 0;
+                            {holdings.map((h) => {
                               const pnlColor =
-                                pnl > 0
+                                h.pnl > 0
                                   ? "text-emerald-500"
-                                  : pnl < 0
+                                  : h.pnl < 0
                                     ? "text-red-500"
                                     : "";
                               return (
-                                <TableRow key={pos.id} className="text-xs">
+                                <TableRow key={h.ticker} className="text-xs">
                                   <TableCell className="py-1.5">
                                     <div>
-                                      <span className="font-medium">{pos.tickerName}</span>
+                                      <span className="font-medium">{h.name}</span>
                                       <span className="ml-1 text-muted-foreground font-mono">
-                                        {pos.ticker}
+                                        {h.ticker}
                                       </span>
                                     </div>
                                   </TableCell>
                                   <TableCell className="py-1.5 text-right font-mono">
-                                    {isMasked ? "***" : pos.quantity.toLocaleString()}
+                                    {isMasked ? "●●●" : h.quantity.toLocaleString()}
                                   </TableCell>
                                   <TableCell className="py-1.5 text-right">
-                                    {formatMaskedKrw(pos.avgBuyPrice, isMasked)}
+                                    {formatMaskedKrw(h.avgPrice, isMasked)}
                                   </TableCell>
                                   <TableCell className="py-1.5 text-right">
-                                    {formatMaskedKrw(pos.currentPrice ?? 0, isMasked)}
+                                    {formatMaskedKrw(h.currentPrice, isMasked)}
+                                  </TableCell>
+                                  <TableCell className="py-1.5 text-right">
+                                    {formatMaskedKrw(h.evalAmount, isMasked)}
                                   </TableCell>
                                   <TableCell className={`py-1.5 text-right font-medium ${pnlColor}`}>
                                     {isMasked
                                       ? "●●●●●●원"
-                                      : `${pnl >= 0 ? "+" : ""}${pnl.toLocaleString()}원`}
+                                      : `${h.pnl >= 0 ? "+" : ""}${h.pnl.toLocaleString()}원`}
+                                  </TableCell>
+                                  <TableCell className={`py-1.5 text-right font-medium ${pnlColor}`}>
+                                    {isMasked
+                                      ? "●●%"
+                                      : `${h.pnlRate >= 0 ? "+" : ""}${h.pnlRate.toFixed(2)}%`}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -199,6 +247,12 @@ export function TradingAccountSection({
                           </TableBody>
                         </Table>
                       </div>
+                    </div>
+                  )}
+
+                  {hasBalance && holdings.length === 0 && (
+                    <div className="border-t pt-3 text-center text-xs text-muted-foreground py-4">
+                      보유 종목이 없습니다
                     </div>
                   )}
                 </CardContent>

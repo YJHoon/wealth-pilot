@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -27,9 +28,43 @@ _RATE_LIMITS = {
     TradingMode.PAPER: 5,
 }
 
+# 모드별 최소 호출 간격(초). KIS는 짧은 시간 내 다중 호출 시 "초당 거래건수 초과" 반환.
+# 모의투자는 매우 보수적으로 1초, 실전은 60ms (20 TPS 미만).
+_MIN_REQUEST_INTERVAL = {
+    TradingMode.LIVE: 0.06,
+    TradingMode.PAPER: 1.0,
+}
+
+# 프로세스 레벨 throttle 상태: key=(mode_value, app_key) → (lock, last_request_ts)
+_THROTTLE_STATE: dict[tuple[str, str], dict] = {}
+_THROTTLE_REGISTRY_LOCK = asyncio.Lock()
+
+
+async def _throttle(mode: TradingMode, app_key: str) -> None:
+    """동일 (mode, app_key) 호출 간 최소 간격 보장."""
+    cache_key = (mode.value, app_key)
+    async with _THROTTLE_REGISTRY_LOCK:
+        state = _THROTTLE_STATE.get(cache_key)
+        if state is None:
+            state = {"lock": asyncio.Lock(), "last": 0.0}
+            _THROTTLE_STATE[cache_key] = state
+    min_interval = _MIN_REQUEST_INTERVAL[mode]
+    async with state["lock"]:
+        now = asyncio.get_event_loop().time()
+        wait = state["last"] + min_interval - now
+        if wait > 0:
+            await asyncio.sleep(wait)
+        state["last"] = asyncio.get_event_loop().time()
+
 # 모의투자 tr_id 매핑 (실전 → 모의: T → V)
 _PAPER_TR_PREFIX = "V"
 _LIVE_TR_PREFIX = "T"
+
+
+# 프로세스 레벨 토큰 캐시 (KIS는 1분당 1회 토큰 발급 제한)
+# key: (mode, app_key) → {"token": str, "expires_at": datetime}
+_TOKEN_CACHE: dict[tuple[str, str], dict] = {}
+_TOKEN_LOCK = asyncio.Lock()
 
 
 class KISClientError(Exception):
@@ -90,6 +125,7 @@ class KISClient:
 
     async def authenticate(self) -> str:
         """OAuth2 토큰 발급. 반환: access_token."""
+        await _throttle(self._mode, self._app_key)
         resp = await self._client.post(
             "/oauth2/tokenP",
             json={
@@ -98,7 +134,20 @@ class KISClient:
                 "appsecret": self._app_secret,
             },
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            try:
+                response_data = resp.json()
+            except (ValueError, json.JSONDecodeError):
+                response_data = {}
+            logger.error(
+                "KIS token request failed: status=%s mode=%s body=%s",
+                resp.status_code, self._mode.value, response_data,
+            )
+            raise KISClientError(
+                f"KIS 토큰 발급 실패 (HTTP {resp.status_code}): {response_data}",
+                status_code=resp.status_code,
+                response_data=response_data,
+            )
         data = resp.json()
 
         self._access_token = data["access_token"]
@@ -106,15 +155,34 @@ class KISClient:
         expires_in = int(data.get("expires_in", 86400))
         self._token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
-        logger.info("KIS token obtained, expires_at=%s", self._token_expires_at)
+        # 프로세스 레벨 캐시에 저장 (다음 KISClient 인스턴스가 재사용)
+        _TOKEN_CACHE[(self._mode.value, self._app_key)] = {
+            "token": self._access_token,
+            "expires_at": self._token_expires_at,
+        }
+
+        logger.info("KIS token obtained, mode=%s expires_at=%s", self._mode.value, self._token_expires_at)
         return self._access_token
 
     async def _ensure_token(self):
-        """토큰이 없거나 만료 임박(5분 전)이면 재발급."""
-        if self._access_token and self._token_expires_at:
-            if datetime.now(timezone.utc) < self._token_expires_at - timedelta(minutes=5):
+        """토큰이 없거나 만료 임박(5분 전)이면 재발급. 프로세스 캐시 활용."""
+        now = datetime.now(timezone.utc)
+
+        def _valid(expires_at: datetime | None) -> bool:
+            return expires_at is not None and now < expires_at - timedelta(minutes=5)
+
+        # 1) 인스턴스 토큰이 유효하면 그대로
+        if self._access_token and _valid(self._token_expires_at):
+            return
+
+        # 2) 프로세스 캐시 확인 (락으로 동시 발급 방지)
+        async with _TOKEN_LOCK:
+            cached = _TOKEN_CACHE.get((self._mode.value, self._app_key))
+            if cached and _valid(cached["expires_at"]):
+                self._access_token = cached["token"]
+                self._token_expires_at = cached["expires_at"]
                 return
-        await self.authenticate()
+            await self.authenticate()
 
     # ──────────────────────────────────────────
     # 공통 요청
@@ -148,6 +216,7 @@ class KISClient:
         }
 
         async with self._semaphore:
+            await _throttle(self._mode, self._app_key)
             if method.upper() == "GET":
                 resp = await self._client.get(path, headers=headers, params=params)
             else:

@@ -8,7 +8,16 @@ import httpx
 import pytest
 
 from app.models.trading import TradingMode
-from app.services.kis_client import KISClient, KISClientError
+from app.services.kis_client import _THROTTLE_STATE, _TOKEN_CACHE, KISClient, KISClientError
+
+
+@pytest.fixture(autouse=True)
+def _clear_kis_state():
+    _TOKEN_CACHE.clear()
+    _THROTTLE_STATE.clear()
+    yield
+    _TOKEN_CACHE.clear()
+    _THROTTLE_STATE.clear()
 
 
 def _make_client(mode=TradingMode.PAPER, **kwargs):
@@ -41,6 +50,7 @@ class TestAuthenticate:
     async def test_authenticate_success(self):
         client = _make_client()
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "access_token": "tok123",
             "expires_in": 86400,
@@ -54,6 +64,38 @@ class TestAuthenticate:
         assert token == "tok123"
         assert client.access_token == "tok123"
         assert client.token_expires_at is not None
+
+    @pytest.mark.asyncio
+    async def test_authenticate_non_200_with_valid_json_raises_kis_error(self):
+        client = _make_client()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.json.return_value = {"error_description": "invalid appkey"}
+
+        client._client = AsyncMock()
+        client._client.post = AsyncMock(return_value=mock_resp)
+
+        with pytest.raises(KISClientError) as exc_info:
+            await client.authenticate()
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.response_data == {"error_description": "invalid appkey"}
+
+    @pytest.mark.asyncio
+    async def test_authenticate_non_200_with_malformed_json_raises_kis_error(self):
+        client = _make_client()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.headers = {"content-type": "text/html"}
+        mock_resp.json.side_effect = ValueError("malformed json")
+
+        client._client = AsyncMock()
+        client._client.post = AsyncMock(return_value=mock_resp)
+
+        with pytest.raises(KISClientError) as exc_info:
+            await client.authenticate()
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.response_data == {}
 
     @pytest.mark.asyncio
     async def test_ensure_token_skips_when_valid(self):

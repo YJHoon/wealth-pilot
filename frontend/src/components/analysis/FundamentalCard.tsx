@@ -36,7 +36,7 @@ function MetricRow({ label, value, compare }: { label: string; value: string | n
 export function FundamentalCard({ data }: FundamentalCardProps) {
   const isMasked = useAppStore((s) => s.isMasked);
 
-  const fmt = (v: number | null) => (v != null ? v.toFixed(2) : null);
+  const fmt = (v: number | null) => (v != null ? Number(v).toFixed(2) : null);
   const fmtPrice = (v: number | null) => (v == null ? "-" : formatMaskedKrw(v, isMasked));
 
   return (
@@ -68,8 +68,8 @@ export function FundamentalCard({ data }: FundamentalCardProps) {
           {([
             { label: "PER", value: fmt(data.per), sector: fmt(data.sectorAvgPer) },
             { label: "PBR", value: fmt(data.pbr), sector: fmt(data.sectorAvgPbr) },
-            { label: "ROE", value: data.roe != null ? `${data.roe.toFixed(2)}%` : null, sector: null },
-            { label: "EPS", value: data.eps != null ? (isMasked ? MASK : data.eps.toLocaleString("ko-KR")) : null, sector: null },
+            { label: "ROE", value: data.roe != null ? `${Number(data.roe).toFixed(2)}%` : null, sector: null },
+            { label: "EPS", value: data.eps != null ? (isMasked ? MASK : Number(data.eps).toLocaleString("ko-KR")) : null, sector: null },
           ] as const).map((item) => (
             <div key={item.label} className="rounded-lg border border-border bg-muted/30 p-3 text-center">
               <p className="text-xs text-muted-foreground">{item.label}</p>
@@ -88,7 +88,7 @@ export function FundamentalCard({ data }: FundamentalCardProps) {
           {data.priceGapPct != null && (
             <MetricRow
               label="괴리율"
-              value={`${data.priceGapPct >= 0 ? "+" : ""}${data.priceGapPct.toFixed(1)}%`}
+              value={`${Number(data.priceGapPct) >= 0 ? "+" : ""}${Number(data.priceGapPct).toFixed(1)}%`}
             />
           )}
         </div>
