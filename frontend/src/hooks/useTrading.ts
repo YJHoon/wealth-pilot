@@ -178,7 +178,12 @@ export function useTrading(): UseTradingReturn {
         failed: 0,
         errors: [],
       };
-      if (!canFetch || activeTargets.length === 0) return result;
+      if (activeTargets.length === 0) return result;
+      if (!canFetch) {
+        result.failed = result.total;
+        result.errors = activeTargets.map((a) => a.id);
+        return result;
+      }
       const results: Record<string, KisBalance> = {};
       await Promise.all(
         activeTargets.map(async (account) => {
@@ -196,7 +201,13 @@ export function useTrading(): UseTradingReturn {
           }
         }),
       );
-      setAccountBalances((prev) => ({ ...prev, ...results }));
+      setAccountBalances((prev) => {
+        const next: Record<string, KisBalance> = { ...prev, ...results };
+        for (const failedId of result.errors) {
+          delete next[failedId];
+        }
+        return next;
+      });
       return result;
     },
     [canFetch, fetchOpts],
