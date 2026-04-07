@@ -210,7 +210,7 @@ async def get_account_balance(
     """KIS 실시간 잔고 조회."""
     account = await _get_user_account(db, account_id, user.id)
     if not account.is_active:
-        raise HTTPException(status_code=403, detail="비활성화된 계좌입니다.")
+        raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
     account_mode = account.mode
     mode_value = account_mode.value
 
