@@ -328,18 +328,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     if pos is None:
                         continue
 
-                    held_qty = int(decrypt_decimal(pos.quantity))
-                    if held_qty <= 0:
-                        continue
-
-                    # Pre-Trade Check: 매도 수량 ≤ 보유 수량
-                    qty = held_qty  # 시그널 매도는 전량 매도
-                    if qty > held_qty:
-                        skip_msg = (
-                            f"매도 스킵: 보유 부족 — 요청 {qty} / 보유 {held_qty} ({ticker})"
-                        )
-                        logger.warning(skip_msg)
-                        await send_telegram_message(f"⚠️ [사전검증 실패] {skip_msg}")
+                    # Pre-Trade Check: 보유수량 > 0 (시그널 매도는 전량 매도)
+                    qty = int(decrypt_decimal(pos.quantity))
+                    if qty <= 0:
                         continue
 
                     try:
