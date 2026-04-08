@@ -442,8 +442,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                                 Decimal(str(current_price)),
                             )
                             add_realized_pnl(strategy, realized_delta)
-                        except ValueError as fill_err:
-                            # 알려진 비즈니스 예외만 swallow. 그 외는 위로 전파.
+                        except Exception as fill_err:
+                            # ValueError(수량부족 등 알려진 비즈니스 예외)만 기록 후 진행.
+                            # 그 외(DB/암호화 등)는 critical 로깅 후 re-raise해야 한다 —
+                            # 그렇지 않으면 ticker 루프의 외곽 `except Exception`이
+                            # 이를 swallow해 회계 오류가 침묵하게 된다.
                             logger.critical(
                                 "Signal sell fill apply failed (order persisted): "
                                 "kis_order_id=%s ticker=%s qty=%d err=%s",
@@ -453,6 +456,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                                 f"🚨 [회계 오류] 시그널 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
                                 f"{ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
                             )
+                            if not isinstance(fill_err, ValueError):
+                                raise
                         # 시그널 매도는 전량 매도 → set 제거 + 재매수 금지 등록
                         held_tickers.discard(ticker)
                         recently_sold_tickers.add(ticker)
