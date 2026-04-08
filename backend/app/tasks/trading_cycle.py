@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -25,13 +25,22 @@ from app.models.trading import (
     TradingStrategy,
 )
 from app.services.account_lock import acquire_account_lock
-from app.services.strategy_capital import get_strategy_available_capital
+from app.services.strategy_capital import (
+    add_realized_pnl,
+    get_strategy_available_capital,
+)
+from app.services.strategy_position import (
+    apply_buy_fill,
+    apply_sell_fill,
+    list_strategy_positions,
+    reconcile_with_kis,
+    update_position_market_data,
+)
 from app.services.alert_service import send_telegram_message
 from app.services.crypto_service import (
     decrypt_decimal,
     decrypt_value,
     encrypt_decimal,
-    encrypt_decimal_optional,
 )
 from app.services.kis_client import KISClient, KISClientError
 from app.services.risk_manager import RiskManager
@@ -185,18 +194,17 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         strat = create_strategy(strategy.strategy_type.value, strategy.params_json)
         risk_mgr = RiskManager.from_params(strategy.params_json)
 
-        # 현재 포지션 수 조회
-        pos_result = await db.execute(
-            select(func.count()).select_from(TradingPosition).where(
-                TradingPosition.account_id == account.id,
-            )
-        )
-        position_count = pos_result.scalar_one()
+        # 현재 보유 종목 집합 (Phase 3: 전략별, distinct ticker 기준)
+        # check_can_buy의 max_positions 제약은 "동시 보유 종목 수"이므로
+        # 같은 ticker 추가 매수는 카운트 증가 없이 set 멤버십으로만 판정한다.
+        positions = await list_strategy_positions(db, account.id, strategy.id)
+        held_tickers: set[str] = {p.ticker for p in positions}
+        # 같은 사이클 내에서 손절/시그널 매도된 ticker는 재매수 금지.
+        # held_tickers에서 discard만 하면 직후 buy 분기가 "신규 종목"으로 오인해
+        # 다시 매수할 수 있으므로 별도 집합으로 격리한다.
+        recently_sold_tickers: set[str] = set()
 
-        # 5. 보유 포지션 손절 체크
-        positions = (await db.execute(
-            select(TradingPosition).where(TradingPosition.account_id == account.id)
-        )).scalars().all()
+        # 5. 보유 포지션 손절 체크 (Phase 3: 해당 전략 보유분만)
 
         for pos in positions:
             if pos.current_price is None:
@@ -216,9 +224,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     order_result = await kis.place_order(
                         side="sell", ticker=pos.ticker, quantity=qty, order_type="market",
                     )
-                    # TODO(Phase 3): 체결 확인 후 add_realized_pnl 호출.
-                    # SUBMITTED 상태에서 누적하면 거부/부분체결/슬리피지 시 실현PnL이
-                    # 어긋난다. 별도 fill polling/콜백 도입 후 actual fill 기반으로 누적.
+                    # NOTE: SUBMITTED를 체결로 간주하는 단순화 모델 (fill polling은 별도 작업).
+                    # 거부/부분체결/슬리피지 정확화는 fill polling 도입 후 처리.
                     order = TradingOrder(
                         user_id=user_id,
                         account_id=account.id,
@@ -235,6 +242,31 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         reason=f"손절: {stop_check.reason}",
                     )
                     db.add(order)
+                    # Phase 3: 전략 포지션 차감 + 실현손익 누적
+                    # KIS 주문은 이미 실행된 회복 불가 부수효과이므로, 포지션 갱신이 실패해도
+                    # order 레코드는 진실로 남긴다 (삭제 금지). 대신 critical 경고를 띄우고
+                    # 실현PnL은 누적하지 않는다 — 사이클 말미의 reconcile_with_kis가
+                    # 합계 불일치를 추가로 surface한다.
+                    try:
+                        realized_delta = await apply_sell_fill(
+                            db, strategy, pos.ticker, Decimal(qty), current,
+                        )
+                        add_realized_pnl(strategy, realized_delta)
+                    except ValueError as fill_err:
+                        # 알려진 비즈니스 예외(수량 부족 등)만 swallow.
+                        # DB/암호화 등 미지의 예외는 사이클을 중단해야 한다.
+                        logger.critical(
+                            "Stop-loss fill apply failed (order persisted): "
+                            "kis_order_id=%s ticker=%s qty=%d err=%s",
+                            order_result.get("order_id"), pos.ticker, qty, fill_err,
+                        )
+                        skip_messages.append(
+                            f"🚨 [회계 오류] 손절 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
+                            f"{pos.ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
+                        )
+                    # 손절은 전량 매도 → 보유 set에서 제거하고 재매수 금지 set에 등록
+                    held_tickers.discard(pos.ticker)
+                    recently_sold_tickers.add(pos.ticker)
                     orders_placed += 1
                     trade_messages.append(
                         f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
@@ -275,6 +307,10 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     continue
 
                 if signal.action == "buy":
+                    # 같은 사이클에서 이미 매도된 ticker는 재매수 금지 (whipsaw 방지)
+                    if ticker in recently_sold_tickers:
+                        logger.info("Buy skipped (sold earlier this cycle): %s", ticker)
+                        continue
                     # 매수 가능 수량 계산
                     qty = risk_mgr.calculate_position_size(
                         available_cash, total_eval, current_price,
@@ -287,8 +323,12 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     qty_dec = Decimal(qty)
                     order_amount = price_dec * qty_dec
 
+                    # 같은 ticker는 추가 매수해도 동시 보유 종목 수가 늘지 않으므로 set 멤버십 기준
+                    effective_count = (
+                        len(held_tickers) if ticker in held_tickers else len(held_tickers) + 1
+                    )
                     buy_check = risk_mgr.check_can_buy(
-                        total_eval, order_amount, position_count,
+                        total_eval, order_amount, effective_count,
                     )
                     if not buy_check.allowed:
                         logger.info("Buy blocked for %s: %s", ticker, buy_check.reason)
@@ -342,8 +382,12 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             reason=signal.reason,
                         )
                         db.add(order)
+                        # Phase 3: 전략 포지션 증가 (신규 ticker일 때만 set에 추가)
+                        await apply_buy_fill(
+                            db, strategy, ticker, ticker_name, qty_dec, price_dec,
+                        )
+                        held_tickers.add(ticker)
                         orders_placed += 1
-                        position_count += 1
                         available_cash -= order_amount
                         trade_messages.append(
                             f"📈 [매수] {ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
@@ -352,10 +396,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         logger.error("Buy order failed for %s: %s", ticker, e)
 
                 elif signal.action == "sell":
-                    # 보유 포지션 확인
+                    # Phase 3: 해당 전략의 보유 포지션만 확인 (다른 전략 보유분 침범 금지)
                     pos_result2 = await db.execute(
                         select(TradingPosition).where(
                             TradingPosition.account_id == account.id,
+                            TradingPosition.strategy_id == strategy.id,
                             TradingPosition.ticker == ticker,
                         )
                     )
@@ -372,7 +417,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         order_result = await kis.place_order(
                             side="sell", ticker=ticker, quantity=qty, order_type="market",
                         )
-                        # TODO(Phase 3): 위 손절 케이스와 동일 — fill 확인 후 누적.
+                        # NOTE: SUBMITTED 단순화 — fill polling은 별도 작업.
                         order = TradingOrder(
                             user_id=user_id,
                             account_id=account.id,
@@ -389,8 +434,34 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             reason=signal.reason,
                         )
                         db.add(order)
+                        # Phase 3: 전략 포지션 차감 + 실현손익 누적
+                        # 손절 케이스와 동일한 사유로 try/except (회계 정합성 방어).
+                        try:
+                            realized_delta = await apply_sell_fill(
+                                db, strategy, ticker, Decimal(qty),
+                                Decimal(str(current_price)),
+                            )
+                            add_realized_pnl(strategy, realized_delta)
+                        except Exception as fill_err:
+                            # ValueError(수량부족 등 알려진 비즈니스 예외)만 기록 후 진행.
+                            # 그 외(DB/암호화 등)는 critical 로깅 후 re-raise해야 한다 —
+                            # 그렇지 않으면 ticker 루프의 외곽 `except Exception`이
+                            # 이를 swallow해 회계 오류가 침묵하게 된다.
+                            logger.critical(
+                                "Signal sell fill apply failed (order persisted): "
+                                "kis_order_id=%s ticker=%s qty=%d err=%s",
+                                order_result.get("order_id"), ticker, qty, fill_err,
+                            )
+                            skip_messages.append(
+                                f"🚨 [회계 오류] 시그널 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
+                                f"{ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
+                            )
+                            if not isinstance(fill_err, ValueError):
+                                raise
+                        # 시그널 매도는 전량 매도 → set 제거 + 재매수 금지 등록
+                        held_tickers.discard(ticker)
+                        recently_sold_tickers.add(ticker)
                         orders_placed += 1
-                        position_count -= 1
                         trade_messages.append(
                             f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
@@ -400,8 +471,25 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             except Exception:
                 logger.exception("Error evaluating ticker %s", ticker)
 
-        # 8. 포지션 업데이트 (KIS 잔고 기반)
-        await _sync_positions(db, kis, account)
+        # 8. 포지션 시세 갱신 + KIS 정합성 체크 (Phase 3)
+        mismatches = await _sync_positions(db, kis, account)
+        if mismatches:
+            mismatch_text = "\n".join(f"- {m}" for m in mismatches)
+            logger.error(
+                "Position reconciliation mismatch (account=%s):\n%s",
+                account.id, mismatch_text,
+            )
+            schedule_log.error_message = (
+                ((schedule_log.error_message or "") + "\n[정합성 불일치]\n" + mismatch_text)[:2000]
+            )
+            # 알림 실패가 사이클 자체를 ERROR로 뒤집지 않도록 격리.
+            # 정합성 불일치 사실은 schedule_log.error_message에 이미 기록되어 있다.
+            try:
+                await send_telegram_message(
+                    f"⚠️ [포지션 정합성 불일치] 계좌={account.id}\n{mismatch_text}"
+                )
+            except Exception:
+                logger.exception("Failed to send reconciliation mismatch alert")
 
         # 9. 스케줄 로그 완료
         schedule_log.tickers_evaluated = tickers_evaluated
@@ -435,47 +523,32 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         await kis.close()
 
 
-async def _sync_positions(db: AsyncSession, kis: KISClient, account: TradingAccount):
-    """KIS 잔고를 기반으로 TradingPosition 동기화."""
-    try:
-        balance = await kis.get_balance()
+async def _sync_positions(
+    db: AsyncSession, kis: KISClient, account: TradingAccount,
+) -> list[str]:
+    """Phase 3: KIS 잔고는 포지션 소유권의 source of truth가 아니다.
 
-        # 현금 잔고 동기화
-        account.cash_balance = encrypt_decimal(balance["cash"])
+    책임:
+    1. 현금 잔고 동기화 (account.cash_balance)
+    2. 같은 종목의 모든 전략 포지션에 current_price/unrealized_pnl 갱신
+    3. Σ(전략 포지션 수량) vs KIS 실잔고 정합성 체크
 
-        kis_holdings = {h["ticker"]: h for h in balance["holdings"]}
+    실제 포지션 증감은 매수/매도 체결 시 apply_buy_fill / apply_sell_fill에서 수행.
 
-        # 기존 포지션 조회
-        result = await db.execute(
-            select(TradingPosition).where(TradingPosition.account_id == account.id)
+    Returns:
+        정합성 불일치 메시지 목록 (정상이면 빈 리스트).
+
+    예외는 swallow하지 않고 호출자에게 전파한다 — sync 실패를
+    "정합성 OK([])"로 오인하면 회계 모니터링이 침묵하게 된다.
+    """
+    balance = await kis.get_balance()
+    account.cash_balance = encrypt_decimal(balance["cash"])
+
+    kis_holdings = {h["ticker"]: h for h in balance["holdings"]}
+
+    for ticker, holding in kis_holdings.items():
+        await update_position_market_data(
+            db, account.id, ticker, float(holding["current_price"]),
         )
-        existing_positions = {p.ticker: p for p in result.scalars().all()}
 
-        # KIS 잔고 기준으로 업데이트/생성
-        for ticker, holding in kis_holdings.items():
-            if ticker in existing_positions:
-                pos = existing_positions[ticker]
-                pos.quantity = encrypt_decimal(Decimal(holding["quantity"]))
-                pos.avg_buy_price = encrypt_decimal(holding["avg_price"])
-                pos.current_price = float(holding["current_price"])
-                pos.unrealized_pnl = encrypt_decimal_optional(holding["pnl"])
-            else:
-                pos = TradingPosition(
-                    user_id=account.user_id,
-                    account_id=account.id,
-                    ticker=ticker,
-                    ticker_name=holding["name"],
-                    quantity=encrypt_decimal(Decimal(holding["quantity"])),
-                    avg_buy_price=encrypt_decimal(holding["avg_price"]),
-                    current_price=float(holding["current_price"]),
-                    unrealized_pnl=encrypt_decimal_optional(holding["pnl"]),
-                )
-                db.add(pos)
-
-        # KIS에 없는 포지션 삭제 (전량 매도된 것)
-        for ticker, pos in existing_positions.items():
-            if ticker not in kis_holdings:
-                await db.delete(pos)
-
-    except Exception:
-        logger.exception("Failed to sync positions")
+    return await reconcile_with_kis(db, account.id, kis_holdings)
