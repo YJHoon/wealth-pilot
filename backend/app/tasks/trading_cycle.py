@@ -25,10 +25,7 @@ from app.models.trading import (
     TradingStrategy,
 )
 from app.services.account_lock import acquire_account_lock
-from app.services.strategy_capital import (
-    add_realized_pnl,
-    get_strategy_available_capital,
-)
+from app.services.strategy_capital import get_strategy_available_capital
 from app.services.alert_service import send_telegram_message
 from app.services.crypto_service import (
     decrypt_decimal,
@@ -162,6 +159,17 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
 
     try:
       async with acquire_account_lock(account.id):
+        # 락 획득 후 상태 재검증 — 비활성화 라우터와 직렬화되어,
+        # 비활성화가 먼저 커밋되었으면 즉시 스킵.
+        await db.refresh(account)
+        await db.refresh(strategy)
+        if not account.is_active or not strategy.is_active:
+            schedule_log.status = ScheduleLogStatus.SKIPPED
+            schedule_log.skip_reason = "계좌/전략 비활성화 상태"
+            schedule_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
         # 토큰 갱신 후 DB에 저장
         await kis._ensure_token()
         from app.services.crypto_service import encrypt_value
@@ -204,13 +212,13 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                 if qty <= 0:
                     logger.warning("Stop-loss skipped: zero quantity for %s", pos.ticker)
                     continue
-                # Phase 2: 손절 매도 실현손익 누적 (avg_price - current) * qty
-                stop_pnl_delta = (current - avg_price) * Decimal(qty)
                 try:
                     order_result = await kis.place_order(
                         side="sell", ticker=pos.ticker, quantity=qty, order_type="market",
                     )
-                    add_realized_pnl(strategy, stop_pnl_delta)
+                    # TODO(Phase 3): 체결 확인 후 add_realized_pnl 호출.
+                    # SUBMITTED 상태에서 누적하면 거부/부분체결/슬리피지 시 실현PnL이
+                    # 어긋난다. 별도 fill polling/콜백 도입 후 actual fill 기반으로 누적.
                     order = TradingOrder(
                         user_id=user_id,
                         account_id=account.id,
@@ -360,18 +368,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     if qty <= 0:
                         continue
 
-                    # Phase 2: 실현손익 누적용 평균매입가
-                    avg_buy = decrypt_decimal(pos.avg_buy_price)
-                    sell_price_dec = Decimal(str(current_price))
-                    pnl_delta = (sell_price_dec - avg_buy) * Decimal(qty)
-
                     try:
                         order_result = await kis.place_order(
                             side="sell", ticker=ticker, quantity=qty, order_type="market",
                         )
-                        # 체결 가정 시 전략별 실현손익 누적
-                        # (실제 체결가는 _sync_positions/주문 상태 폴링에서 보정)
-                        add_realized_pnl(strategy, pnl_delta)
+                        # TODO(Phase 3): 위 손절 케이스와 동일 — fill 확인 후 누적.
                         order = TradingOrder(
                             user_id=user_id,
                             account_id=account.id,

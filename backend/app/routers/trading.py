@@ -44,7 +44,7 @@ from app.services.crypto_service import (
     decrypt_decimal,
     encrypt_decimal,
 )
-from app.services.account_lock import clear_account_lock
+from app.services.account_lock import acquire_account_lock, clear_account_lock
 from app.services.kis_client import KISClient, KISClientError
 from app.services.strategy_capital import validate_account_allocation
 from app.services.security_service import AccessAction, log_access
@@ -157,22 +157,27 @@ async def deactivate_trading_account(
 ):
     """계좌 비활성화."""
     account = await _get_user_account(db, account_id, user.id)
-    account.is_active = False
 
-    # 해당 계좌의 모든 활성 스케줄 중지
-    result = await db.execute(
-        select(TradingStrategy).where(
-            TradingStrategy.account_id == account_id,
-            TradingStrategy.is_scheduled.is_(True),
+    # 진행 중인 매매 사이클과 직렬화: 락 안에서 비활성화 + 스케줄 제거.
+    # _run_cycle은 락을 획득한 직후 account.is_active를 재검증하므로,
+    # 비활성화 이후에 진입한 사이클은 즉시 스킵된다.
+    async with acquire_account_lock(account_id):
+        account.is_active = False
+
+        # 해당 계좌의 모든 활성 스케줄 중지
+        result = await db.execute(
+            select(TradingStrategy).where(
+                TradingStrategy.account_id == account_id,
+                TradingStrategy.is_scheduled.is_(True),
+            )
         )
-    )
-    for strategy in result.scalars().all():
-        strategy.is_scheduled = False
-        trading_scheduler.remove_schedule(user.id, strategy.id)
+        for strategy in result.scalars().all():
+            strategy.is_scheduled = False
+            trading_scheduler.remove_schedule(user.id, strategy.id)
 
-    await db.commit()
+        await db.commit()
 
-    # 계좌 단위 락 레지스트리에서도 제거 (사용 중이면 무시; prune이 추후 정리)
+    # 락 해제 후 레지스트리에서 제거 (refcount=0이고 unlocked일 때만)
     await clear_account_lock(account_id)
 
     # 액세스 로그 (실패해도 비활성화는 보존)
@@ -227,8 +232,10 @@ async def get_account_balance(
 # ──────────────────────────────────────────────
 
 @router.post("/strategies", response_model=TradingStrategyResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("100/minute")
 async def create_strategy(
     body: TradingStrategyCreate,
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -274,6 +281,13 @@ async def create_strategy(
     await db.commit()
     await db.refresh(strategy)
 
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_STRATEGY_CREATE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_STRATEGY_CREATE access logging failed", exc_info=True)
+
     return strategy_to_response(strategy)
 
 
@@ -293,9 +307,11 @@ async def list_strategies(
 
 
 @router.put("/strategies/{strategy_id}", response_model=TradingStrategyResponse)
+@limiter.limit("100/minute")
 async def update_strategy(
     strategy_id: UUID,
     body: TradingStrategyUpdate,
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -306,7 +322,12 @@ async def update_strategy(
 
     # initial_capital 변경 시 계좌 할당 재검증 + 암호화
     if "initial_capital" in update_data:
-        new_capital: Decimal = update_data.pop("initial_capital")
+        new_capital = update_data.pop("initial_capital")
+        if new_capital is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="initial_capital은 null일 수 없습니다. 변경하지 않으려면 필드를 생략하세요.",
+            )
         account = await _get_user_account(db, strategy.account_id, user.id)
         account_total = decrypt_decimal(account.initial_capital)
         allowed, remaining = await validate_account_allocation(
@@ -336,6 +357,13 @@ async def update_strategy(
 
     await db.commit()
     await db.refresh(strategy)
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_STRATEGY_UPDATE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_STRATEGY_UPDATE access logging failed", exc_info=True)
 
     return strategy_to_response(strategy)
 
