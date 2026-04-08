@@ -199,6 +199,10 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         # 같은 ticker 추가 매수는 카운트 증가 없이 set 멤버십으로만 판정한다.
         positions = await list_strategy_positions(db, account.id, strategy.id)
         held_tickers: set[str] = {p.ticker for p in positions}
+        # 같은 사이클 내에서 손절/시그널 매도된 ticker는 재매수 금지.
+        # held_tickers에서 discard만 하면 직후 buy 분기가 "신규 종목"으로 오인해
+        # 다시 매수할 수 있으므로 별도 집합으로 격리한다.
+        recently_sold_tickers: set[str] = set()
 
         # 5. 보유 포지션 손절 체크 (Phase 3: 해당 전략 보유분만)
 
@@ -248,7 +252,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             db, strategy, pos.ticker, Decimal(qty), current,
                         )
                         add_realized_pnl(strategy, realized_delta)
-                    except Exception as fill_err:
+                    except ValueError as fill_err:
+                        # 알려진 비즈니스 예외(수량 부족 등)만 swallow.
+                        # DB/암호화 등 미지의 예외는 사이클을 중단해야 한다.
                         logger.critical(
                             "Stop-loss fill apply failed (order persisted): "
                             "kis_order_id=%s ticker=%s qty=%d err=%s",
@@ -258,8 +264,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             f"🚨 [회계 오류] 손절 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
                             f"{pos.ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
                         )
-                    # 손절은 전량 매도 → ticker가 set에서 제거됨
+                    # 손절은 전량 매도 → 보유 set에서 제거하고 재매수 금지 set에 등록
                     held_tickers.discard(pos.ticker)
+                    recently_sold_tickers.add(pos.ticker)
                     orders_placed += 1
                     trade_messages.append(
                         f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
@@ -300,6 +307,10 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     continue
 
                 if signal.action == "buy":
+                    # 같은 사이클에서 이미 매도된 ticker는 재매수 금지 (whipsaw 방지)
+                    if ticker in recently_sold_tickers:
+                        logger.info("Buy skipped (sold earlier this cycle): %s", ticker)
+                        continue
                     # 매수 가능 수량 계산
                     qty = risk_mgr.calculate_position_size(
                         available_cash, total_eval, current_price,
@@ -431,7 +442,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                                 Decimal(str(current_price)),
                             )
                             add_realized_pnl(strategy, realized_delta)
-                        except Exception as fill_err:
+                        except ValueError as fill_err:
+                            # 알려진 비즈니스 예외만 swallow. 그 외는 위로 전파.
                             logger.critical(
                                 "Signal sell fill apply failed (order persisted): "
                                 "kis_order_id=%s ticker=%s qty=%d err=%s",
@@ -441,8 +453,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                                 f"🚨 [회계 오류] 시그널 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
                                 f"{ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
                             )
-                        # 시그널 매도는 전량 매도 → ticker가 set에서 제거됨
+                        # 시그널 매도는 전량 매도 → set 제거 + 재매수 금지 등록
                         held_tickers.discard(ticker)
+                        recently_sold_tickers.add(ticker)
                         orders_placed += 1
                         trade_messages.append(
                             f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
@@ -464,9 +477,14 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             schedule_log.error_message = (
                 ((schedule_log.error_message or "") + "\n[정합성 불일치]\n" + mismatch_text)[:2000]
             )
-            await send_telegram_message(
-                f"⚠️ [포지션 정합성 불일치] 계좌={account.id}\n{mismatch_text}"
-            )
+            # 알림 실패가 사이클 자체를 ERROR로 뒤집지 않도록 격리.
+            # 정합성 불일치 사실은 schedule_log.error_message에 이미 기록되어 있다.
+            try:
+                await send_telegram_message(
+                    f"⚠️ [포지션 정합성 불일치] 계좌={account.id}\n{mismatch_text}"
+                )
+            except Exception:
+                logger.exception("Failed to send reconciliation mismatch alert")
 
         # 9. 스케줄 로그 완료
         schedule_log.tickers_evaluated = tickers_evaluated
