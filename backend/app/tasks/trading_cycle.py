@@ -147,9 +147,13 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     orders_placed = 0
     tickers_evaluated = 0
     trade_messages: list[str] = []
+    skip_messages: list[str] = []  # 사이클 종료 시 단일 알림으로 배치 전송
 
     # 같은 계좌의 다른 전략 사이클과 잔고조회→발주 구간이 인터리브되지 않도록
-    # 계좌 단위로 직렬화 (Phase 1 — 단일 프로세스 가정)
+    # 계좌 단위로 직렬화.
+    # TODO(Phase 2): 현재는 in-process asyncio.Lock이라 멀티 워커/멀티 인스턴스
+    # 환경에서는 직렬화가 보장되지 않는다. 스케일아웃 전에 Redis 기반 분산 락
+    # (aioredlock 또는 redis-py Lock)으로 교체 필요. account_lock.py 참고.
     account_lock = await get_account_lock(account.id)
 
     try:
@@ -263,8 +267,13 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     if qty <= 0:
                         continue
 
+                    # 이후 산술은 모두 Decimal로 일관 처리
+                    price_dec = Decimal(str(current_price))
+                    qty_dec = Decimal(qty)
+                    order_amount = price_dec * qty_dec
+
                     buy_check = risk_mgr.check_can_buy(
-                        total_eval, current_price * qty, position_count,
+                        total_eval, order_amount, position_count,
                     )
                     if not buy_check.allowed:
                         logger.info("Buy blocked for %s: %s", ticker, buy_check.reason)
@@ -272,14 +281,14 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
 
                     # Pre-Trade Check: 예수금이 주문금액 + 수수료 버퍼를 충당하는지 확인
                     # 같은 계좌의 다른 사이클이 직전에 매수한 경우를 대비해 발주 직전에 재검증
-                    required_cash = Decimal(str(current_price)) * Decimal(qty) * BUY_FEE_BUFFER
-                    if Decimal(str(available_cash)) < required_cash:
+                    required_cash = order_amount * BUY_FEE_BUFFER
+                    if available_cash < required_cash:
                         skip_msg = (
                             f"매수 스킵: 예수금 부족 — 필요 {required_cash:,.0f}원 / "
                             f"가용 {available_cash:,.0f}원 ({ticker})"
                         )
                         logger.warning(skip_msg)
-                        await send_telegram_message(f"⚠️ [사전검증 실패] {skip_msg}")
+                        skip_messages.append(skip_msg)
                         continue
 
                     # 매수 주문
@@ -309,7 +318,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         db.add(order)
                         orders_placed += 1
                         position_count += 1
-                        available_cash -= current_price * qty
+                        available_cash -= order_amount
                         trade_messages.append(
                             f"📈 [매수] {ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
@@ -373,14 +382,20 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         schedule_log.completed_at = datetime.now(timezone.utc)
         await db.commit()
 
-        # 10. 텔레그램 알림
-        if trade_messages:
-            summary = "\n\n".join(trade_messages)
-            await send_telegram_message(
+        # 10. 텔레그램 알림 (체결 + 사전검증 스킵을 단일 메시지로 배치 전송)
+        if trade_messages or skip_messages:
+            sections = [
                 f"🤖 [자동매매 사이클 완료]\n"
-                f"종목 분석: {tickers_evaluated}개 | 주문: {orders_placed}건\n\n"
-                f"{summary}"
-            )
+                f"종목 분석: {tickers_evaluated}개 | 주문: {orders_placed}건"
+            ]
+            if trade_messages:
+                sections.append("\n\n".join(trade_messages))
+            if skip_messages:
+                sections.append(
+                    "⚠️ 사전검증 스킵 (" + str(len(skip_messages)) + "건)\n"
+                    + "\n".join(f"- {m}" for m in skip_messages)
+                )
+            await send_telegram_message("\n\n".join(sections))
 
     except Exception:
         schedule_log.status = ScheduleLogStatus.ERROR
