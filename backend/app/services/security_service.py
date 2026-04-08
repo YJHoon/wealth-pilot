@@ -44,6 +44,8 @@ class AccessAction:
     TRADING_SCHEDULE_STOP = "trading_schedule_stop"
     TRADING_MANUAL_RUN = "trading_manual_run"
     TRADING_ORDER_PLACED = "trading_order_placed"
+    TRADING_STRATEGY_CREATE = "trading_strategy_create"
+    TRADING_STRATEGY_UPDATE = "trading_strategy_update"
     WATCHLIST_CREATE = "watchlist_create"
     WATCHLIST_UPDATE = "watchlist_update"
     WATCHLIST_DELETE = "watchlist_delete"

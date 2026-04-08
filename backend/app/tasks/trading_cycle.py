@@ -24,6 +24,8 @@ from app.models.trading import (
     TradingScheduleLog,
     TradingStrategy,
 )
+from app.services.account_lock import acquire_account_lock
+from app.services.strategy_capital import get_strategy_available_capital
 from app.services.alert_service import send_telegram_message
 from app.services.crypto_service import (
     decrypt_decimal,
@@ -43,6 +45,10 @@ MARKET_OPEN_HOUR = 9
 MARKET_OPEN_MINUTE = 0
 MARKET_CLOSE_HOUR = 15
 MARKET_CLOSE_MINUTE = 30
+
+# 매수 사전 검증 시 수수료/슬리피지 버퍼 (0.5%)
+# KIS 위탁수수료(약 0.015%) + 시장가 슬리피지 여유분
+BUY_FEE_BUFFER = Decimal("1.005")
 
 
 def _is_market_hours() -> bool:
@@ -142,8 +148,28 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     orders_placed = 0
     tickers_evaluated = 0
     trade_messages: list[str] = []
+    skip_messages: list[str] = []  # 사이클 종료 시 단일 알림으로 배치 전송
+
+    # 같은 계좌의 다른 전략 사이클과 잔고조회→발주 구간이 인터리브되지 않도록
+    # 계좌 단위로 직렬화. acquire_account_lock은 refcount를 자동 관리하므로
+    # 임계 구간 진입 직전에 prune이 락을 회수하는 TOCTOU 경합이 차단된다.
+    # TODO(Phase 2): 현재는 in-process라 멀티 워커/멀티 인스턴스 환경에서는
+    # 직렬화가 보장되지 않는다. 스케일아웃 전에 Redis 분산 락
+    # (aioredlock / redis-py Lock)으로 교체 필요. account_lock.py 참고.
 
     try:
+      async with acquire_account_lock(account.id):
+        # 락 획득 후 상태 재검증 — 비활성화 라우터와 직렬화되어,
+        # 비활성화가 먼저 커밋되었으면 즉시 스킵.
+        await db.refresh(account)
+        await db.refresh(strategy)
+        if not account.is_active or not strategy.is_active:
+            schedule_log.status = ScheduleLogStatus.SKIPPED
+            schedule_log.skip_reason = "계좌/전략 비활성화 상태"
+            schedule_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
         # 토큰 갱신 후 DB에 저장
         await kis._ensure_token()
         from app.services.crypto_service import encrypt_value
@@ -182,10 +208,17 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             if stop_check.allowed:
                 # 손절 매도
                 qty = int(decrypt_decimal(pos.quantity))
+                # Pre-Trade Check: 매도 수량 ≥ 1
+                if qty <= 0:
+                    logger.warning("Stop-loss skipped: zero quantity for %s", pos.ticker)
+                    continue
                 try:
                     order_result = await kis.place_order(
                         side="sell", ticker=pos.ticker, quantity=qty, order_type="market",
                     )
+                    # TODO(Phase 3): 체결 확인 후 add_realized_pnl 호출.
+                    # SUBMITTED 상태에서 누적하면 거부/부분체결/슬리피지 시 실현PnL이
+                    # 어긋난다. 별도 fill polling/콜백 도입 후 actual fill 기반으로 누적.
                     order = TradingOrder(
                         user_id=user_id,
                         account_id=account.id,
@@ -249,11 +282,39 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     if qty <= 0:
                         continue
 
+                    # 이후 산술은 모두 Decimal로 일관 처리
+                    price_dec = Decimal(str(current_price))
+                    qty_dec = Decimal(qty)
+                    order_amount = price_dec * qty_dec
+
                     buy_check = risk_mgr.check_can_buy(
-                        total_eval, current_price * qty, position_count,
+                        total_eval, order_amount, position_count,
                     )
                     if not buy_check.allowed:
                         logger.info("Buy blocked for %s: %s", ticker, buy_check.reason)
+                        continue
+
+                    # Pre-Trade Check 1: 계좌 예수금 (KIS 잔고) ≥ 주문금액 × 버퍼
+                    required_cash = order_amount * BUY_FEE_BUFFER
+                    if available_cash < required_cash:
+                        skip_msg = (
+                            f"매수 스킵: 예수금 부족 — 필요 {required_cash:,.0f}원 / "
+                            f"가용 {available_cash:,.0f}원 ({ticker})"
+                        )
+                        logger.warning(skip_msg)
+                        skip_messages.append(skip_msg)
+                        continue
+
+                    # Pre-Trade Check 2 (Phase 2): 전략별 가용 자본 ≥ 주문금액
+                    # 같은 계좌의 다른 전략이 자본을 소진한 경우 차단
+                    strategy_available = await get_strategy_available_capital(db, strategy)
+                    if strategy_available < order_amount:
+                        skip_msg = (
+                            f"매수 스킵: 전략 가용자본 부족 — 필요 {order_amount:,.0f}원 / "
+                            f"전략가용 {strategy_available:,.0f}원 ({ticker})"
+                        )
+                        logger.warning(skip_msg)
+                        skip_messages.append(skip_msg)
                         continue
 
                     # 매수 주문
@@ -283,7 +344,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         db.add(order)
                         orders_placed += 1
                         position_count += 1
-                        available_cash -= current_price * qty
+                        available_cash -= order_amount
                         trade_messages.append(
                             f"📈 [매수] {ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
@@ -302,6 +363,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     if pos is None:
                         continue
 
+                    # Pre-Trade Check: 보유수량 > 0 (시그널 매도는 전량 매도)
                     qty = int(decrypt_decimal(pos.quantity))
                     if qty <= 0:
                         continue
@@ -310,6 +372,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         order_result = await kis.place_order(
                             side="sell", ticker=ticker, quantity=qty, order_type="market",
                         )
+                        # TODO(Phase 3): 위 손절 케이스와 동일 — fill 확인 후 누적.
                         order = TradingOrder(
                             user_id=user_id,
                             account_id=account.id,
@@ -346,14 +409,20 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         schedule_log.completed_at = datetime.now(timezone.utc)
         await db.commit()
 
-        # 10. 텔레그램 알림
-        if trade_messages:
-            summary = "\n\n".join(trade_messages)
-            await send_telegram_message(
+        # 10. 텔레그램 알림 (체결 + 사전검증 스킵을 단일 메시지로 배치 전송)
+        if trade_messages or skip_messages:
+            sections = [
                 f"🤖 [자동매매 사이클 완료]\n"
-                f"종목 분석: {tickers_evaluated}개 | 주문: {orders_placed}건\n\n"
-                f"{summary}"
-            )
+                f"종목 분석: {tickers_evaluated}개 | 주문: {orders_placed}건"
+            ]
+            if trade_messages:
+                sections.append("\n\n".join(trade_messages))
+            if skip_messages:
+                sections.append(
+                    "⚠️ 사전검증 스킵 (" + str(len(skip_messages)) + "건)\n"
+                    + "\n".join(f"- {m}" for m in skip_messages)
+                )
+            await send_telegram_message("\n\n".join(sections))
 
     except Exception:
         schedule_log.status = ScheduleLogStatus.ERROR

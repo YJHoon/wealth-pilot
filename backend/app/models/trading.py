@@ -161,6 +161,12 @@ class TradingStrategy(Base):
         Boolean, default=True, server_default=expression.true(), nullable=False,
     )
 
+    # Phase 2: 전략별 자본 할당 (모델 1 - Drift 허용)
+    # 생성 시점 스냅샷, 이후 비율 재계산 없음 (AES-256 암호화)
+    initial_capital: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 누적 실현 손익 (AES-256 암호화). None은 0으로 해석.
+    realized_pnl: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )

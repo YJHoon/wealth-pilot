@@ -44,7 +44,9 @@ from app.services.crypto_service import (
     decrypt_decimal,
     encrypt_decimal,
 )
+from app.services.account_lock import acquire_account_lock, clear_account_lock
 from app.services.kis_client import KISClient, KISClientError
+from app.services.strategy_capital import validate_account_allocation
 from app.services.security_service import AccessAction, log_access
 from app.tasks.trading_scheduler import trading_scheduler
 
@@ -176,20 +178,28 @@ async def deactivate_trading_account(
 ):
     """계좌 비활성화."""
     account = await _get_user_account(db, account_id, user.id)
-    account.is_active = False
 
-    # 해당 계좌의 모든 활성 스케줄 중지
-    result = await db.execute(
-        select(TradingStrategy).where(
-            TradingStrategy.account_id == account_id,
-            TradingStrategy.is_scheduled.is_(True),
+    # 진행 중인 매매 사이클과 직렬화: 락 안에서 비활성화 + 스케줄 제거.
+    # _run_cycle은 락을 획득한 직후 account.is_active를 재검증하므로,
+    # 비활성화 이후에 진입한 사이클은 즉시 스킵된다.
+    async with acquire_account_lock(account_id):
+        account.is_active = False
+
+        # 해당 계좌의 모든 활성 스케줄 중지
+        result = await db.execute(
+            select(TradingStrategy).where(
+                TradingStrategy.account_id == account_id,
+                TradingStrategy.is_scheduled.is_(True),
+            )
         )
-    )
-    for strategy in result.scalars().all():
-        strategy.is_scheduled = False
-        trading_scheduler.remove_schedule(user.id, strategy.id)
+        for strategy in result.scalars().all():
+            strategy.is_scheduled = False
+            trading_scheduler.remove_schedule(user.id, strategy.id)
 
-    await db.commit()
+        await db.commit()
+
+    # 락 해제 후 레지스트리에서 제거 (refcount=0이고 unlocked일 때만)
+    await clear_account_lock(account_id)
 
     # 액세스 로그 (실패해도 비활성화는 보존)
     try:
@@ -246,14 +256,38 @@ async def get_account_balance(
 # ──────────────────────────────────────────────
 
 @router.post("/strategies", response_model=TradingStrategyResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("100/minute")
 async def create_strategy(
     body: TradingStrategyCreate,
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """전략 생성."""
+    """전략 생성.
+
+    Phase 2: initial_capital(전략별 할당금)을 받아 계좌 가용 자본 내인지 검증.
+    합산 초과 시 400 반환.
+    """
     # 계좌 소유권 확인
-    await _get_user_account(db, body.account_id, user.id)
+    account = await _get_user_account(db, body.account_id, user.id)
+
+    # 계좌 총 자본 (현재는 initial_capital 기준 — 추후 KIS 잔고 동기화 시 cash_balance 사용 가능)
+    account_total = decrypt_decimal(account.initial_capital)
+
+    allowed, remaining = await validate_account_allocation(
+        db,
+        account_id=body.account_id,
+        new_initial_capital=body.initial_capital,
+        account_total_capital=account_total,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"전략 할당 자본 초과: 신규 {body.initial_capital:,.0f}원 / "
+                f"잔여 {remaining:,.0f}원 (계좌 총 {account_total:,.0f}원)"
+            ),
+        )
 
     strategy = TradingStrategy(
         user_id=user.id,
@@ -264,10 +298,19 @@ async def create_strategy(
         target_tickers=body.target_tickers,
         interval_minutes=body.interval_minutes,
         market_hours_only=body.market_hours_only,
+        initial_capital=encrypt_decimal(body.initial_capital),
+        realized_pnl=encrypt_decimal(Decimal("0")),
     )
     db.add(strategy)
     await db.commit()
     await db.refresh(strategy)
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_STRATEGY_CREATE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_STRATEGY_CREATE access logging failed", exc_info=True)
 
     return strategy_to_response(strategy)
 
@@ -288,9 +331,11 @@ async def list_strategies(
 
 
 @router.put("/strategies/{strategy_id}", response_model=TradingStrategyResponse)
+@limiter.limit("100/minute")
 async def update_strategy(
     strategy_id: UUID,
     body: TradingStrategyUpdate,
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -298,6 +343,34 @@ async def update_strategy(
     strategy = await _get_user_strategy(db, strategy_id, user.id)
 
     update_data = body.model_dump(exclude_unset=True)
+
+    # initial_capital 변경 시 계좌 할당 재검증 + 암호화
+    if "initial_capital" in update_data:
+        new_capital = update_data.pop("initial_capital")
+        if new_capital is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="initial_capital은 null일 수 없습니다. 변경하지 않으려면 필드를 생략하세요.",
+            )
+        account = await _get_user_account(db, strategy.account_id, user.id)
+        account_total = decrypt_decimal(account.initial_capital)
+        allowed, remaining = await validate_account_allocation(
+            db,
+            account_id=strategy.account_id,
+            new_initial_capital=new_capital,
+            account_total_capital=account_total,
+            exclude_strategy_id=strategy.id,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"전략 할당 자본 초과: 신규 {new_capital:,.0f}원 / "
+                    f"잔여 {remaining:,.0f}원 (자기 자신 제외)"
+                ),
+            )
+        strategy.initial_capital = encrypt_decimal(new_capital)
+
     for key, value in update_data.items():
         setattr(strategy, key, value)
 
@@ -308,6 +381,13 @@ async def update_strategy(
 
     await db.commit()
     await db.refresh(strategy)
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_STRATEGY_UPDATE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_STRATEGY_UPDATE access logging failed", exc_info=True)
 
     return strategy_to_response(strategy)
 

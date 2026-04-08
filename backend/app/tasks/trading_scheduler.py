@@ -41,6 +41,17 @@ class TradingScheduler:
 
         await self._restore_schedules()
 
+        # 계좌 락 레지스트리 주기 정리 (시간당 1회)
+        from app.services.account_lock import prune_idle_account_locks
+        self._scheduler.add_job(
+            prune_idle_account_locks,
+            trigger=IntervalTrigger(hours=1),
+            id="account_lock_prune",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
     async def shutdown(self):
         """스케줄러 종료."""
         if self._scheduler and self._scheduler.running:
