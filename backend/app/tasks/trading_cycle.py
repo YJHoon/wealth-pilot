@@ -194,9 +194,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         strat = create_strategy(strategy.strategy_type.value, strategy.params_json)
         risk_mgr = RiskManager.from_params(strategy.params_json)
 
-        # 현재 포지션 수 조회 (Phase 3: 전략별로만 카운트)
+        # 현재 보유 종목 집합 (Phase 3: 전략별, distinct ticker 기준)
+        # check_can_buy의 max_positions 제약은 "동시 보유 종목 수"이므로
+        # 같은 ticker 추가 매수는 카운트 증가 없이 set 멤버십으로만 판정한다.
         positions = await list_strategy_positions(db, account.id, strategy.id)
-        position_count = len(positions)
+        held_tickers: set[str] = {p.ticker for p in positions}
 
         # 5. 보유 포지션 손절 체크 (Phase 3: 해당 전략 보유분만)
 
@@ -256,6 +258,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             f"🚨 [회계 오류] 손절 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
                             f"{pos.ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
                         )
+                    # 손절은 전량 매도 → ticker가 set에서 제거됨
+                    held_tickers.discard(pos.ticker)
                     orders_placed += 1
                     trade_messages.append(
                         f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
@@ -308,8 +312,12 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     qty_dec = Decimal(qty)
                     order_amount = price_dec * qty_dec
 
+                    # 같은 ticker는 추가 매수해도 동시 보유 종목 수가 늘지 않으므로 set 멤버십 기준
+                    effective_count = (
+                        len(held_tickers) if ticker in held_tickers else len(held_tickers) + 1
+                    )
                     buy_check = risk_mgr.check_can_buy(
-                        total_eval, order_amount, position_count,
+                        total_eval, order_amount, effective_count,
                     )
                     if not buy_check.allowed:
                         logger.info("Buy blocked for %s: %s", ticker, buy_check.reason)
@@ -363,12 +371,12 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             reason=signal.reason,
                         )
                         db.add(order)
-                        # Phase 3: 전략 포지션 증가
+                        # Phase 3: 전략 포지션 증가 (신규 ticker일 때만 set에 추가)
                         await apply_buy_fill(
                             db, strategy, ticker, ticker_name, qty_dec, price_dec,
                         )
+                        held_tickers.add(ticker)
                         orders_placed += 1
-                        position_count += 1
                         available_cash -= order_amount
                         trade_messages.append(
                             f"📈 [매수] {ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
@@ -433,8 +441,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                                 f"🚨 [회계 오류] 시그널 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
                                 f"{ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
                             )
+                        # 시그널 매도는 전량 매도 → ticker가 set에서 제거됨
+                        held_tickers.discard(ticker)
                         orders_placed += 1
-                        position_count -= 1
                         trade_messages.append(
                             f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
@@ -505,19 +514,18 @@ async def _sync_positions(
 
     Returns:
         정합성 불일치 메시지 목록 (정상이면 빈 리스트).
+
+    예외는 swallow하지 않고 호출자에게 전파한다 — sync 실패를
+    "정합성 OK([])"로 오인하면 회계 모니터링이 침묵하게 된다.
     """
-    try:
-        balance = await kis.get_balance()
-        account.cash_balance = encrypt_decimal(balance["cash"])
+    balance = await kis.get_balance()
+    account.cash_balance = encrypt_decimal(balance["cash"])
 
-        kis_holdings = {h["ticker"]: h for h in balance["holdings"]}
+    kis_holdings = {h["ticker"]: h for h in balance["holdings"]}
 
-        for ticker, holding in kis_holdings.items():
-            await update_position_market_data(
-                db, account.id, ticker, float(holding["current_price"]),
-            )
+    for ticker, holding in kis_holdings.items():
+        await update_position_market_data(
+            db, account.id, ticker, float(holding["current_price"]),
+        )
 
-        return await reconcile_with_kis(db, account.id, kis_holdings)
-    except Exception:
-        logger.exception("Failed to sync positions")
-        return []
+    return await reconcile_with_kis(db, account.id, kis_holdings)
