@@ -188,6 +188,7 @@ def order_to_response(order: TradingOrderModel) -> TradingOrderResponse:
 class TradingPositionResponse(BaseModel):
     id: UUID
     account_id: UUID
+    strategy_id: UUID
     ticker: str
     ticker_name: str
     quantity: Decimal
@@ -202,6 +203,7 @@ def position_to_response(position: TradingPositionModel) -> TradingPositionRespo
     return TradingPositionResponse(
         id=position.id,
         account_id=position.account_id,
+        strategy_id=position.strategy_id,
         ticker=position.ticker,
         ticker_name=position.ticker_name,
         quantity=decrypt_decimal(position.quantity),

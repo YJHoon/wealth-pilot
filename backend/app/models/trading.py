@@ -179,6 +179,7 @@ class TradingStrategy(Base):
     user = relationship("User", backref="trading_strategies")
     account = relationship("TradingAccount", back_populates="strategies")
     orders = relationship("TradingOrder", back_populates="strategy")
+    positions = relationship("TradingPosition", back_populates="strategy")
     schedule_logs = relationship("TradingScheduleLog", back_populates="strategy", cascade="all, delete-orphan")
 
 
@@ -264,7 +265,10 @@ class TradingPosition(Base):
 
     __tablename__ = "trading_positions"
     __table_args__ = (
-        UniqueConstraint("account_id", "ticker", name="uq_trading_position_account_ticker"),
+        UniqueConstraint(
+            "account_id", "strategy_id", "ticker",
+            name="uq_trading_position_account_strategy_ticker",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -277,6 +281,12 @@ class TradingPosition(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    # Phase 3: 전략별 포지션 격리
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trading_strategies.id", ondelete="RESTRICT"),
+        nullable=False, index=True,
     )
 
     ticker: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -302,6 +312,7 @@ class TradingPosition(Base):
 
     # 관계
     account = relationship("TradingAccount", back_populates="positions")
+    strategy = relationship("TradingStrategy", back_populates="positions")
 
 
 class TradingScheduleLog(Base):
