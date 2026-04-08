@@ -44,6 +44,7 @@ from app.services.crypto_service import (
     decrypt_decimal,
     encrypt_decimal,
 )
+from app.services.account_lock import clear_account_lock
 from app.services.kis_client import KISClient, KISClientError
 from app.services.strategy_capital import validate_account_allocation
 from app.services.security_service import AccessAction, log_access
@@ -170,6 +171,9 @@ async def deactivate_trading_account(
         trading_scheduler.remove_schedule(user.id, strategy.id)
 
     await db.commit()
+
+    # 계좌 단위 락 레지스트리에서도 제거 (사용 중이면 무시; prune이 추후 정리)
+    await clear_account_lock(account_id)
 
     # 액세스 로그 (실패해도 비활성화는 보존)
     try:

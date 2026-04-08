@@ -24,7 +24,7 @@ from app.models.trading import (
     TradingScheduleLog,
     TradingStrategy,
 )
-from app.services.account_lock import get_account_lock
+from app.services.account_lock import acquire_account_lock
 from app.services.strategy_capital import (
     add_realized_pnl,
     get_strategy_available_capital,
@@ -154,14 +154,14 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     skip_messages: list[str] = []  # 사이클 종료 시 단일 알림으로 배치 전송
 
     # 같은 계좌의 다른 전략 사이클과 잔고조회→발주 구간이 인터리브되지 않도록
-    # 계좌 단위로 직렬화.
-    # TODO(Phase 2): 현재는 in-process asyncio.Lock이라 멀티 워커/멀티 인스턴스
-    # 환경에서는 직렬화가 보장되지 않는다. 스케일아웃 전에 Redis 기반 분산 락
-    # (aioredlock 또는 redis-py Lock)으로 교체 필요. account_lock.py 참고.
-    account_lock = await get_account_lock(account.id)
+    # 계좌 단위로 직렬화. acquire_account_lock은 refcount를 자동 관리하므로
+    # 임계 구간 진입 직전에 prune이 락을 회수하는 TOCTOU 경합이 차단된다.
+    # TODO(Phase 2): 현재는 in-process라 멀티 워커/멀티 인스턴스 환경에서는
+    # 직렬화가 보장되지 않는다. 스케일아웃 전에 Redis 분산 락
+    # (aioredlock / redis-py Lock)으로 교체 필요. account_lock.py 참고.
 
     try:
-      async with account_lock:
+      async with acquire_account_lock(account.id):
         # 토큰 갱신 후 DB에 저장
         await kis._ensure_token()
         from app.services.crypto_service import encrypt_value
