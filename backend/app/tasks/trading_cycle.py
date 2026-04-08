@@ -24,6 +24,7 @@ from app.models.trading import (
     TradingScheduleLog,
     TradingStrategy,
 )
+from app.services.account_lock import get_account_lock
 from app.services.alert_service import send_telegram_message
 from app.services.crypto_service import (
     decrypt_decimal,
@@ -43,6 +44,10 @@ MARKET_OPEN_HOUR = 9
 MARKET_OPEN_MINUTE = 0
 MARKET_CLOSE_HOUR = 15
 MARKET_CLOSE_MINUTE = 30
+
+# 매수 사전 검증 시 수수료/슬리피지 버퍼 (0.5%)
+# KIS 위탁수수료(약 0.015%) + 시장가 슬리피지 여유분
+BUY_FEE_BUFFER = Decimal("1.005")
 
 
 def _is_market_hours() -> bool:
@@ -143,7 +148,12 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     tickers_evaluated = 0
     trade_messages: list[str] = []
 
+    # 같은 계좌의 다른 전략 사이클과 잔고조회→발주 구간이 인터리브되지 않도록
+    # 계좌 단위로 직렬화 (Phase 1 — 단일 프로세스 가정)
+    account_lock = await get_account_lock(account.id)
+
     try:
+      async with account_lock:
         # 토큰 갱신 후 DB에 저장
         await kis._ensure_token()
         from app.services.crypto_service import encrypt_value
@@ -182,6 +192,10 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             if stop_check.allowed:
                 # 손절 매도
                 qty = int(decrypt_decimal(pos.quantity))
+                # Pre-Trade Check: 매도 수량 ≥ 1
+                if qty <= 0:
+                    logger.warning("Stop-loss skipped: zero quantity for %s", pos.ticker)
+                    continue
                 try:
                     order_result = await kis.place_order(
                         side="sell", ticker=pos.ticker, quantity=qty, order_type="market",
@@ -256,6 +270,18 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         logger.info("Buy blocked for %s: %s", ticker, buy_check.reason)
                         continue
 
+                    # Pre-Trade Check: 예수금이 주문금액 + 수수료 버퍼를 충당하는지 확인
+                    # 같은 계좌의 다른 사이클이 직전에 매수한 경우를 대비해 발주 직전에 재검증
+                    required_cash = Decimal(str(current_price)) * Decimal(qty) * BUY_FEE_BUFFER
+                    if Decimal(str(available_cash)) < required_cash:
+                        skip_msg = (
+                            f"매수 스킵: 예수금 부족 — 필요 {required_cash:,.0f}원 / "
+                            f"가용 {available_cash:,.0f}원 ({ticker})"
+                        )
+                        logger.warning(skip_msg)
+                        await send_telegram_message(f"⚠️ [사전검증 실패] {skip_msg}")
+                        continue
+
                     # 매수 주문
                     try:
                         # 종목명 조회
@@ -302,8 +328,18 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     if pos is None:
                         continue
 
-                    qty = int(decrypt_decimal(pos.quantity))
-                    if qty <= 0:
+                    held_qty = int(decrypt_decimal(pos.quantity))
+                    if held_qty <= 0:
+                        continue
+
+                    # Pre-Trade Check: 매도 수량 ≤ 보유 수량
+                    qty = held_qty  # 시그널 매도는 전량 매도
+                    if qty > held_qty:
+                        skip_msg = (
+                            f"매도 스킵: 보유 부족 — 요청 {qty} / 보유 {held_qty} ({ticker})"
+                        )
+                        logger.warning(skip_msg)
+                        await send_telegram_message(f"⚠️ [사전검증 실패] {skip_msg}")
                         continue
 
                     try:
