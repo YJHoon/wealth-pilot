@@ -115,7 +115,7 @@ async def apply_sell_fill(
     """매도 체결을 전략 포지션에 반영.
 
     Returns:
-        실현손익 델타 = (fill_price - avg_buy_price) × fill_qty
+        실현손익 델타 = (fill_price - avg_buy_price) * fill_qty
 
     포지션이 없거나 보유수량 부족이면 ValueError.
     수량이 0이 되면 포지션 row 삭제.

@@ -237,10 +237,25 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     )
                     db.add(order)
                     # Phase 3: 전략 포지션 차감 + 실현손익 누적
-                    realized_delta = await apply_sell_fill(
-                        db, strategy, pos.ticker, Decimal(qty), current,
-                    )
-                    add_realized_pnl(strategy, realized_delta)
+                    # KIS 주문은 이미 실행된 회복 불가 부수효과이므로, 포지션 갱신이 실패해도
+                    # order 레코드는 진실로 남긴다 (삭제 금지). 대신 critical 경고를 띄우고
+                    # 실현PnL은 누적하지 않는다 — 사이클 말미의 reconcile_with_kis가
+                    # 합계 불일치를 추가로 surface한다.
+                    try:
+                        realized_delta = await apply_sell_fill(
+                            db, strategy, pos.ticker, Decimal(qty), current,
+                        )
+                        add_realized_pnl(strategy, realized_delta)
+                    except Exception as fill_err:
+                        logger.critical(
+                            "Stop-loss fill apply failed (order persisted): "
+                            "kis_order_id=%s ticker=%s qty=%d err=%s",
+                            order_result.get("order_id"), pos.ticker, qty, fill_err,
+                        )
+                        skip_messages.append(
+                            f"🚨 [회계 오류] 손절 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
+                            f"{pos.ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
+                        )
                     orders_placed += 1
                     trade_messages.append(
                         f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
@@ -401,11 +416,23 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         )
                         db.add(order)
                         # Phase 3: 전략 포지션 차감 + 실현손익 누적
-                        realized_delta = await apply_sell_fill(
-                            db, strategy, ticker, Decimal(qty),
-                            Decimal(str(current_price)),
-                        )
-                        add_realized_pnl(strategy, realized_delta)
+                        # 손절 케이스와 동일한 사유로 try/except (회계 정합성 방어).
+                        try:
+                            realized_delta = await apply_sell_fill(
+                                db, strategy, ticker, Decimal(qty),
+                                Decimal(str(current_price)),
+                            )
+                            add_realized_pnl(strategy, realized_delta)
+                        except Exception as fill_err:
+                            logger.critical(
+                                "Signal sell fill apply failed (order persisted): "
+                                "kis_order_id=%s ticker=%s qty=%d err=%s",
+                                order_result.get("order_id"), ticker, qty, fill_err,
+                            )
+                            skip_messages.append(
+                                f"🚨 [회계 오류] 시그널 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
+                                f"{ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
+                            )
                         orders_placed += 1
                         position_count -= 1
                         trade_messages.append(

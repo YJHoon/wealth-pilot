@@ -29,40 +29,29 @@ def upgrade() -> None:
         sa.Column("strategy_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
     )
 
-    # 2. 백필: 각 포지션을 해당 계좌의 가장 오래된 active 전략에 귀속.
-    #    active 전략이 없으면 비활성 전략 중 가장 오래된 것으로 폴백.
-    #    그래도 없으면 (계좌에 전략이 0개) 해당 포지션은 격리할 대상이 없으므로 삭제.
+    # 2. 백필 (set-based, 두 statement만 실행)
+    #    (a) 각 포지션을 해당 계좌의 우선 전략(active 우선, 그다음 created_at 오름차순)에 귀속
+    #    (b) 귀속할 전략이 없는 고아 포지션은 삭제 (Phase 3 모델상 의미 없음)
     conn = op.get_bind()
 
-    positions = conn.execute(
-        sa.text("SELECT id, account_id FROM trading_positions WHERE strategy_id IS NULL")
-    ).fetchall()
-
-    for pos_id, acc_id in positions:
-        sid_row = conn.execute(
-            sa.text(
-                "SELECT id FROM trading_strategies "
-                "WHERE account_id = :acc_id "
-                "ORDER BY is_active DESC, created_at ASC "
-                "LIMIT 1"
-            ),
-            {"acc_id": acc_id},
-        ).fetchone()
-
-        if sid_row is None:
-            # 귀속할 전략이 없는 고아 포지션 → 삭제 (Phase 3 모델상 의미 없음)
-            conn.execute(
-                sa.text("DELETE FROM trading_positions WHERE id = :pid"),
-                {"pid": pos_id},
+    conn.execute(
+        sa.text(
+            """
+            UPDATE trading_positions p
+            SET strategy_id = (
+                SELECT s.id FROM trading_strategies s
+                WHERE s.account_id = p.account_id
+                ORDER BY s.is_active DESC, s.created_at ASC
+                LIMIT 1
             )
-            continue
-
-        conn.execute(
-            sa.text(
-                "UPDATE trading_positions SET strategy_id = :sid WHERE id = :pid"
-            ),
-            {"sid": sid_row[0], "pid": pos_id},
+            WHERE p.strategy_id IS NULL
+            """
         )
+    )
+
+    conn.execute(
+        sa.text("DELETE FROM trading_positions WHERE strategy_id IS NULL")
+    )
 
     # 3. NOT NULL 전환
     op.alter_column("trading_positions", "strategy_id", nullable=False)
