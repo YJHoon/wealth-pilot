@@ -275,3 +275,32 @@ async def test_idempotent_repeat_polling(db_session, mock_user, account, strateg
 
     pos = await get_strategy_position(db_session, account.id, strategy.id, "005930")
     assert decrypt_decimal(pos.quantity) == qty1  # 변동 없음
+
+
+@pytest.mark.asyncio
+async def test_idempotent_repeat_polling_sell_pnl(
+    db_session, mock_user, account, strategy,
+):
+    """매도 부분체결 반복 폴링 — realized_pnl 이중 차감 없음."""
+    await apply_buy_fill(db_session, strategy, "005930", "삼성", Decimal("10"), Decimal("100000"))
+    await db_session.commit()
+    realized = await apply_sell_fill(db_session, strategy, "005930", Decimal("10"), Decimal("130000"))
+    from app.services.strategy_capital import add_realized_pnl
+    add_realized_pnl(strategy, realized)
+    order = _new_sell_order(strategy, account, mock_user, 10, 130000, 10, 100000)
+    db_session.add(order)
+    await db_session.commit()
+
+    kis = _make_kis([{
+        "order_id": "K2", "ticker": "005930", "side": "sell",
+        "quantity": 10, "filled_quantity": 4, "filled_price": 130000, "status": "partial",
+    }])
+    await poll_open_orders(db_session, account, kis)
+    await db_session.commit()
+    await db_session.refresh(strategy)
+    pnl_after_first = decrypt_decimal(strategy.realized_pnl)
+
+    await poll_open_orders(db_session, account, kis)
+    await db_session.commit()
+    await db_session.refresh(strategy)
+    assert decrypt_decimal(strategy.realized_pnl) == pnl_after_first

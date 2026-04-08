@@ -6,9 +6,14 @@ ord_qty 기준으로 갱신한다. 실제로는 KIS가 부분체결하거나 거
 이 서비스가 KIS `inquire-daily-ccld`로 차이를 사후 reconcile 한다.
 
 멱등성:
-- TradingOrder.filled_quantity 를 "지금까지 폴링으로 확정된 체결량"으로 사용.
-- 폴링은 ord_qty - filled_quantity (= 미확정분)에 대해서만 보정한다.
-- 한 사이클에서 같은 주문을 여러 번 polling해도 결과는 동일하다.
+- 절대 타겟 방식으로 보장한다 (델타 누적이 아님).
+- _partial_rollback 은 매번 pre_apply_qty / pre_apply_avg_buy_price 스냅샷과
+  ord_qty, ord_price, kis_filled 만으로 "이 주문이 kis_filled 만큼만
+  체결됐다고 가정한 절대 목표 상태"를 계산해 포지션을 그 값으로 설정한다.
+- 따라서 같은 KIS 응답으로 여러 번 폴링해도, 더 큰 kis_filled로 후속 폴링해도
+  결과는 항상 "현재 kis_filled가 가리키는 그 상태"로 수렴한다.
+- TradingOrder.filled_quantity 는 폴링이 마지막으로 확인한 체결량을 기록할 뿐
+  보정 계산에는 쓰이지 않는다 (감사/표시용).
 
 롤백 공식:
 매수 주문이 부분체결(kis_filled < ord_qty)된 경우:
@@ -183,6 +188,11 @@ async def _partial_rollback(
     ord_qty = decrypt_decimal(order.quantity)
     ord_price = decrypt_decimal(order.price)
     confirmed_filled = ord_qty - shortfall  # 폴링이 확정한 체결 수량
+    # 직전 폴링이 보정한 후의 "현재 적용된 체결량". 첫 폴링이면 eager apply가
+    # 전량을 적용했으므로 ord_qty.
+    prev_applied = decrypt_decimal_optional(order.filled_quantity)
+    if prev_applied is None:
+        prev_applied = ord_qty
 
     # 같은 (account, strategy, ticker) 포지션 직접 조회
     pos_result = await db.execute(
@@ -247,9 +257,12 @@ async def _partial_rollback(
             pos.quantity = encrypt_decimal(target_qty)
             # avg_buy_price는 매도로 변하지 않으므로 그대로 유지
 
-    # realized_pnl 보정: 미체결분 (shortfall) 만큼은 실현되지 않은 것
+    # realized_pnl 보정: "현재 적용된 체결량(prev_applied)"을 confirmed_filled로
+    # 맞추는 차이만큼만 빼거나 더한다. delta 누적이 아니라 prev_applied → confirmed_filled
+    # 이행이므로, 같은 KIS 응답으로 반복 폴링해도 멱등 (delta = 0).
     if order.strategy_id is not None:
-        strategy = await db.get(TradingStrategy, order.strategy_id)
-        if strategy is not None:
-            correction = -((ord_price - pre_avg) * shortfall)
-            add_realized_pnl(strategy, correction)
+        delta = confirmed_filled - prev_applied  # 음수면 차감
+        if delta != 0:
+            strategy = await db.get(TradingStrategy, order.strategy_id)
+            if strategy is not None:
+                add_realized_pnl(strategy, (ord_price - pre_avg) * delta)
