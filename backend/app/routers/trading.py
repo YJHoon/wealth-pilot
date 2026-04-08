@@ -45,6 +45,7 @@ from app.services.crypto_service import (
     encrypt_decimal,
 )
 from app.services.kis_client import KISClient, KISClientError
+from app.services.strategy_capital import validate_account_allocation
 from app.services.security_service import AccessAction, log_access
 from app.tasks.trading_scheduler import trading_scheduler
 
@@ -227,9 +228,31 @@ async def create_strategy(
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """전략 생성."""
+    """전략 생성.
+
+    Phase 2: initial_capital(전략별 할당금)을 받아 계좌 가용 자본 내인지 검증.
+    합산 초과 시 400 반환.
+    """
     # 계좌 소유권 확인
-    await _get_user_account(db, body.account_id, user.id)
+    account = await _get_user_account(db, body.account_id, user.id)
+
+    # 계좌 총 자본 (현재는 initial_capital 기준 — 추후 KIS 잔고 동기화 시 cash_balance 사용 가능)
+    account_total = decrypt_decimal(account.initial_capital)
+
+    allowed, remaining = await validate_account_allocation(
+        db,
+        account_id=body.account_id,
+        new_initial_capital=body.initial_capital,
+        account_total_capital=account_total,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"전략 할당 자본 초과: 신규 {body.initial_capital:,.0f}원 / "
+                f"잔여 {remaining:,.0f}원 (계좌 총 {account_total:,.0f}원)"
+            ),
+        )
 
     strategy = TradingStrategy(
         user_id=user.id,
@@ -240,6 +263,8 @@ async def create_strategy(
         target_tickers=body.target_tickers,
         interval_minutes=body.interval_minutes,
         market_hours_only=body.market_hours_only,
+        initial_capital=encrypt_decimal(body.initial_capital),
+        realized_pnl=encrypt_decimal(Decimal("0")),
     )
     db.add(strategy)
     await db.commit()
@@ -274,6 +299,29 @@ async def update_strategy(
     strategy = await _get_user_strategy(db, strategy_id, user.id)
 
     update_data = body.model_dump(exclude_unset=True)
+
+    # initial_capital 변경 시 계좌 할당 재검증 + 암호화
+    if "initial_capital" in update_data:
+        new_capital: Decimal = update_data.pop("initial_capital")
+        account = await _get_user_account(db, strategy.account_id, user.id)
+        account_total = decrypt_decimal(account.initial_capital)
+        allowed, remaining = await validate_account_allocation(
+            db,
+            account_id=strategy.account_id,
+            new_initial_capital=new_capital,
+            account_total_capital=account_total,
+            exclude_strategy_id=strategy.id,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"전략 할당 자본 초과: 신규 {new_capital:,.0f}원 / "
+                    f"잔여 {remaining:,.0f}원 (자기 자신 제외)"
+                ),
+            )
+        strategy.initial_capital = encrypt_decimal(new_capital)
+
     for key, value in update_data.items():
         setattr(strategy, key, value)
 

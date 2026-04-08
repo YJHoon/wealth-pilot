@@ -25,6 +25,10 @@ from app.models.trading import (
     TradingStrategy,
 )
 from app.services.account_lock import get_account_lock
+from app.services.strategy_capital import (
+    add_realized_pnl,
+    get_strategy_available_capital,
+)
 from app.services.alert_service import send_telegram_message
 from app.services.crypto_service import (
     decrypt_decimal,
@@ -200,10 +204,13 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                 if qty <= 0:
                     logger.warning("Stop-loss skipped: zero quantity for %s", pos.ticker)
                     continue
+                # Phase 2: 손절 매도 실현손익 누적 (avg_price - current) * qty
+                stop_pnl_delta = (current - avg_price) * Decimal(qty)
                 try:
                     order_result = await kis.place_order(
                         side="sell", ticker=pos.ticker, quantity=qty, order_type="market",
                     )
+                    add_realized_pnl(strategy, stop_pnl_delta)
                     order = TradingOrder(
                         user_id=user_id,
                         account_id=account.id,
@@ -279,13 +286,24 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         logger.info("Buy blocked for %s: %s", ticker, buy_check.reason)
                         continue
 
-                    # Pre-Trade Check: 예수금이 주문금액 + 수수료 버퍼를 충당하는지 확인
-                    # 같은 계좌의 다른 사이클이 직전에 매수한 경우를 대비해 발주 직전에 재검증
+                    # Pre-Trade Check 1: 계좌 예수금 (KIS 잔고) ≥ 주문금액 × 버퍼
                     required_cash = order_amount * BUY_FEE_BUFFER
                     if available_cash < required_cash:
                         skip_msg = (
                             f"매수 스킵: 예수금 부족 — 필요 {required_cash:,.0f}원 / "
                             f"가용 {available_cash:,.0f}원 ({ticker})"
+                        )
+                        logger.warning(skip_msg)
+                        skip_messages.append(skip_msg)
+                        continue
+
+                    # Pre-Trade Check 2 (Phase 2): 전략별 가용 자본 ≥ 주문금액
+                    # 같은 계좌의 다른 전략이 자본을 소진한 경우 차단
+                    strategy_available = await get_strategy_available_capital(db, strategy)
+                    if strategy_available < order_amount:
+                        skip_msg = (
+                            f"매수 스킵: 전략 가용자본 부족 — 필요 {order_amount:,.0f}원 / "
+                            f"전략가용 {strategy_available:,.0f}원 ({ticker})"
                         )
                         logger.warning(skip_msg)
                         skip_messages.append(skip_msg)
@@ -342,10 +360,18 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     if qty <= 0:
                         continue
 
+                    # Phase 2: 실현손익 누적용 평균매입가
+                    avg_buy = decrypt_decimal(pos.avg_buy_price)
+                    sell_price_dec = Decimal(str(current_price))
+                    pnl_delta = (sell_price_dec - avg_buy) * Decimal(qty)
+
                     try:
                         order_result = await kis.place_order(
                             side="sell", ticker=ticker, quantity=qty, order_type="market",
                         )
+                        # 체결 가정 시 전략별 실현손익 누적
+                        # (실제 체결가는 _sync_positions/주문 상태 폴링에서 보정)
+                        add_realized_pnl(strategy, pnl_delta)
                         order = TradingOrder(
                             user_id=user_id,
                             account_id=account.id,

@@ -85,6 +85,8 @@ class TradingStrategyCreate(BaseModel):
     target_tickers: list[str] = Field(default_factory=list)
     interval_minutes: int = Field(default=10, ge=1, le=60)
     market_hours_only: bool = True
+    # Phase 2: 전략별 초기 할당 자본 (필수). 0이면 매수 불가.
+    initial_capital: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
 
 
 class TradingStrategyUpdate(BaseModel):
@@ -93,6 +95,7 @@ class TradingStrategyUpdate(BaseModel):
     target_tickers: list[str] | None = None
     interval_minutes: int | None = Field(default=None, ge=1, le=60)
     market_hours_only: bool | None = None
+    initial_capital: Decimal | None = Field(default=None, ge=Decimal("0"))
 
 
 class TradingStrategyResponse(BaseModel):
@@ -106,11 +109,14 @@ class TradingStrategyResponse(BaseModel):
     is_scheduled: bool
     market_hours_only: bool
     is_active: bool
+    initial_capital: Decimal
+    realized_pnl: Decimal
     created_at: datetime
     updated_at: datetime
 
 
 def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyResponse:
+    from app.services.strategy_capital import get_initial_capital, get_realized_pnl
     return TradingStrategyResponse(
         id=strategy.id,
         account_id=strategy.account_id,
@@ -122,6 +128,8 @@ def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyRespo
         is_scheduled=strategy.is_scheduled,
         market_hours_only=strategy.market_hours_only,
         is_active=strategy.is_active,
+        initial_capital=get_initial_capital(strategy),
+        realized_pnl=get_realized_pnl(strategy),
         created_at=strategy.created_at,
         updated_at=strategy.updated_at,
     )
