@@ -5,7 +5,11 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.account_lock import get_account_lock
+from app.services.account_lock import (
+    clear_account_lock,
+    get_account_lock,
+    prune_idle_account_locks,
+)
 
 
 @pytest.mark.asyncio
@@ -45,6 +49,44 @@ async def test_account_lock_serializes_concurrent_critical_sections():
     assert timeline[2].endswith("-enter")
     assert timeline[3].endswith("-exit")
     assert timeline[2].split("-")[0] == timeline[3].split("-")[0]
+
+
+@pytest.mark.asyncio
+async def test_clear_account_lock_removes_idle_lock():
+    account_id = uuid4()
+    lock_a = await get_account_lock(account_id)
+    assert await clear_account_lock(account_id) is True
+    # 제거 후 다시 호출하면 새 인스턴스가 생성되어야 함
+    lock_b = await get_account_lock(account_id)
+    assert lock_a is not lock_b
+
+
+@pytest.mark.asyncio
+async def test_clear_account_lock_refuses_when_locked():
+    account_id = uuid4()
+    lock = await get_account_lock(account_id)
+    async with lock:
+        assert await clear_account_lock(account_id) is False
+    # 풀린 후엔 제거 가능
+    assert await clear_account_lock(account_id) is True
+
+
+@pytest.mark.asyncio
+async def test_clear_account_lock_returns_true_for_unknown_id():
+    assert await clear_account_lock(uuid4()) is True
+
+
+@pytest.mark.asyncio
+async def test_prune_idle_account_locks_removes_only_idle():
+    idle_id = uuid4()
+    busy_id = uuid4()
+    await get_account_lock(idle_id)
+    busy_lock = await get_account_lock(busy_id)
+    async with busy_lock:
+        removed = await prune_idle_account_locks()
+        assert removed >= 1
+        # busy는 살아있어야 함
+        assert (await get_account_lock(busy_id)) is busy_lock
 
 
 @pytest.mark.asyncio

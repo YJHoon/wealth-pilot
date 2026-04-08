@@ -34,3 +34,39 @@ async def get_account_lock(account_id: UUID) -> asyncio.Lock:
             lock = asyncio.Lock()
             _account_locks[account_id] = lock
         return lock
+
+
+async def clear_account_lock(account_id: UUID) -> bool:
+    """레지스트리에서 계좌 락을 제거.
+
+    계좌 삭제/비활성화 시 호출하여 메모리 누수를 방지한다.
+    락이 점유 중이면 (locked) 제거하지 않고 False 반환.
+
+    Returns:
+        True: 제거 성공 또는 애초에 없었음
+        False: 락이 점유 중이라 제거하지 못함
+    """
+    async with _registry_lock:
+        lock = _account_locks.get(account_id)
+        if lock is None:
+            return True
+        if lock.locked():
+            return False
+        _account_locks.pop(account_id, None)
+        return True
+
+
+async def prune_idle_account_locks() -> int:
+    """점유되지 않은 모든 계좌 락을 정리.
+
+    백그라운드 주기 작업에서 호출하는 용도. 활성 사이클을 중단시키지 않도록
+    `lock.locked()`가 False인 항목만 제거한다.
+
+    Returns:
+        제거된 락 개수
+    """
+    async with _registry_lock:
+        idle_ids = [aid for aid, lock in _account_locks.items() if not lock.locked()]
+        for aid in idle_ids:
+            _account_locks.pop(aid, None)
+        return len(idle_ids)
