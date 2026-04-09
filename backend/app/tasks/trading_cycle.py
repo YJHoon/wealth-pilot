@@ -375,7 +375,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     try:
                         ticker_info = await kis.get_current_price(ticker)
                         ticker_display_name = ticker_info.get("name", "") or ""
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(
+                            "kis.get_current_price 실패 ticker=%s: %s",
+                            ticker, e, exc_info=True,
+                        )
                         ticker_display_name = ""
                     llm_decision = await get_llm_decision(
                         ticker=ticker,
@@ -691,7 +695,13 @@ def _build_portfolio_context(
         try:
             qty = decrypt_decimal(p.quantity)
             avg = decrypt_decimal(p.avg_buy_price)
-        except Exception:
+        except Exception as e:
+            logger.error(
+                "decrypt_decimal 실패 position_id=%s ticker=%s "
+                "(quantity/avg_buy_price): %s",
+                getattr(p, "id", None), getattr(p, "ticker", None), e,
+                exc_info=True,
+            )
             continue
         holdings.append({
             "ticker": p.ticker,

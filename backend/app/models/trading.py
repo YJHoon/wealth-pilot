@@ -6,6 +6,8 @@ KIS API 계좌, 전략, 주문, 포지션, 스케줄 실행 이력.
 
 import enum
 import uuid
+
+import sqlalchemy as sa
 from datetime import datetime
 
 from sqlalchemy import (
@@ -434,7 +436,9 @@ class TradingDecision(Base):
     suggested_amount: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 검증/발주 결과
-    executed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    executed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.false(), nullable=False,
+    )
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 결과 (체결 후 갱신 — 모듈 B/C에서 사용)

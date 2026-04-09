@@ -166,12 +166,14 @@ def _parse_llm_json(text: str) -> dict[str, Any]:
     가장 바깥 중괄호 쌍을 추출하는 보수적 파서를 사용한다.
     """
     text = text.strip()
-    # 코드블록 제거
+    # 코드블록 펜스 제거 — 내부 백틱은 보존하기 위해 줄 단위로 처리
     if text.startswith("```"):
-        text = text.strip("`")
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+        lines = text.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
     # 첫/마지막 중괄호로 잘라냄
     start = text.find("{")
     end = text.rfind("}")
@@ -189,8 +191,8 @@ def _validate_decision(parsed: dict[str, Any]) -> LLMDecision:
     raw_conf = parsed.get("confidence")
     try:
         confidence = int(raw_conf)
-    except (TypeError, ValueError):
-        raise ValueError(f"잘못된 confidence: {raw_conf!r}")
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"잘못된 confidence: {raw_conf!r}") from err
     confidence = max(0, min(100, confidence))
 
     reason = str(parsed.get("reason", "")).strip() or "(이유 없음)"
