@@ -29,9 +29,11 @@ from app.services.strategy_capital import (
     add_realized_pnl,
     get_strategy_available_capital,
 )
+from app.services.order_polling import poll_open_orders
 from app.services.strategy_position import (
     apply_buy_fill,
     apply_sell_fill,
+    get_strategy_position,
     list_strategy_positions,
     reconcile_with_kis,
     update_position_market_data,
@@ -185,6 +187,22 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         account.access_token = encrypt_value(kis.access_token) if kis.access_token else None
         account.token_expires_at = kis.token_expires_at
 
+        # 3.5 미체결/부분체결 주문 폴링 — 이전 사이클의 SUBMITTED를 reconcile
+        # eager apply 가정과 KIS 실체결의 차이를 잔고/포지션을 읽기 전에 보정한다.
+        try:
+            poll_result = await poll_open_orders(db, account, kis)
+            if poll_result.cancelled or poll_result.partial:
+                logger.info(
+                    "Fill polling: polled=%d filled=%d partial=%d cancelled=%d",
+                    poll_result.polled, poll_result.filled,
+                    poll_result.partial, poll_result.cancelled,
+                )
+            if poll_result.errors:
+                logger.warning("Fill polling errors: %s", poll_result.errors)
+        except Exception:
+            # 폴링 실패는 사이클 자체를 막지 않는다. 다음 사이클에서 다시 시도.
+            logger.exception("Fill polling failed; continuing cycle")
+
         # 4. 잔고 조회
         balance = await kis.get_balance()
         available_cash = balance["cash"]
@@ -226,6 +244,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     )
                     # NOTE: SUBMITTED를 체결로 간주하는 단순화 모델 (fill polling은 별도 작업).
                     # 거부/부분체결/슬리피지 정확화는 fill polling 도입 후 처리.
+                    # 폴링 롤백용 pre-state: 매도 직전 보유분
+                    pre_qty_snap = decrypt_decimal(pos.quantity)
+                    pre_avg_snap = decrypt_decimal(pos.avg_buy_price)
                     order = TradingOrder(
                         user_id=user_id,
                         account_id=account.id,
@@ -240,6 +261,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         status=OrderStatus.SUBMITTED,
                         kis_order_id=order_result.get("order_id"),
                         reason=f"손절: {stop_check.reason}",
+                        pre_apply_qty=encrypt_decimal(pre_qty_snap),
+                        pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                     )
                     db.add(order)
                     # Phase 3: 전략 포지션 차감 + 실현손익 누적
@@ -366,6 +389,16 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         order_result = await kis.place_order(
                             side="buy", ticker=ticker, quantity=qty, order_type="market",
                         )
+                        # 폴링 롤백용 pre-state: 매수 직전 (없으면 0)
+                        pre_pos = await get_strategy_position(
+                            db, account.id, strategy.id, ticker,
+                        )
+                        if pre_pos is None:
+                            pre_qty_snap = Decimal("0")
+                            pre_avg_snap = Decimal("0")
+                        else:
+                            pre_qty_snap = decrypt_decimal(pre_pos.quantity)
+                            pre_avg_snap = decrypt_decimal(pre_pos.avg_buy_price)
                         order = TradingOrder(
                             user_id=user_id,
                             account_id=account.id,
@@ -380,6 +413,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             status=OrderStatus.SUBMITTED,
                             kis_order_id=order_result.get("order_id"),
                             reason=signal.reason,
+                            pre_apply_qty=encrypt_decimal(pre_qty_snap),
+                            pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                         )
                         db.add(order)
                         # Phase 3: 전략 포지션 증가 (신규 ticker일 때만 set에 추가)
@@ -417,7 +452,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         order_result = await kis.place_order(
                             side="sell", ticker=ticker, quantity=qty, order_type="market",
                         )
-                        # NOTE: SUBMITTED 단순화 — fill polling은 별도 작업.
+                        # 폴링 롤백용 pre-state
+                        pre_qty_snap = decrypt_decimal(pos.quantity)
+                        pre_avg_snap = decrypt_decimal(pos.avg_buy_price)
                         order = TradingOrder(
                             user_id=user_id,
                             account_id=account.id,
@@ -432,6 +469,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             status=OrderStatus.SUBMITTED,
                             kis_order_id=order_result.get("order_id"),
                             reason=signal.reason,
+                            pre_apply_qty=encrypt_decimal(pre_qty_snap),
+                            pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                         )
                         db.add(order)
                         # Phase 3: 전략 포지션 차감 + 실현손익 누적
