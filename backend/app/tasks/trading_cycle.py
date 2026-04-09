@@ -852,17 +852,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             if _kill_switch_tripped:
                 break
 
-        # 사이클 내 킬 스위치 발동 시 비활성화 완료 (strategy 변경은 위에서 수행)
-        if _kill_switch_tripped:
-            try:
-                from app.tasks.trading_scheduler import trading_scheduler
-                trading_scheduler.remove_schedule(user_id, strategy_id)
-            except Exception:
-                logger.warning(
-                    "Failed to remove in-memory schedule after in-cycle kill switch: "
-                    "strategy=%s", strategy_id, exc_info=True,
-                )
-            # 텔레그램은 아래 사이클 완료 알림에 trade_messages로 포함됨
+        # 사이클 내 킬 스위치: 인메모리 스케줄 제거는 db.commit() 이후로 지연
+        # (strategy 변경은 위에서 수행, 텔레그램은 아래 사이클 완료 알림에 포함)
 
         # 8. 포지션 시세 갱신 + KIS 정합성 체크 (Phase 3)
         mismatches = await _sync_positions(db, kis, account)
@@ -889,6 +880,17 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         schedule_log.orders_placed = orders_placed
         schedule_log.completed_at = datetime.now(timezone.utc)
         await db.commit()
+
+        # 사이클 내 킬 스위치: DB 커밋 성공 후 인메모리 스케줄 제거
+        if _kill_switch_tripped:
+            try:
+                from app.tasks.trading_scheduler import trading_scheduler
+                trading_scheduler.remove_schedule(user_id, strategy_id)
+            except Exception:
+                logger.warning(
+                    "Failed to remove in-memory schedule after in-cycle kill switch: "
+                    "strategy=%s", strategy_id, exc_info=True,
+                )
 
         # 10. 텔레그램 알림 (체결 + 사전검증 스킵을 단일 메시지로 배치 전송)
         if trade_messages or skip_messages:
