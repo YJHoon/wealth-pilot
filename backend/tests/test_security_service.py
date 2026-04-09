@@ -109,6 +109,58 @@ class TestAccessActionConstants:
         db.add.assert_called_once_with(log)
 
 
+class TestTradingDecisionActionConstants:
+    """Step 3 안전장치: 의사결정 승인/거부/목록 액션 상수 회귀 테스트."""
+
+    def test_trading_decision_list_constant(self):
+        assert AccessAction.TRADING_DECISION_LIST == "trading_decision_list"
+
+    def test_trading_decision_approve_constant(self):
+        assert AccessAction.TRADING_DECISION_APPROVE == "trading_decision_approve"
+
+    def test_trading_decision_reject_constant(self):
+        assert AccessAction.TRADING_DECISION_REJECT == "trading_decision_reject"
+
+    @pytest.mark.asyncio
+    async def test_log_access_with_decision_approve(self):
+        """TRADING_DECISION_APPROVE 액션으로 로그가 생성되는지 검증."""
+        db = AsyncMock()
+        user_id = uuid.uuid4()
+        request = _make_request()
+
+        log = await log_access(db, user_id, AccessAction.TRADING_DECISION_APPROVE, request)
+
+        assert isinstance(log, AccessLog)
+        assert log.action == "trading_decision_approve"
+        db.add.assert_called_once_with(log)
+
+    @pytest.mark.asyncio
+    async def test_log_access_with_decision_reject(self):
+        """TRADING_DECISION_REJECT 액션으로 로그가 생성되는지 검증."""
+        db = AsyncMock()
+        user_id = uuid.uuid4()
+        request = _make_request()
+
+        log = await log_access(db, user_id, AccessAction.TRADING_DECISION_REJECT, request)
+
+        assert isinstance(log, AccessLog)
+        assert log.action == "trading_decision_reject"
+        db.add.assert_called_once_with(log)
+
+    @pytest.mark.asyncio
+    async def test_log_access_with_decision_list(self):
+        """TRADING_DECISION_LIST 액션으로 로그가 생성되는지 검증."""
+        db = AsyncMock()
+        user_id = uuid.uuid4()
+        request = _make_request()
+
+        log = await log_access(db, user_id, AccessAction.TRADING_DECISION_LIST, request)
+
+        assert isinstance(log, AccessLog)
+        assert log.action == "trading_decision_list"
+        db.add.assert_called_once_with(log)
+
+
 class TestCheckNewDevice:
     @pytest.mark.asyncio
     async def test_returns_true_for_new_device(self):

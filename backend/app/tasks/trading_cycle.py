@@ -419,6 +419,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     held_tickers.discard(pos.ticker)
                     recently_sold_tickers.add(pos.ticker)
                     orders_placed += 1
+                    # 손절은 안전장치이므로 일일 횟수로 차단하지 않지만 카운트에 반영
+                    today_trade_count += 1
                     trade_messages.append(
                         f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
                     )
@@ -474,6 +476,10 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             await db.commit()
             await send_telegram_message(f"⛔ [일일 거래 횟수 한도]\n{daily_trades_check.reason}")
             return
+
+        # 사이클 내 일일 거래 횟수 추적 — 주문 생성 시마다 증가시켜
+        # 같은 사이클에서 max_daily_trades를 초과하지 않도록 한다.
+        cycle_trade_count = today_trade_count
 
         # 7. 대상 종목별 전략 평가
         for ticker in strategy.target_tickers:
@@ -536,11 +542,15 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         continue
 
                     # Step 3: 사용자 승인 모드 — pending으로 저장 후 발주 스킵
-                    approval_required = strategy.params_json.get("approval_required", False)
+                    _raw_approval = strategy.params_json.get("approval_required", False)
+                    approval_required = _raw_approval is True or _raw_approval == "true"
                     if approval_required and llm_decision.action != "hold":
-                        timeout_minutes = strategy.params_json.get(
-                            "approval_timeout_minutes", 30,
-                        )
+                        try:
+                            timeout_minutes = max(1, int(
+                                strategy.params_json.get("approval_timeout_minutes", 30)
+                            ))
+                        except (TypeError, ValueError):
+                            timeout_minutes = 30
                         decision_row.approval_status = "pending"
                         decision_row.approval_expires_at = (
                             datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
@@ -567,6 +577,20 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     signal = strat.evaluate(ticker, price_history)
 
                 if signal.action == "hold":
+                    continue
+
+                # 사이클 내 일일 거래 횟수 재체크 (손절 등으로 카운트 증가 가능)
+                if (
+                    risk_mgr.max_daily_trades > 0
+                    and cycle_trade_count >= risk_mgr.max_daily_trades
+                ):
+                    logger.info(
+                        "Order skipped (daily trade limit in-cycle): %s %s count=%d",
+                        ticker, signal.action, cycle_trade_count,
+                    )
+                    skip_messages.append(
+                        f"일일 거래 횟수 한도 (사이클 내): {ticker} {signal.action} 스킵"
+                    )
                     continue
 
                 if signal.action == "buy":
@@ -667,6 +691,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         )
                         held_tickers.add(ticker)
                         orders_placed += 1
+                        cycle_trade_count += 1
                         available_cash -= order_amount
                         trade_messages.append(
                             f"📈 [매수] {ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
@@ -749,6 +774,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         held_tickers.discard(ticker)
                         recently_sold_tickers.add(ticker)
                         orders_placed += 1
+                        cycle_trade_count += 1
                         trade_messages.append(
                             f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )

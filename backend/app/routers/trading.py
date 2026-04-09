@@ -54,6 +54,8 @@ from app.services.account_lock import acquire_account_lock, clear_account_lock
 from app.services.kis_client import KISClient, KISClientError
 from app.services.risk_manager import RiskManager
 from app.services.strategy_capital import (
+    get_initial_capital,
+    get_realized_pnl,
     get_strategy_available_capital,
     validate_account_allocation,
 )
@@ -61,6 +63,7 @@ from app.services.strategy_position import (
     apply_buy_fill,
     apply_sell_fill,
     get_strategy_position,
+    list_strategy_positions,
 )
 from app.services.security_service import AccessAction, log_access
 from app.tasks.trading_scheduler import trading_scheduler
@@ -619,7 +622,16 @@ async def list_pending_decisions(
         query = query.where(TradingDecision.strategy_id == strategy_id)
 
     result = await db.execute(query)
-    return [decision_to_response(d) for d in result.scalars().all()]
+    decisions = [decision_to_response(d) for d in result.scalars().all()]
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_DECISION_LIST, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_DECISION_LIST access logging failed", exc_info=True)
+
+    return decisions
 
 
 @router.post("/decisions/{decision_id}/approve")
@@ -678,12 +690,106 @@ async def approve_decision(
     order = None
     try:
       async with acquire_account_lock(account.id):
+        # ── 락 내부 상태 재검증 (TOCTOU 방지) ──
+        await db.refresh(decision)
+        await db.refresh(strategy)
+        await db.refresh(account)
+
+        now_lock = datetime.now(timezone.utc)
+        if decision.approval_status != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail=f"현재 상태({decision.approval_status})에서는 승인할 수 없습니다.",
+            )
+        if decision.approval_expires_at and decision.approval_expires_at <= now_lock:
+            decision.approval_status = "expired"
+            decision.blocked_reason = "승인 시간 만료"
+            await db.commit()
+            raise HTTPException(status_code=410, detail="승인 시간이 만료되었습니다.")
+        if not strategy.is_active:
+            decision.approval_status = "rejected"
+            decision.blocked_reason = "전략 비활성화"
+            await db.commit()
+            raise HTTPException(status_code=400, detail="전략이 비활성화되었습니다.")
+        if not account.is_active:
+            decision.approval_status = "rejected"
+            decision.blocked_reason = "계좌 비활성화"
+            await db.commit()
+            raise HTTPException(status_code=400, detail="계좌가 비활성화되었습니다.")
+
         # 최신 시세 조회
         price_info = await kis.get_current_price(decision.ticker)
         current_price = Decimal(str(price_info["price"]))
         ticker_name = price_info.get("name", "")
 
         risk_mgr = RiskManager.from_params(strategy.params_json)
+
+        # ── 공통 안전장치 체크 (trading_cycle과 동일) ──
+        # 킬 스위치
+        positions = await list_strategy_positions(db, account.id, strategy.id)
+        strategy_realized = get_realized_pnl(strategy)
+        strategy_unrealized = Decimal("0")
+        for pos in positions:
+            if pos.unrealized_pnl:
+                strategy_unrealized += decrypt_decimal(pos.unrealized_pnl)
+        strategy_initial = get_initial_capital(strategy)
+
+        kill_check = risk_mgr.check_kill_switch(
+            strategy_realized, strategy_unrealized, strategy_initial,
+        )
+        if not kill_check.allowed:
+            decision.approval_status = "rejected"
+            decision.blocked_reason = kill_check.reason
+            await db.commit()
+            raise HTTPException(status_code=400, detail=kill_check.reason)
+
+        # 일일 손실 한도 + 일일 거래 횟수
+        from datetime import timedelta
+        KST = timezone(timedelta(hours=9))
+        today_start = datetime.now(KST).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        today_start_utc = today_start.astimezone(timezone.utc)
+
+        today_sell_result = await db.execute(
+            select(TradingOrder).where(
+                TradingOrder.strategy_id == strategy.id,
+                TradingOrder.side == OrderSide.SELL,
+                TradingOrder.status.in_([OrderStatus.FILLED, OrderStatus.SUBMITTED]),
+                TradingOrder.created_at >= today_start_utc,
+            )
+        )
+        today_realized_pnl = Decimal("0")
+        for sell_ord in today_sell_result.scalars().all():
+            if sell_ord.pre_apply_avg_buy_price:
+                s_price = decrypt_decimal(sell_ord.price)
+                s_qty = decrypt_decimal(sell_ord.quantity)
+                s_avg = decrypt_decimal(sell_ord.pre_apply_avg_buy_price)
+                today_realized_pnl += (s_price - s_avg) * s_qty
+
+        daily_loss_check = risk_mgr.check_daily_loss(today_realized_pnl)
+        if not daily_loss_check.allowed:
+            decision.approval_status = "rejected"
+            decision.blocked_reason = daily_loss_check.reason
+            await db.commit()
+            raise HTTPException(status_code=400, detail=daily_loss_check.reason)
+
+        today_count_result = await db.execute(
+            select(func.count()).select_from(TradingOrder).where(
+                TradingOrder.strategy_id == strategy.id,
+                TradingOrder.status.in_([
+                    OrderStatus.SUBMITTED, OrderStatus.FILLED, OrderStatus.PARTIAL,
+                ]),
+                TradingOrder.created_at >= today_start_utc,
+            )
+        )
+        today_trade_count = today_count_result.scalar() or 0
+        daily_trades_check = risk_mgr.check_daily_trades(today_trade_count)
+        if not daily_trades_check.allowed:
+            decision.approval_status = "rejected"
+            decision.blocked_reason = daily_trades_check.reason
+            await db.commit()
+            raise HTTPException(status_code=400, detail=daily_trades_check.reason)
 
         if decision.action == "buy":
             balance = await kis.get_balance()
@@ -694,10 +800,16 @@ async def approve_decision(
             qty = 0
             if decision.suggested_quantity:
                 qty = int(decrypt_decimal(decision.suggested_quantity))
+
+            # 포지션 사이징으로 최대 허용 수량 산출 + 비중 제약 적용
+            max_qty = risk_mgr.calculate_position_size(
+                available_cash, total_eval, current_price,
+            )
             if qty <= 0:
-                qty = risk_mgr.calculate_position_size(
-                    available_cash, total_eval, current_price,
-                )
+                qty = max_qty
+            elif max_qty > 0:
+                qty = min(qty, max_qty)  # suggested_quantity가 비중 제약 초과 시 트림
+
             if qty <= 0:
                 decision.approval_status = "rejected"
                 decision.blocked_reason = "매수 가능 수량 0"
@@ -706,6 +818,19 @@ async def approve_decision(
 
             order_amount = current_price * Decimal(qty)
             required_cash = order_amount * _BUY_FEE_BUFFER
+
+            # check_can_buy (최대 종목 수 + 단일 종목 비중)
+            held_tickers = {p.ticker for p in positions}
+            effective_count = (
+                len(held_tickers) if decision.ticker in held_tickers
+                else len(held_tickers) + 1
+            )
+            buy_check = risk_mgr.check_can_buy(total_eval, order_amount, effective_count)
+            if not buy_check.allowed:
+                decision.approval_status = "rejected"
+                decision.blocked_reason = buy_check.reason
+                await db.commit()
+                raise HTTPException(status_code=400, detail=buy_check.reason)
 
             if available_cash < required_cash:
                 decision.approval_status = "rejected"

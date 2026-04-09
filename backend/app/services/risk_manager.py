@@ -49,9 +49,9 @@ class RiskManager:
             max_position_pct=Decimal(str(params.get("max_position_pct", "0.20"))),
             stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.05"))),
             daily_loss_limit=Decimal(str(params.get("daily_loss_limit", "0"))),
-            max_positions=params.get("max_positions", 10),
+            max_positions=int(params.get("max_positions", 10)),
             kill_switch_pct=Decimal(str(params.get("kill_switch_pct", "0"))),
-            max_daily_trades=params.get("max_daily_trades", 0),
+            max_daily_trades=max(0, int(params.get("max_daily_trades", 0))),
         )
 
     def check_can_buy(
