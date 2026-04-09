@@ -227,7 +227,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     try:
                         tinfo = await kis.get_current_price(ticker)
                         tname = tinfo.get("name", "") or ""
-                    except Exception as e:
+                    except KISClientError as e:
                         logger.debug(
                             "kis.get_current_price 실패 ticker=%s: %s",
                             ticker, e, exc_info=True,
