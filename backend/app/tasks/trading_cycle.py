@@ -212,12 +212,27 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             pre_balance = await kis.get_balance()
             pre_cash = pre_balance["cash"]
             pre_total_eval = pre_balance["total_eval"] + pre_cash
-            pre_positions = await list_strategy_positions(
-                db, account.id, strategy.id,
-            )
             decision_memory = await load_decision_memory(db, strategy_id)
-            pre_portfolio_ctx = _build_portfolio_context(
-                pre_cash, pre_total_eval, pre_positions,
+            # holdings는 KIS 응답에서 직접 구성 — 현금/총평가와 동일 소스라
+            # 정합되며, DB 포지션은 reconcile(poll_open_orders) 전이라
+            # 일시적으로 KIS와 어긋날 수 있다. 발주 시점의 전략 격리는
+            # 락 안 Pre-Trade Check가 보장하므로 LLM 컨텍스트만 계좌 전체
+            # 기준으로 단일화한다.
+            pre_holdings = [
+                {
+                    "ticker": h["ticker"],
+                    "ticker_name": h.get("name", ""),
+                    "quantity": str(h["quantity"]),
+                    "avg_buy_price": str(h["avg_price"]),
+                    "current_price": str(h.get("current_price"))
+                    if h.get("current_price") is not None else None,
+                    "unrealized_pnl": str(h.get("pnl"))
+                    if h.get("pnl") is not None else None,
+                }
+                for h in pre_balance.get("holdings", [])
+            ]
+            pre_portfolio_ctx = PortfolioContext(
+                cash=pre_cash, total_eval=pre_total_eval, holdings=pre_holdings,
             )
             for ticker in strategy.target_tickers:
                 try:
