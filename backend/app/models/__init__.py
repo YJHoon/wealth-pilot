@@ -19,6 +19,8 @@ from app.models.trading import (
     OrderType,
     OrderStatus,
     ScheduleLogStatus,
+    TradingDecision,
+    AdaptiveRule,
 )
 from app.models.analysis import (
     Watchlist,
@@ -48,6 +50,8 @@ __all__ = [
     "OrderType",
     "OrderStatus",
     "ScheduleLogStatus",
+    "TradingDecision",
+    "AdaptiveRule",
     "Watchlist",
     "Simulation",
     "SimulationType",

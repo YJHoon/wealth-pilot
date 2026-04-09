@@ -63,6 +63,14 @@ class Settings(BaseSettings):
 
     trading_enabled: bool = False  # 자동매매 글로벌 킬 스위치
 
+    # ── Stage 3: LLM 어드바이저 ──
+    # Anthropic Claude API. paper 모드에서만 의사결정에 사용된다.
+    anthropic_api_key: str = ""
+    llm_advisor_model: str = "claude-sonnet-4-5"
+    llm_advisor_min_confidence: int = 70  # 이 값 미만이면 발주 차단
+    llm_advisor_timeout_seconds: float = 20.0
+    llm_advisor_max_tokens: int = 1024
+
     def kis_credentials(self, mode: str) -> dict:
         """모드별 KIS 인증정보 반환. 잘못된 모드는 ValueError."""
         if mode == "paper":
