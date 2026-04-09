@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -36,6 +36,8 @@ from app.services.llm_advisor import (
 from app.services.account_lock import acquire_account_lock
 from app.services.strategy_capital import (
     add_realized_pnl,
+    get_initial_capital,
+    get_realized_pnl,
     get_strategy_available_capital,
 )
 from app.services.order_polling import poll_open_orders
@@ -321,6 +323,33 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         # 다시 매수할 수 있으므로 별도 집합으로 격리한다.
         recently_sold_tickers: set[str] = set()
 
+        # 4.5 킬 스위치 — 누적 손실률이 기준 이상이면 전략 자동 비활성화
+        strategy_realized = get_realized_pnl(strategy)
+        strategy_unrealized = Decimal("0")
+        for pos in positions:
+            if pos.unrealized_pnl:
+                strategy_unrealized += decrypt_decimal(pos.unrealized_pnl)
+        strategy_initial = get_initial_capital(strategy)
+
+        kill_check = risk_mgr.check_kill_switch(
+            strategy_realized, strategy_unrealized, strategy_initial,
+        )
+        if not kill_check.allowed:
+            strategy.is_active = False
+            strategy.is_scheduled = False
+            from app.tasks.trading_scheduler import trading_scheduler
+            trading_scheduler.remove_schedule(user_id, strategy_id)
+
+            schedule_log.status = ScheduleLogStatus.SKIPPED
+            schedule_log.skip_reason = kill_check.reason
+            schedule_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            await send_telegram_message(
+                f"🚨 [킬 스위치 발동]\n전략: {strategy.name}\n{kill_check.reason}\n"
+                f"전략이 자동 비활성화되었습니다."
+            )
+            return
+
         # 5. 보유 포지션 손절 체크 (Phase 3: 해당 전략 보유분만)
 
         for pos in positions:
@@ -397,18 +426,53 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                 except KISClientError as e:
                     logger.error("Stop-loss order failed for %s: %s", pos.ticker, e)
 
-        # 6. 일일 손실 한도 체크
+        # 6. 일일 손실 한도 체크 — 실제 오늘 실현 PnL 계산
         today_start = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0)
         today_start_utc = today_start.astimezone(timezone.utc)
 
-        # 오늘 체결된 주문의 손익 합계 (간략 계산)
-        daily_check = risk_mgr.check_daily_loss(Decimal("0"))  # 실현 PnL 추적은 Phase 2에서 상세화
+        today_sell_orders_result = await db.execute(
+            select(TradingOrder).where(
+                TradingOrder.strategy_id == strategy_id,
+                TradingOrder.side == OrderSide.SELL,
+                TradingOrder.status.in_([OrderStatus.FILLED, OrderStatus.SUBMITTED]),
+                TradingOrder.created_at >= today_start_utc,
+            )
+        )
+        today_realized_pnl = Decimal("0")
+        for sell_order in today_sell_orders_result.scalars().all():
+            sell_price = decrypt_decimal(sell_order.price)
+            sell_qty = decrypt_decimal(sell_order.quantity)
+            if sell_order.pre_apply_avg_buy_price:
+                avg_buy = decrypt_decimal(sell_order.pre_apply_avg_buy_price)
+                today_realized_pnl += (sell_price - avg_buy) * sell_qty
+
+        daily_check = risk_mgr.check_daily_loss(today_realized_pnl)
         if not daily_check.allowed:
             schedule_log.status = ScheduleLogStatus.SKIPPED
             schedule_log.skip_reason = daily_check.reason
             schedule_log.completed_at = datetime.now(timezone.utc)
             await db.commit()
             await send_telegram_message(f"⛔ [일일 손실 한도]\n{daily_check.reason}")
+            return
+
+        # 6.5 일일 거래 횟수 한도 체크
+        today_orders_count_result = await db.execute(
+            select(func.count()).select_from(TradingOrder).where(
+                TradingOrder.strategy_id == strategy_id,
+                TradingOrder.status.in_([
+                    OrderStatus.SUBMITTED, OrderStatus.FILLED, OrderStatus.PARTIAL,
+                ]),
+                TradingOrder.created_at >= today_start_utc,
+            )
+        )
+        today_trade_count = today_orders_count_result.scalar() or 0
+        daily_trades_check = risk_mgr.check_daily_trades(today_trade_count)
+        if not daily_trades_check.allowed:
+            schedule_log.status = ScheduleLogStatus.SKIPPED
+            schedule_log.skip_reason = daily_trades_check.reason
+            schedule_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            await send_telegram_message(f"⛔ [일일 거래 횟수 한도]\n{daily_trades_check.reason}")
             return
 
         # 7. 대상 종목별 전략 평가
@@ -467,6 +531,27 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         )
                         logger.info(
                             "LLM decision blocked (low confidence): %s %s conf=%d",
+                            ticker, llm_decision.action, llm_decision.confidence,
+                        )
+                        continue
+
+                    # Step 3: 사용자 승인 모드 — pending으로 저장 후 발주 스킵
+                    approval_required = strategy.params_json.get("approval_required", False)
+                    if approval_required and llm_decision.action != "hold":
+                        timeout_minutes = strategy.params_json.get(
+                            "approval_timeout_minutes", 30,
+                        )
+                        decision_row.approval_status = "pending"
+                        decision_row.approval_expires_at = (
+                            datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
+                        )
+                        trade_messages.append(
+                            f"⏳ [승인 대기] {ticker} {llm_decision.action} "
+                            f"(confidence={llm_decision.confidence}): "
+                            f"{llm_decision.reason[:80]}"
+                        )
+                        logger.info(
+                            "LLM decision pending approval: %s %s conf=%d",
                             ticker, llm_decision.action, llm_decision.confidence,
                         )
                         continue
