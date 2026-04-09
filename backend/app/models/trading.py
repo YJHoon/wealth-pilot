@@ -242,6 +242,15 @@ class TradingOrder(Base):
     kis_order_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     kis_order_date: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
+    # 체결 폴링: 마지막으로 KIS에 체결조회한 시각 (grace period 판정용)
+    last_polled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    # 체결 폴링: eager apply 직전의 포지션 (수량/평균단가) 스냅샷 (AES-256 암호화)
+    # 부분체결/거부 롤백 시 새 평균단가 재계산에 사용.
+    pre_apply_qty: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pre_apply_avg_buy_price: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # 주문 사유 (전략 신호 설명)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
