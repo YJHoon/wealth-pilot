@@ -182,10 +182,18 @@ async def test_cancelled_buy_full_rollback(db_session, mock_user, account, strat
     """KIS에서 주문 사라짐 + grace 경과 → 전량 롤백, 신규 매수면 포지션 삭제."""
     await apply_buy_fill(db_session, strategy, "005930", "삼성", Decimal("10"), Decimal("100000"))
     order = _new_buy_order(strategy, account, mock_user, 10, 100000, 0, 0)
-    # grace를 넘기기 위해 created_at을 과거로
-    order.last_polled_at = datetime.now(timezone.utc) - timedelta(minutes=10)
     db_session.add(order)
     await db_session.commit()
+    # grace를 넘기기 위해 created_at을 과거로 강제 갱신 (server_default 우회)
+    from sqlalchemy import update
+    from app.models.trading import TradingOrder as TO
+    await db_session.execute(
+        update(TO).where(TO.id == order.id).values(
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(order)
 
     kis = _make_kis([])  # KIS 응답 비어있음
     result = await poll_open_orders(db_session, account, kis)
@@ -213,7 +221,9 @@ async def test_cancelled_grace_period_first_poll_skips(db_session, mock_user, ac
 
     assert result.cancelled == 0
     assert order.status == OrderStatus.SUBMITTED
-    assert order.last_polled_at is not None
+    # grace 스킵 분기는 last_polled_at을 갱신하지 않음
+    # (갱신하면 grace anchor가 무한 연장되어 영원히 취소되지 않음)
+    assert order.last_polled_at is None
     pos = await get_strategy_position(db_session, account.id, strategy.id, "005930")
     assert decrypt_decimal(pos.quantity) == Decimal("10")  # 변동 없음
 

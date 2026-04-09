@@ -12,8 +12,9 @@ ord_qty 기준으로 갱신한다. 실제로는 KIS가 부분체결하거나 거
   체결됐다고 가정한 절대 목표 상태"를 계산해 포지션을 그 값으로 설정한다.
 - 따라서 같은 KIS 응답으로 여러 번 폴링해도, 더 큰 kis_filled로 후속 폴링해도
   결과는 항상 "현재 kis_filled가 가리키는 그 상태"로 수렴한다.
-- TradingOrder.filled_quantity 는 폴링이 마지막으로 확인한 체결량을 기록할 뿐
-  보정 계산에는 쓰이지 않는다 (감사/표시용).
+- TradingOrder.filled_quantity 는 매 폴링마다 갱신되며, 매도 realized_pnl
+  보정에서 "직전 폴링이 적용한 체결량(prev_applied)"의 source로 사용된다
+  (감사/표시 + 매도 PnL 보정 멱등성 확보용).
 
 롤백 공식:
 매수 주문이 부분체결(kis_filled < ord_qty)된 경우:
@@ -110,10 +111,11 @@ async def poll_open_orders(
         try:
             kis_entry = by_id.get(order.kis_order_id or "")
             if kis_entry is None:
-                # KIS에 안 보임 → grace period 후 취소 처리
-                grace_anchor = order.last_polled_at or order.created_at
-                if now - grace_anchor < CANCEL_GRACE_PERIOD:
-                    order.last_polled_at = now
+                # KIS에 안 보임 → grace period 후 취소 처리.
+                # grace_anchor는 항상 order.created_at 기준 — 매 폴링에서
+                # last_polled_at을 now로 갱신하면 grace가 무한 연장되어
+                # 영원히 취소 처리되지 않으므로 갱신하지 않는다.
+                if now - order.created_at < CANCEL_GRACE_PERIOD:
                     continue
                 await _full_rollback(db, order)
                 order.status = OrderStatus.CANCELLED
@@ -181,6 +183,18 @@ async def _partial_rollback(
     매도: position에 shortfall 복원 + realized_pnl 차감
     """
     if shortfall <= 0:
+        return
+
+    # 전략이 SET NULL로 끊긴 주문은 포지션 row를 새로 만들 수 없다
+    # (TradingPosition.strategy_id NOT NULL). 이 경우 보정/롤백 자체가
+    # 의미 없으므로 로깅 후 스킵 — reconcile_with_kis가 후속 사이클에서
+    # 합계 불일치를 surface한다.
+    if order.strategy_id is None:
+        logger.warning(
+            "Skip rollback: order.strategy_id is NULL (strategy deleted): "
+            "order_id=%s ticker=%s",
+            order.id, order.ticker,
+        )
         return
 
     pre_qty = decrypt_decimal_optional(order.pre_apply_qty) or Decimal("0")
