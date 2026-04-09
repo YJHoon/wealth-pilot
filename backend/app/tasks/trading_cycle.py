@@ -429,6 +429,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             encrypt_decimal(Decimal(llm_decision.suggested_quantity))
                             if llm_decision.suggested_quantity else None
                         ),
+                        # suggested_amount는 현재 LLM 응답 스키마에 없음(수량만 받음).
+                        # 컬럼은 미래 확장용으로 남겨둔다.
                         market_regime=llm_decision.market_regime,
                         used_indicators=llm_decision.used_indicators,
                         model=llm_decision.model,
