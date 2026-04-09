@@ -340,13 +340,21 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         if not kill_check.allowed:
             strategy.is_active = False
             strategy.is_scheduled = False
-            from app.tasks.trading_scheduler import trading_scheduler
-            trading_scheduler.remove_schedule(user_id, strategy_id)
-
             schedule_log.status = ScheduleLogStatus.SKIPPED
             schedule_log.skip_reason = kill_check.reason
             schedule_log.completed_at = datetime.now(timezone.utc)
             await db.commit()
+
+            # DB 커밋 성공 후 인메모리 스케줄 제거 (실패해도 DB 상태는 보존)
+            try:
+                from app.tasks.trading_scheduler import trading_scheduler
+                trading_scheduler.remove_schedule(user_id, strategy_id)
+            except Exception:
+                logger.warning(
+                    "Failed to remove in-memory schedule after kill switch: strategy=%s",
+                    strategy_id, exc_info=True,
+                )
+
             await send_telegram_message(
                 f"🚨 [킬 스위치 발동]\n전략: {strategy.name}\n{kill_check.reason}\n"
                 f"전략이 자동 비활성화되었습니다."
@@ -431,6 +439,10 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                 except KISClientError as e:
                     logger.error("Stop-loss order failed for %s: %s", pos.ticker, e)
 
+        # 손절 후 strategy_realized 갱신 (종목 루프 내 킬 스위치 재체크 정확도)
+        if orders_placed > 0:
+            strategy_realized = get_realized_pnl(strategy)
+
         # 6. 일일 손실 한도 체크 — 실제 오늘 실현 PnL 계산
         today_start = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0)
         today_start_utc = today_start.astimezone(timezone.utc)
@@ -485,6 +497,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         # today_trade_count를 직접 사용 (손절 루프에서 이미 증가분 반영됨).
 
         # 7. 대상 종목별 전략 평가
+        _kill_switch_tripped = False
         for ticker in strategy.target_tickers:
             tickers_evaluated += 1
             try:
@@ -784,11 +797,32 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         trade_messages.append(
                             f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
+
+                        # 매도 후 킬 스위치 재체크 — 실현PnL 변동으로 한도 초과 가능
+                        strategy_realized = get_realized_pnl(strategy)
+                        kill_recheck = risk_mgr.check_kill_switch(
+                            strategy_realized, strategy_unrealized, strategy_initial,
+                        )
+                        if not kill_recheck.allowed:
+                            trade_messages.append(
+                                f"🚨 [킬 스위치 발동] 매도 후 누적 손실 기준 초과 — "
+                                f"이후 주문 중단"
+                            )
+                            logger.warning(
+                                "Kill switch tripped after sell: %s", kill_recheck.reason,
+                            )
+                            # 루프 탈출 플래그 (아래 except 밖에서 break)
+                            _kill_switch_tripped = True
+
                     except KISClientError as e:
                         logger.error("Sell order failed for %s: %s", ticker, e)
 
             except Exception:
                 logger.exception("Error evaluating ticker %s", ticker)
+
+            # 킬 스위치가 사이클 내에서 발동되면 더 이상 주문하지 않음
+            if _kill_switch_tripped:
+                break
 
         # 8. 포지션 시세 갱신 + KIS 정합성 체크 (Phase 3)
         mismatches = await _sync_positions(db, kis, account)
