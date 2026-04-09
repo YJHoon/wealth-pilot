@@ -327,11 +327,20 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         today_trade_count = 0
 
         # 4.5 킬 스위치 — 누적 손실률이 기준 이상이면 전략 자동 비활성화
+        # 미실현PnL을 최신 시세(balance)로 재계산하여 stale 값 방지
         strategy_realized = get_realized_pnl(strategy)
         strategy_unrealized = Decimal("0")
+        kis_holdings = {h["ticker"]: h for h in balance.get("holdings", [])}
         for pos in positions:
-            if pos.unrealized_pnl:
-                strategy_unrealized += decrypt_decimal(pos.unrealized_pnl)
+            qty = decrypt_decimal(pos.quantity)
+            avg = decrypt_decimal(pos.avg_buy_price)
+            kis_h = kis_holdings.get(pos.ticker)
+            if kis_h and kis_h.get("current_price") is not None:
+                cur = Decimal(str(kis_h["current_price"]))
+                strategy_unrealized += (cur - avg) * qty
+            elif pos.current_price is not None:
+                cur = Decimal(str(pos.current_price))
+                strategy_unrealized += (cur - avg) * qty
         strategy_initial = get_initial_capital(strategy)
 
         kill_check = risk_mgr.check_kill_switch(
@@ -800,18 +809,37 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
 
                         # 매도 후 킬 스위치 재체크 — 실현PnL 변동으로 한도 초과 가능
                         strategy_realized = get_realized_pnl(strategy)
+                        # 매도한 포지션은 제거되었으므로 unrealized 재계산
+                        post_positions = await list_strategy_positions(
+                            db, account.id, strategy.id,
+                        )
+                        strategy_unrealized = Decimal("0")
+                        for pp in post_positions:
+                            pp_qty = decrypt_decimal(pp.quantity)
+                            pp_avg = decrypt_decimal(pp.avg_buy_price)
+                            pp_kis = kis_holdings.get(pp.ticker)
+                            if pp_kis and pp_kis.get("current_price") is not None:
+                                pp_cur = Decimal(str(pp_kis["current_price"]))
+                                strategy_unrealized += (pp_cur - pp_avg) * pp_qty
+                            elif pp.current_price is not None:
+                                pp_cur = Decimal(str(pp.current_price))
+                                strategy_unrealized += (pp_cur - pp_avg) * pp_qty
+
                         kill_recheck = risk_mgr.check_kill_switch(
                             strategy_realized, strategy_unrealized, strategy_initial,
                         )
                         if not kill_recheck.allowed:
+                            # 전체 비활성화 경로 (초기 킬 스위치와 동일)
+                            strategy.is_active = False
+                            strategy.is_scheduled = False
                             trade_messages.append(
-                                f"🚨 [킬 스위치 발동] 매도 후 누적 손실 기준 초과 — "
-                                f"이후 주문 중단"
+                                "🚨 [킬 스위치 발동] 매도 후 누적 손실 기준 초과 — "
+                                "이후 주문 중단"
                             )
                             logger.warning(
-                                "Kill switch tripped after sell: %s", kill_recheck.reason,
+                                "Kill switch tripped after sell: %s",
+                                kill_recheck.reason,
                             )
-                            # 루프 탈출 플래그 (아래 except 밖에서 break)
                             _kill_switch_tripped = True
 
                     except KISClientError as e:
@@ -823,6 +851,18 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             # 킬 스위치가 사이클 내에서 발동되면 더 이상 주문하지 않음
             if _kill_switch_tripped:
                 break
+
+        # 사이클 내 킬 스위치 발동 시 비활성화 완료 (strategy 변경은 위에서 수행)
+        if _kill_switch_tripped:
+            try:
+                from app.tasks.trading_scheduler import trading_scheduler
+                trading_scheduler.remove_schedule(user_id, strategy_id)
+            except Exception:
+                logger.warning(
+                    "Failed to remove in-memory schedule after in-cycle kill switch: "
+                    "strategy=%s", strategy_id, exc_info=True,
+                )
+            # 텔레그램은 아래 사이클 완료 알림에 trade_messages로 포함됨
 
         # 8. 포지션 시세 갱신 + KIS 정합성 체크 (Phase 3)
         mismatches = await _sync_positions(db, kis, account)
