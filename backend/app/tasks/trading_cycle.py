@@ -18,11 +18,20 @@ from app.models.trading import (
     OrderStatus,
     OrderType,
     ScheduleLogStatus,
+    StrategyType,
     TradingAccount,
+    TradingDecision,
+    TradingMode,
     TradingOrder,
     TradingPosition,
     TradingScheduleLog,
     TradingStrategy,
+)
+from app.services.decision_memory import DecisionMemory, load_decision_memory
+from app.services.llm_advisor import (
+    LLMDecision,
+    PortfolioContext,
+    get_llm_decision,
 )
 from app.services.account_lock import acquire_account_lock
 from app.services.strategy_capital import (
@@ -123,6 +132,27 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         logger.warning("Account not found or inactive: %s", strategy.account_id)
         return
 
+    # Stage 3: LLM 어드바이저는 paper 모드 전용 — live 계좌는 즉시 차단.
+    # 환각/응답지연/검증 부족 위험이 있어 사용자 결정 전 라이브 발주를 막는다.
+    if (
+        strategy.strategy_type == StrategyType.LLM_ADVISOR
+        and account.mode == TradingMode.LIVE
+    ):
+        skip_log = TradingScheduleLog(
+            user_id=user_id,
+            strategy_id=strategy_id,
+            status=ScheduleLogStatus.SKIPPED,
+            skip_reason="LLM 어드바이저는 paper 모드 전용 (Stage 3 Step 1)",
+            completed_at=datetime.now(timezone.utc),
+        )
+        db.add(skip_log)
+        await db.commit()
+        logger.warning(
+            "LLM advisor blocked on live account: strategy=%s account=%s",
+            strategy_id, account.id,
+        )
+        return
+
     # 2. 장 운영 시간 체크
     if strategy.market_hours_only and not _is_market_hours():
         log = TradingScheduleLog(
@@ -168,6 +198,71 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     # 직렬화가 보장되지 않는다. 스케일아웃 전에 Redis 분산 락
     # (aioredlock / redis-py Lock)으로 교체 필요. account_lock.py 참고.
 
+    # ── Stage 3: LLM 사전 패스 (락 밖) ──
+    # LLM 호출은 종목당 수 초가 걸려 계좌 락을 길게 점유하면 다른 전략 사이클을
+    # 차단한다. 시세조회 + Claude 호출을 락 *진입 전* 에 끝내고 결과만 캐시한 뒤,
+    # 락 안에서는 잔고/포지션 최신 상태로 재검증해 발주만 수행한다.
+    # 사전 패스 스냅샷은 약간 stale할 수 있지만 LLM 컨텍스트로는 충분하며,
+    # 발주 시점의 정합성은 락 내부 Pre-Trade Check가 보장한다.
+    is_llm_strategy = strategy.strategy_type == StrategyType.LLM_ADVISOR
+    llm_cache: dict[str, tuple[LLMDecision, list[dict]]] = {}
+    decision_memory: DecisionMemory | None = None
+    if is_llm_strategy:
+        try:
+            pre_balance = await kis.get_balance()
+            pre_cash = pre_balance["cash"]
+            pre_total_eval = pre_balance["total_eval"] + pre_cash
+            decision_memory = await load_decision_memory(db, strategy_id)
+            # holdings는 KIS 응답에서 직접 구성 — 현금/총평가와 동일 소스라
+            # 정합되며, DB 포지션은 reconcile(poll_open_orders) 전이라
+            # 일시적으로 KIS와 어긋날 수 있다. 발주 시점의 전략 격리는
+            # 락 안 Pre-Trade Check가 보장하므로 LLM 컨텍스트만 계좌 전체
+            # 기준으로 단일화한다.
+            pre_holdings = [
+                {
+                    "ticker": h["ticker"],
+                    "ticker_name": h.get("name", ""),
+                    "quantity": str(h["quantity"]),
+                    "avg_buy_price": str(h["avg_price"]),
+                    "current_price": str(h.get("current_price"))
+                    if h.get("current_price") is not None else None,
+                    "unrealized_pnl": str(h.get("pnl"))
+                    if h.get("pnl") is not None else None,
+                }
+                for h in pre_balance.get("holdings", [])
+            ]
+            pre_portfolio_ctx = PortfolioContext(
+                cash=pre_cash, total_eval=pre_total_eval, holdings=pre_holdings,
+            )
+            for ticker in strategy.target_tickers:
+                try:
+                    ph = await kis.get_price_history(ticker, period="D", count=60)
+                    if not ph:
+                        continue
+                    try:
+                        tinfo = await kis.get_current_price(ticker)
+                        tname = tinfo.get("name", "") or ""
+                    except KISClientError as e:
+                        logger.debug(
+                            "kis.get_current_price 실패 ticker=%s: %s",
+                            ticker, e, exc_info=True,
+                        )
+                        tname = ""
+                    decision = await get_llm_decision(
+                        ticker=ticker,
+                        ticker_name=tname,
+                        price_history=ph,
+                        portfolio=pre_portfolio_ctx,
+                        memory=decision_memory,
+                        adaptive_rules=None,  # Step 4 (모듈 C)
+                    )
+                    llm_cache[ticker] = (decision, ph)
+                except Exception:
+                    logger.exception("LLM pre-pass failed for %s", ticker)
+        except Exception:
+            # 사전 패스 전체 실패 시 LLM 사이클은 발주 없이 진행 (fail-safe).
+            logger.exception("LLM pre-pass aborted; cycle will place no orders")
+
     try:
       async with acquire_account_lock(account.id):
         # 락 획득 후 상태 재검증 — 비활성화 라우터와 직렬화되어,
@@ -209,7 +304,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         total_eval = balance["total_eval"] + available_cash
 
         # 전략 & 리스크 매니저 생성
-        strat = create_strategy(strategy.strategy_type.value, strategy.params_json)
+        # LLM 어드바이저는 룰베이스 strat 인스턴스가 없다 — 사전 패스에서 캐시됨.
+        strat = (
+            None if is_llm_strategy
+            else create_strategy(strategy.strategy_type.value, strategy.params_json)
+        )
         risk_mgr = RiskManager.from_params(strategy.params_json)
 
         # 현재 보유 종목 집합 (Phase 3: 전략별, distinct ticker 기준)
@@ -316,15 +415,71 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         for ticker in strategy.target_tickers:
             tickers_evaluated += 1
             try:
-                # 일별 시세 조회
-                price_history = await kis.get_price_history(ticker, period="D", count=60)
-                if not price_history:
-                    continue
+                # 전략 평가 — 룰베이스 vs LLM 분기
+                llm_decision: LLMDecision | None = None
+                if is_llm_strategy:
+                    cached = llm_cache.get(ticker)
+                    if cached is None:
+                        # 사전 패스에서 실패했거나 시세 없음 — 발주 없이 스킵
+                        continue
+                    llm_decision, price_history = cached
+                    current_price_data = price_history[-1]
+                    current_price = current_price_data["close"]
+                    signal = Signal(
+                        action=llm_decision.action,
+                        confidence=Decimal(llm_decision.confidence) / Decimal(100),
+                        reason=llm_decision.reason,
+                    )
+                    # 의사결정 로그 — 발주 여부와 무관하게 항상 기록
+                    decision_row = TradingDecision(
+                        user_id=user_id,
+                        strategy_id=strategy_id,
+                        account_id=account.id,
+                        schedule_log_id=schedule_log.id,
+                        ticker=ticker,
+                        action=llm_decision.action,
+                        confidence=llm_decision.confidence,
+                        reason=llm_decision.reason,
+                        suggested_quantity=(
+                            encrypt_decimal(Decimal(llm_decision.suggested_quantity))
+                            if llm_decision.suggested_quantity else None
+                        ),
+                        # suggested_amount는 현재 LLM 응답 스키마에 없음(수량만 받음).
+                        # 컬럼은 미래 확장용으로 남겨둔다.
+                        market_regime=llm_decision.market_regime,
+                        used_indicators=llm_decision.used_indicators,
+                        model=llm_decision.model,
+                        input_tokens=llm_decision.input_tokens,
+                        output_tokens=llm_decision.output_tokens,
+                        executed=False,
+                    )
+                    db.add(decision_row)
+                    await db.flush()
 
-                # 전략 평가
-                signal: Signal = strat.evaluate(ticker, price_history)
-                current_price_data = price_history[-1]
-                current_price = current_price_data["close"]
+                    # 신뢰도 임계값 — 미달이면 hold로 강제
+                    if (
+                        llm_decision.action != "hold"
+                        and llm_decision.confidence < settings.llm_advisor_min_confidence
+                    ):
+                        decision_row.blocked_reason = (
+                            f"confidence {llm_decision.confidence} < "
+                            f"{settings.llm_advisor_min_confidence}"
+                        )
+                        logger.info(
+                            "LLM decision blocked (low confidence): %s %s conf=%d",
+                            ticker, llm_decision.action, llm_decision.confidence,
+                        )
+                        continue
+                else:
+                    # 룰베이스: 락 안에서 시세 조회 (LLM 사전 패스 미적용)
+                    price_history = await kis.get_price_history(
+                        ticker, period="D", count=60,
+                    )
+                    if not price_history:
+                        continue
+                    current_price_data = price_history[-1]
+                    current_price = current_price_data["close"]
+                    signal = strat.evaluate(ticker, price_history)
 
                 if signal.action == "hold":
                     continue
@@ -417,6 +572,10 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                         )
                         db.add(order)
+                        if llm_decision is not None:
+                            await db.flush()
+                            decision_row.executed = True
+                            decision_row.order_id = order.id
                         # Phase 3: 전략 포지션 증가 (신규 ticker일 때만 set에 추가)
                         await apply_buy_fill(
                             db, strategy, ticker, ticker_name, qty_dec, price_dec,
@@ -473,6 +632,10 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                         )
                         db.add(order)
+                        if llm_decision is not None:
+                            await db.flush()
+                            decision_row.executed = True
+                            decision_row.order_id = order.id
                         # Phase 3: 전략 포지션 차감 + 실현손익 누적
                         # 손절 케이스와 동일한 사유로 try/except (회계 정합성 방어).
                         try:
@@ -560,6 +723,56 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         raise
     finally:
         await kis.close()
+
+
+def _build_portfolio_context(
+    available_cash: Decimal,
+    total_eval: Decimal,
+    positions: list[TradingPosition],
+) -> PortfolioContext:
+    """LLM 어드바이저에 주입할 포트폴리오 스냅샷.
+
+    DB에 암호화 저장된 quantity/avg_buy_price를 평문으로 풀어 LLM 컨텍스트에
+    싣는다. paper 모드 전용 흐름이라 외부로 유출되지 않으며, 본 함수의
+    호출자가 LLM 응답까지의 짧은 수명 동안만 메모리에 들고 있는다.
+    """
+    holdings: list[dict] = []
+    for p in positions:
+        try:
+            qty = decrypt_decimal(p.quantity)
+            avg = decrypt_decimal(p.avg_buy_price)
+        except Exception as e:
+            logger.error(
+                "decrypt_decimal 실패 position_id=%s ticker=%s "
+                "(quantity/avg_buy_price): %s",
+                getattr(p, "id", None), getattr(p, "ticker", None), e,
+                exc_info=True,
+            )
+            continue
+        unrealized_pnl_str: str | None = None
+        if p.unrealized_pnl:
+            try:
+                unrealized_pnl_str = str(decrypt_decimal(p.unrealized_pnl))
+            except Exception as e:
+                logger.error(
+                    "decrypt_decimal 실패 position_id=%s ticker=%s "
+                    "(unrealized_pnl): %s",
+                    getattr(p, "id", None), getattr(p, "ticker", None), e,
+                    exc_info=True,
+                )
+        holdings.append({
+            "ticker": p.ticker,
+            "ticker_name": p.ticker_name,
+            "quantity": str(qty),
+            "avg_buy_price": str(avg),
+            "current_price": str(p.current_price) if p.current_price is not None else None,
+            "unrealized_pnl": unrealized_pnl_str,
+        })
+    return PortfolioContext(
+        cash=available_cash,
+        total_eval=total_eval,
+        holdings=holdings,
+    )
 
 
 async def _sync_positions(

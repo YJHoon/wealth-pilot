@@ -6,6 +6,8 @@ KIS API 계좌, 전략, 주문, 포지션, 스케줄 실행 이력.
 
 import enum
 import uuid
+
+import sqlalchemy as sa
 from datetime import datetime
 
 from sqlalchemy import (
@@ -41,6 +43,8 @@ class StrategyType(str, enum.Enum):
     MA_CROSSOVER = "ma_crossover"
     MEAN_REVERSION = "mean_reversion"
     CUSTOM = "custom"
+    # Stage 3: LLM 어드바이저 — paper 모드 전용 (live 차단은 trading_cycle에서)
+    LLM_ADVISOR = "llm_advisor"
 
 
 class OrderSide(str, enum.Enum):
@@ -376,3 +380,114 @@ class TradingScheduleLog(Base):
     # 관계
     strategy = relationship("TradingStrategy", back_populates="schedule_logs")
     orders = relationship("TradingOrder", back_populates="schedule_log")
+
+
+# ──────────────────────────────────────────────
+# Stage 3: LLM 어드바이저
+# ──────────────────────────────────────────────
+
+class TradingDecision(Base):
+    """LLM 어드바이저 의사결정 로그.
+
+    매 LLM 호출마다 한 행을 남긴다. 발주 여부와 무관하게 기록되며
+    (executed=False면 confidence 미달/검증 실패 등으로 차단됨), 후속 모듈
+    (B: 메모리 컨텍스트, C: 메타분석)이 이 테이블을 학습 데이터로 사용한다.
+
+    금액/수량 필드는 AES-256 암호화된 문자열로 저장한다.
+    """
+
+    __tablename__ = "trading_decisions"
+    __table_args__ = (
+        Index("ix_trading_decisions_strategy_created", "strategy_id", "created_at"),
+        Index("ix_trading_decisions_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trading_strategies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    schedule_log_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trading_schedule_logs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # 발주가 실제로 일어난 경우 연결되는 주문
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trading_orders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    ticker: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(10), nullable=False)  # buy/sell/hold
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False)  # 0~100
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    # LLM이 제안한 수량/금액 (AES-256 암호화). hold면 None.
+    suggested_quantity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_amount: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 검증/발주 결과
+    executed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.false(), nullable=False,
+    )
+    blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 결과 (체결 후 갱신 — 모듈 B/C에서 사용)
+    realized_pnl: Mapped[str | None] = mapped_column(Text, nullable=True)
+    holding_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exit_price: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 메타
+    market_regime: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    used_indicators: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # 호출 비용 추적용 (선택)
+    model: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+
+class AdaptiveRule(Base):
+    """모듈 C(주간 메타 분석)가 생성한 자동 진화 규칙.
+
+    Step 1에서는 스키마만 정의한다. 모듈 C 구현 후 실제 INSERT가 시작된다.
+    """
+
+    __tablename__ = "adaptive_rules"
+    __table_args__ = (
+        Index("ix_adaptive_rules_strategy_active", "strategy_id", "is_active"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trading_strategies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    rule_text: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_from: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=expression.true(), nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
