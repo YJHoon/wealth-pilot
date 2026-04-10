@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +48,17 @@ class TradingScheduler:
             prune_idle_account_locks,
             trigger=IntervalTrigger(hours=1),
             id="account_lock_prune",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
+        # Stage 3 Step 4: 주간 메타 분석 (매주 일요일 20:00 KST)
+        from app.tasks.meta_analysis import execute_weekly_meta_analysis
+        self._scheduler.add_job(
+            execute_weekly_meta_analysis,
+            trigger=CronTrigger(day_of_week="sun", hour=20, minute=0),
+            id="weekly_meta_analysis",
             replace_existing=True,
             max_instances=1,
             coalesce=True,

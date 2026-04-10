@@ -24,6 +24,7 @@ from app.services.crypto_service import (
 
 if TYPE_CHECKING:
     from app.models.trading import (
+        AdaptiveRule as AdaptiveRuleModel,
         TradingAccount as TradingAccountModel,
         TradingDecision as TradingDecisionModel,
         TradingOrder as TradingOrderModel,
@@ -314,3 +315,37 @@ class TradingPerformanceResponse(BaseModel):
     initial_capital: Decimal
     current_value: Decimal
     return_rate: Decimal
+
+
+# ──────────────────────────────────────────────
+# AdaptiveRule (Step 4: 모듈 C)
+# ──────────────────────────────────────────────
+
+class AdaptiveRuleResponse(BaseModel):
+    id: UUID
+    strategy_id: UUID
+    version: int
+    rule_text: str
+    rationale: str | None
+    generated_from: str | None
+    is_active: bool
+    created_at: datetime
+    expires_at: datetime | None
+
+
+class AdaptiveRuleUpdate(BaseModel):
+    is_active: bool
+
+
+def adaptive_rule_to_response(rule: AdaptiveRuleModel) -> AdaptiveRuleResponse:
+    return AdaptiveRuleResponse(
+        id=rule.id,
+        strategy_id=rule.strategy_id,
+        version=rule.version,
+        rule_text=rule.rule_text,
+        rationale=rule.rationale,
+        generated_from=rule.generated_from,
+        is_active=rule.is_active,
+        created_at=rule.created_at,
+        expires_at=rule.expires_at,
+    )

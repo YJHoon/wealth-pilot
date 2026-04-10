@@ -27,6 +27,8 @@ from app.models.trading import (
     TradingScheduleLog,
     TradingStrategy,
 )
+from app.services.adaptive_rules import get_active_rules
+from app.services.decision_backfill import backfill_sell_results
 from app.services.decision_memory import DecisionMemory, load_decision_memory
 from app.services.llm_advisor import (
     LLMDecision,
@@ -209,12 +211,22 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     is_llm_strategy = strategy.strategy_type == StrategyType.LLM_ADVISOR
     llm_cache: dict[str, tuple[LLMDecision, list[dict]]] = {}
     decision_memory: DecisionMemory | None = None
+    active_adaptive_rules: list[str] | None = None
     if is_llm_strategy:
         try:
             pre_balance = await kis.get_balance()
             pre_cash = pre_balance["cash"]
             pre_total_eval = pre_balance["total_eval"] + pre_cash
             decision_memory = await load_decision_memory(db, strategy_id)
+            # Step 4 (모듈 C): 활성 adaptive rules 로드
+            # 규칙 로드 실패는 사이클을 중단하지 않는다 (fail-open).
+            try:
+                active_adaptive_rules = await get_active_rules(db, strategy_id) or None
+            except Exception:
+                logger.warning(
+                    "Failed to load adaptive rules (continuing without): strategy=%s",
+                    strategy_id, exc_info=True,
+                )
             # holdings는 KIS 응답에서 직접 구성 — 현금/총평가와 동일 소스라
             # 정합되며, DB 포지션은 reconcile(poll_open_orders) 전이라
             # 일시적으로 KIS와 어긋날 수 있다. 발주 시점의 전략 격리는
@@ -256,7 +268,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         price_history=ph,
                         portfolio=pre_portfolio_ctx,
                         memory=decision_memory,
-                        adaptive_rules=None,  # Step 4 (모듈 C)
+                        adaptive_rules=active_adaptive_rules,
                     )
                     llm_cache[ticker] = (decision, ph)
                 except Exception:
@@ -444,6 +456,17 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     trade_messages.append(
                         f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
                     )
+                    # 의사결정 결과 백필 (모듈 B/C 학습 데이터)
+                    try:
+                        stop_pnl = (current - avg_price) * Decimal(qty)
+                        await backfill_sell_results(
+                            db, strategy_id, pos.ticker, current, stop_pnl,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Decision backfill failed (stop-loss): ticker=%s",
+                            pos.ticker, exc_info=True,
+                        )
                     logger.info("Stop-loss sell: %s %d shares", pos.ticker, qty)
                 except KISClientError as e:
                     logger.error("Stop-loss order failed for %s: %s", pos.ticker, e)
@@ -806,6 +829,19 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         trade_messages.append(
                             f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
+                        # 의사결정 결과 백필 (모듈 B/C 학습 데이터)
+                        try:
+                            sell_avg = decrypt_decimal(pos.avg_buy_price)
+                            sig_pnl = (Decimal(str(current_price)) - sell_avg) * Decimal(qty)
+                            await backfill_sell_results(
+                                db, strategy_id, ticker,
+                                Decimal(str(current_price)), sig_pnl,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Decision backfill failed (signal sell): ticker=%s",
+                                ticker, exc_info=True,
+                            )
 
                         # 매도 후 킬 스위치 재체크 — 실현PnL 변동으로 한도 초과 가능
                         strategy_realized = get_realized_pnl(strategy)
