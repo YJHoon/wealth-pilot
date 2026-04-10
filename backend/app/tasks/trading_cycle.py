@@ -29,6 +29,12 @@ from app.models.trading import (
 )
 from app.services.adaptive_rules import get_active_rules
 from app.services.decision_backfill import backfill_sell_results
+from app.services.decision_embedding import (
+    build_context_text,
+    embed_decision,
+    format_similar_cases_for_prompt,
+    search_similar_cases,
+)
 from app.services.decision_memory import DecisionMemory, load_decision_memory
 from app.services.llm_advisor import (
     LLMDecision,
@@ -136,27 +142,6 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         logger.warning("Account not found or inactive: %s", strategy.account_id)
         return
 
-    # Stage 3: LLM 어드바이저는 paper 모드 전용 — live 계좌는 즉시 차단.
-    # 환각/응답지연/검증 부족 위험이 있어 사용자 결정 전 라이브 발주를 막는다.
-    if (
-        strategy.strategy_type == StrategyType.LLM_ADVISOR
-        and account.mode == TradingMode.LIVE
-    ):
-        skip_log = TradingScheduleLog(
-            user_id=user_id,
-            strategy_id=strategy_id,
-            status=ScheduleLogStatus.SKIPPED,
-            skip_reason="LLM 어드바이저는 paper 모드 전용 (Stage 3 Step 1)",
-            completed_at=datetime.now(timezone.utc),
-        )
-        db.add(skip_log)
-        await db.commit()
-        logger.warning(
-            "LLM advisor blocked on live account: strategy=%s account=%s",
-            strategy_id, account.id,
-        )
-        return
-
     # 2. 장 운영 시간 체크
     if strategy.market_hours_only and not _is_market_hours():
         log = TradingScheduleLog(
@@ -262,6 +247,28 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             ticker, e, exc_info=True,
                         )
                         tname = ""
+                    # Step 6 (모듈 D): 유사 케이스 검색 (fail-open)
+                    similar_cases_text: str | None = None
+                    try:
+                        search_ctx = build_context_text(
+                            ticker=ticker,
+                            ticker_name=tname,
+                            action="",  # 아직 행동 미결정
+                            confidence=0,
+                            reason="",
+                            market_regime=None,
+                            used_indicators=None,
+                        )
+                        similar = await search_similar_cases(
+                            db, search_ctx, strategy_id,
+                        )
+                        similar_cases_text = format_similar_cases_for_prompt(similar)
+                    except Exception:
+                        logger.warning(
+                            "RAG search failed for %s (continuing without)",
+                            ticker, exc_info=True,
+                        )
+
                     decision = await get_llm_decision(
                         ticker=ticker,
                         ticker_name=tname,
@@ -269,6 +276,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         portfolio=pre_portfolio_ctx,
                         memory=decision_memory,
                         adaptive_rules=active_adaptive_rules,
+                        similar_cases=similar_cases_text,
                     )
                     llm_cache[ticker] = (decision, ph)
                 except Exception:
@@ -573,6 +581,15 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     )
                     db.add(decision_row)
                     await db.flush()
+
+                    # Step 6 (모듈 D): 의사결정 임베딩 생성 (fail-open)
+                    try:
+                        await embed_decision(db, decision_row.id)
+                    except Exception:
+                        logger.warning(
+                            "Embedding creation failed for decision %s (continuing)",
+                            decision_row.id, exc_info=True,
+                        )
 
                     # 신뢰도 임계값 — 미달이면 hold로 강제
                     if (

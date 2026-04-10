@@ -1,9 +1,7 @@
 """LLM 어드바이저 — Stage 3 모듈 A 코어
 
 Anthropic Claude API에 구조화 입력을 보내고 매수/매도/홀드 의사결정을 받는다.
-- paper 모드 전용 (live 차단은 trading_cycle._run_cycle에서 강제).
 - 출력은 엄격한 JSON 스키마. 파싱 실패 시 안전 모드(hold)로 폴백.
-- 이 단계에서는 모듈 B(메모리)/C(adaptive_rules)는 빈 컨텍스트 자리만 마련해둔다.
 
 비용/지연이 있는 외부 호출이므로 호출자가 결과를 TradingDecision 행으로
 저장하도록 분리되어 있다 — 본 모듈은 DB I/O를 수행하지 않는다.
@@ -105,6 +103,7 @@ def _build_user_message(
     portfolio: PortfolioContext,
     memory: DecisionMemory | None,
     adaptive_rules: list[str] | None,
+    similar_cases: str | None = None,
 ) -> str:
     """사용자 메시지 본문 작성."""
     held = next(
@@ -146,8 +145,16 @@ def _build_user_message(
                   "방금 차단된 신호를 무리하게 재시도하는 행동을 피하라."
             )
 
+    if similar_cases:
+        # 모듈 D: RAG 유사 과거 사례
+        sections.append(
+            "## 유사 과거 사례 (벡터 검색 결과)\n"
+            + similar_cases
+            + "\n\n위 유사 사례의 승패 기록을 참고해 현재 판단의 신뢰도를 조정하라."
+        )
+
     if adaptive_rules:
-        # 모듈 C에서 채워줄 규칙 (Step 4 이후)
+        # 모듈 C: 누적 학습 규칙
         sections.append(
             "## 누적 학습 규칙 (반드시 준수)\n"
             + "\n".join(f"- {r}" for r in adaptive_rules)
@@ -234,6 +241,7 @@ async def get_llm_decision(
     portfolio: PortfolioContext,
     memory: DecisionMemory | None = None,
     adaptive_rules: list[str] | None = None,
+    similar_cases: str | None = None,
 ) -> LLMDecision:
     """Claude API를 호출해 의사결정을 받는다.
 
@@ -248,7 +256,7 @@ async def get_llm_decision(
 
     user_msg = _build_user_message(
         ticker, ticker_name, price_history, portfolio,
-        memory, adaptive_rules,
+        memory, adaptive_rules, similar_cases,
     )
 
     body = {
