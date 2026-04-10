@@ -28,6 +28,7 @@ from app.models.trading import (
     TradingStrategy,
 )
 from app.services.adaptive_rules import get_active_rules
+from app.services.decision_backfill import backfill_sell_results
 from app.services.decision_memory import DecisionMemory, load_decision_memory
 from app.services.llm_advisor import (
     LLMDecision,
@@ -455,6 +456,17 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     trade_messages.append(
                         f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
                     )
+                    # 의사결정 결과 백필 (모듈 B/C 학습 데이터)
+                    try:
+                        stop_pnl = (current - avg_price) * Decimal(qty)
+                        await backfill_sell_results(
+                            db, strategy_id, pos.ticker, current, stop_pnl,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Decision backfill failed (stop-loss): ticker=%s",
+                            pos.ticker, exc_info=True,
+                        )
                     logger.info("Stop-loss sell: %s %d shares", pos.ticker, qty)
                 except KISClientError as e:
                     logger.error("Stop-loss order failed for %s: %s", pos.ticker, e)
@@ -817,6 +829,19 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         trade_messages.append(
                             f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
+                        # 의사결정 결과 백필 (모듈 B/C 학습 데이터)
+                        try:
+                            sell_avg = decrypt_decimal(pos.avg_buy_price)
+                            sig_pnl = (Decimal(str(current_price)) - sell_avg) * Decimal(qty)
+                            await backfill_sell_results(
+                                db, strategy_id, ticker,
+                                Decimal(str(current_price)), sig_pnl,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Decision backfill failed (signal sell): ticker=%s",
+                                ticker, exc_info=True,
+                            )
 
                         # 매도 후 킬 스위치 재체크 — 실현PnL 변동으로 한도 초과 가능
                         strategy_realized = get_realized_pnl(strategy)
