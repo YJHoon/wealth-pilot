@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     llm_advisor_timeout_seconds: float = 20.0
     llm_advisor_max_tokens: int = 1024
 
+    # ── Stage 3 Step 4: 주간 메타 분석 (모듈 C) ──
+    meta_analysis_model: str = "claude-sonnet-4-5"
+    meta_analysis_max_rules: int = 5  # 한 번에 생성할 최대 규칙 수
+    adaptive_rule_ttl_days: int = 14  # 규칙 기본 유효기간 (일)
+
     def kis_credentials(self, mode: str) -> dict:
         """모드별 KIS 인증정보 반환. 잘못된 모드는 ValueError."""
         if mode == "paper":

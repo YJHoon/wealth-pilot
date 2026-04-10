@@ -14,6 +14,7 @@ from app.database import get_db
 from app.middleware.rate_limit import limiter
 from app.dependencies.auth import get_current_active_user
 from app.models.trading import (
+    AdaptiveRule,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -26,6 +27,8 @@ from app.models.trading import (
 )
 from app.models.user import User
 from app.schemas.trading import (
+    AdaptiveRuleResponse,
+    AdaptiveRuleUpdate,
     ScheduleStartRequest,
     ScheduleStatusResponse,
     TradingAccountCreate,
@@ -38,6 +41,7 @@ from app.schemas.trading import (
     TradingStrategyResponse,
     TradingStrategyUpdate,
     account_to_response,
+    adaptive_rule_to_response,
     decision_to_response,
     order_to_response,
     position_to_response,
@@ -1070,6 +1074,74 @@ async def get_performance(
         current_value=total_value,
         return_rate=return_rate,
     )
+
+
+# ──────────────────────────────────────────────
+# Adaptive Rules (Step 4: 모듈 C)
+# ──────────────────────────────────────────────
+
+@router.get(
+    "/strategies/{strategy_id}/adaptive-rules",
+    response_model=list[AdaptiveRuleResponse],
+)
+@limiter.limit("100/minute")
+async def list_adaptive_rules(
+    request: Request,
+    strategy_id: UUID,
+    active_only: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """전략별 adaptive rules 목록 조회."""
+    strategy = await _get_user_strategy(db, strategy_id, user.id)
+    from app.services.adaptive_rules import list_rules
+    rules = await list_rules(db, strategy.id, active_only=active_only)
+    return [adaptive_rule_to_response(r) for r in rules]
+
+
+@router.put(
+    "/adaptive-rules/{rule_id}",
+    response_model=AdaptiveRuleResponse,
+)
+@limiter.limit("100/minute")
+async def update_adaptive_rule(
+    request: Request,
+    rule_id: UUID,
+    body: AdaptiveRuleUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """규칙 활성/비활성 토글."""
+    rule = await db.get(AdaptiveRule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="규칙을 찾을 수 없습니다.")
+    # 소유권 검증: 규칙 → 전략 → 사용자
+    strategy = await db.get(TradingStrategy, rule.strategy_id)
+    if strategy is None or strategy.user_id != user.id:
+        raise HTTPException(status_code=404, detail="규칙을 찾을 수 없습니다.")
+    rule.is_active = body.is_active
+    await db.commit()
+    await db.refresh(rule)
+    return adaptive_rule_to_response(rule)
+
+
+@router.post(
+    "/strategies/{strategy_id}/meta-analysis",
+    response_model=list[AdaptiveRuleResponse],
+)
+@limiter.limit("10/minute")
+async def trigger_meta_analysis(
+    request: Request,
+    strategy_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """수동 메타 분석 트리거 (디버그/테스트용)."""
+    strategy = await _get_user_strategy(db, strategy_id, user.id)
+    from app.services.adaptive_rules import run_weekly_meta_analysis
+    created = await run_weekly_meta_analysis(db, strategy)
+    await db.commit()
+    return [adaptive_rule_to_response(r) for r in created]
 
 
 # ──────────────────────────────────────────────
