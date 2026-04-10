@@ -183,14 +183,17 @@ META_SYSTEM_PROMPT = """당신은 한국 주식 자동매매 시스템의 성과
 """
 
 
+# 프롬프트에 포함할 최대 의사결정 상세 건수 (토큰 절약)
+_MAX_DECISION_DETAIL = 50
+
+
 def _build_meta_analysis_message(
     decisions: list[TradingDecision],
     active_rules: list[str],
     strategy_name: str,
 ) -> str:
     """메타 분석 프롬프트의 사용자 메시지 구성."""
-    # 의사결정 기록 포맷
-    decision_lines: list[str] = []
+    # 전체 집계 (모든 건 대상)
     total = len(decisions)
     executed_count = 0
     buy_count = 0
@@ -200,13 +203,6 @@ def _build_meta_analysis_message(
     confidence_sum = 0
 
     for d in decisions:
-        exec_tag = "✓" if d.executed else "·"
-        blocked = f" [차단: {d.blocked_reason}]" if d.blocked_reason else ""
-        decision_lines.append(
-            f"- {exec_tag} {d.created_at.strftime('%m-%d %H:%M')} "
-            f"{d.ticker} {d.action} (conf={d.confidence}) "
-            f"— {(d.reason or '')[:120]}{blocked}"
-        )
         confidence_sum += d.confidence
         if d.executed:
             executed_count += 1
@@ -221,13 +217,30 @@ def _build_meta_analysis_message(
 
     avg_confidence = confidence_sum / total if total > 0 else 0
 
+    # 상세 목록은 최근 N건만 (프롬프트 크기 제한)
+    shown = decisions[:_MAX_DECISION_DETAIL]
+    decision_lines: list[str] = []
+    for d in shown:
+        exec_tag = "✓" if d.executed else "·"
+        blocked = f" [차단: {d.blocked_reason}]" if d.blocked_reason else ""
+        decision_lines.append(
+            f"- {exec_tag} {d.created_at.strftime('%m-%d %H:%M')} "
+            f"{d.ticker} {d.action} (conf={d.confidence}) "
+            f"— {(d.reason or '')[:120]}{blocked}"
+        )
+
+    detail_header = "## 의사결정 상세 (최신순"
+    if total > _MAX_DECISION_DETAIL:
+        detail_header += f", 최근 {_MAX_DECISION_DETAIL}건 / 전체 {total}건"
+    detail_header += ")\n" + "\n".join(decision_lines)
+
     sections = [
         f"## 전략: {strategy_name}",
         f"## 7일간 집계\n"
         f"총 {total}건: buy {buy_count} / sell {sell_count} / hold {hold_count}\n"
         f"실제 발주 {executed_count}건, 차단 {blocked_count}건\n"
         f"평균 confidence: {avg_confidence:.1f}",
-        "## 의사결정 상세 (최신순)\n" + "\n".join(decision_lines),
+        detail_header,
     ]
 
     if active_rules:

@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +76,20 @@ class Settings(BaseSettings):
     meta_analysis_model: str = "claude-sonnet-4-5"
     meta_analysis_max_rules: int = 5  # 한 번에 생성할 최대 규칙 수
     adaptive_rule_ttl_days: int = 14  # 규칙 기본 유효기간 (일)
+
+    @field_validator("meta_analysis_max_rules")
+    @classmethod
+    def _validate_max_rules(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("meta_analysis_max_rules must be >= 1")
+        return v
+
+    @field_validator("adaptive_rule_ttl_days")
+    @classmethod
+    def _validate_ttl_days(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("adaptive_rule_ttl_days must be >= 1")
+        return v
 
     def kis_credentials(self, mode: str) -> dict:
         """모드별 KIS 인증정보 반환. 잘못된 모드는 ValueError."""

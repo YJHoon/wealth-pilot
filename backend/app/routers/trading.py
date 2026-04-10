@@ -18,6 +18,7 @@ from app.models.trading import (
     OrderSide,
     OrderStatus,
     OrderType,
+    StrategyType,
     TradingAccount,
     TradingDecision,
     TradingOrder,
@@ -1094,6 +1095,7 @@ async def list_adaptive_rules(
 ):
     """전략별 adaptive rules 목록 조회."""
     strategy = await _get_user_strategy(db, strategy_id, user.id)
+    await log_access(db, user.id, AccessAction.ADAPTIVE_RULE_LIST, request)
     from app.services.adaptive_rules import list_rules
     rules = await list_rules(db, strategy.id, active_only=active_only)
     return [adaptive_rule_to_response(r) for r in rules]
@@ -1122,6 +1124,7 @@ async def update_adaptive_rule(
     rule.is_active = body.is_active
     await db.commit()
     await db.refresh(rule)
+    await log_access(db, user.id, AccessAction.ADAPTIVE_RULE_UPDATE, request)
     return adaptive_rule_to_response(rule)
 
 
@@ -1138,6 +1141,12 @@ async def trigger_meta_analysis(
 ):
     """수동 메타 분석 트리거 (디버그/테스트용)."""
     strategy = await _get_user_strategy(db, strategy_id, user.id)
+    if strategy.strategy_type != StrategyType.LLM_ADVISOR:
+        raise HTTPException(
+            status_code=400,
+            detail="메타 분석은 LLM 어드바이저 전략에서만 실행할 수 있습니다.",
+        )
+    await log_access(db, user.id, AccessAction.META_ANALYSIS_TRIGGER, request)
     from app.services.adaptive_rules import run_weekly_meta_analysis
     created = await run_weekly_meta_analysis(db, strategy)
     await db.commit()

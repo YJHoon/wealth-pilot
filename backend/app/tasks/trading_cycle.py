@@ -218,7 +218,14 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             pre_total_eval = pre_balance["total_eval"] + pre_cash
             decision_memory = await load_decision_memory(db, strategy_id)
             # Step 4 (모듈 C): 활성 adaptive rules 로드
-            active_adaptive_rules = await get_active_rules(db, strategy_id) or None
+            # 규칙 로드 실패는 사이클을 중단하지 않는다 (fail-open).
+            try:
+                active_adaptive_rules = await get_active_rules(db, strategy_id) or None
+            except Exception:
+                logger.warning(
+                    "Failed to load adaptive rules (continuing without): strategy=%s",
+                    strategy_id, exc_info=True,
+                )
             # holdings는 KIS 응답에서 직접 구성 — 현금/총평가와 동일 소스라
             # 정합되며, DB 포지션은 reconcile(poll_open_orders) 전이라
             # 일시적으로 KIS와 어긋날 수 있다. 발주 시점의 전략 격리는
