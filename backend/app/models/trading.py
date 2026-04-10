@@ -454,6 +454,13 @@ class TradingDecision(Base):
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Step 3: 사용자 승인 모드
+    # "pending" | "approved" | "rejected" | "expired" | None(기존 즉시 실행)
+    approval_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    approval_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )

@@ -32,11 +32,15 @@ class RiskManager:
         stop_loss_pct: Decimal = Decimal("0.05"),
         daily_loss_limit: Decimal = Decimal("0"),
         max_positions: int = 10,
+        kill_switch_pct: Decimal = Decimal("0"),
+        max_daily_trades: int = 0,
     ):
         self.max_position_pct = max_position_pct
         self.stop_loss_pct = stop_loss_pct
         self.daily_loss_limit = daily_loss_limit
         self.max_positions = max_positions
+        self.kill_switch_pct = kill_switch_pct
+        self.max_daily_trades = max_daily_trades
 
     @classmethod
     def from_params(cls, params: dict) -> RiskManager:
@@ -45,7 +49,9 @@ class RiskManager:
             max_position_pct=Decimal(str(params.get("max_position_pct", "0.20"))),
             stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.05"))),
             daily_loss_limit=Decimal(str(params.get("daily_loss_limit", "0"))),
-            max_positions=params.get("max_positions", 10),
+            max_positions=int(params.get("max_positions", 10)),
+            kill_switch_pct=Decimal(str(params.get("kill_switch_pct", "0"))),
+            max_daily_trades=max(0, int(params.get("max_daily_trades", 0))),
         )
 
     def check_can_buy(
@@ -127,6 +133,58 @@ class RiskManager:
             )
 
         return RiskCheck(allowed=True, reason="일일 손실 한도 이내")
+
+    def check_kill_switch(
+        self,
+        realized_pnl: Decimal,
+        unrealized_pnl: Decimal,
+        initial_capital: Decimal,
+    ) -> RiskCheck:
+        """누적 손실률이 kill_switch_pct 이상이면 전략 중단 권고.
+
+        Args:
+            realized_pnl: 누적 실현 손익
+            unrealized_pnl: 미실현 손익 합계
+            initial_capital: 전략 초기 자본
+        """
+        if self.kill_switch_pct <= 0 or initial_capital <= 0:
+            return RiskCheck(allowed=True, reason="킬 스위치 미설정")
+
+        total_pnl = realized_pnl + unrealized_pnl
+        loss_rate = -total_pnl / initial_capital  # 양수가 손실률
+
+        if loss_rate >= self.kill_switch_pct:
+            return RiskCheck(
+                allowed=False,
+                reason=(
+                    f"킬 스위치 발동: 누적 손실률 {loss_rate:.1%} >= "
+                    f"기준 {self.kill_switch_pct:.1%} "
+                    f"(실현 {realized_pnl:,.0f} + 미실현 {unrealized_pnl:,.0f} / "
+                    f"초기자본 {initial_capital:,.0f})"
+                ),
+            )
+
+        return RiskCheck(allowed=True, reason="킬 스위치 이내")
+
+    def check_daily_trades(self, today_trade_count: int) -> RiskCheck:
+        """일일 거래 횟수 한도 체크.
+
+        Args:
+            today_trade_count: 오늘 체결된 거래 수
+        """
+        if self.max_daily_trades <= 0:
+            return RiskCheck(allowed=True, reason="일일 거래 횟수 한도 미설정")
+
+        if today_trade_count >= self.max_daily_trades:
+            return RiskCheck(
+                allowed=False,
+                reason=(
+                    f"일일 거래 횟수 한도 도달: "
+                    f"{today_trade_count}건 >= {self.max_daily_trades}건"
+                ),
+            )
+
+        return RiskCheck(allowed=True, reason="일일 거래 횟수 이내")
 
     def calculate_position_size(
         self,

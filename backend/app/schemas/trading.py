@@ -25,6 +25,7 @@ from app.services.crypto_service import (
 if TYPE_CHECKING:
     from app.models.trading import (
         TradingAccount as TradingAccountModel,
+        TradingDecision as TradingDecisionModel,
         TradingOrder as TradingOrderModel,
         TradingPosition as TradingPositionModel,
         TradingScheduleLog as TradingScheduleLogModel,
@@ -254,6 +255,48 @@ def schedule_log_to_summary(log: TradingScheduleLogModel) -> ScheduleLogSummary:
         orders_filled=log.orders_filled,
         skip_reason=log.skip_reason,
         error_message=log.error_message,
+    )
+
+
+# ──────────────────────────────────────────────
+# Performance
+# ──────────────────────────────────────────────
+
+# ──────────────────────────────────────────────
+# TradingDecision (Step 3: 승인 모드)
+# ──────────────────────────────────────────────
+
+class TradingDecisionResponse(BaseModel):
+    id: UUID
+    strategy_id: UUID
+    account_id: UUID
+    ticker: str
+    action: str
+    confidence: int
+    reason: str
+    suggested_quantity: Decimal | None
+    executed: bool
+    blocked_reason: str | None
+    approval_status: str | None
+    approval_expires_at: datetime | None
+    created_at: datetime
+
+
+def decision_to_response(decision: TradingDecisionModel) -> TradingDecisionResponse:
+    return TradingDecisionResponse(
+        id=decision.id,
+        strategy_id=decision.strategy_id,
+        account_id=decision.account_id,
+        ticker=decision.ticker,
+        action=decision.action,
+        confidence=decision.confidence,
+        reason=decision.reason,
+        suggested_quantity=decrypt_decimal_optional(decision.suggested_quantity),
+        executed=decision.executed,
+        blocked_reason=decision.blocked_reason,
+        approval_status=decision.approval_status,
+        approval_expires_at=decision.approval_expires_at,
+        created_at=decision.created_at,
     )
 
 

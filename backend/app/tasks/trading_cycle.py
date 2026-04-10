@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -36,6 +36,8 @@ from app.services.llm_advisor import (
 from app.services.account_lock import acquire_account_lock
 from app.services.strategy_capital import (
     add_realized_pnl,
+    get_initial_capital,
+    get_realized_pnl,
     get_strategy_available_capital,
 )
 from app.services.order_polling import poll_open_orders
@@ -321,6 +323,53 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         # 다시 매수할 수 있으므로 별도 집합으로 격리한다.
         recently_sold_tickers: set[str] = set()
 
+        # 손절 루프에서도 카운트를 증가시키므로 여기서 초기화
+        today_trade_count = 0
+
+        # 4.5 킬 스위치 — 누적 손실률이 기준 이상이면 전략 자동 비활성화
+        # 미실현PnL을 최신 시세(balance)로 재계산하여 stale 값 방지
+        strategy_realized = get_realized_pnl(strategy)
+        strategy_unrealized = Decimal("0")
+        kis_holdings = {h["ticker"]: h for h in balance.get("holdings", [])}
+        for pos in positions:
+            qty = decrypt_decimal(pos.quantity)
+            avg = decrypt_decimal(pos.avg_buy_price)
+            kis_h = kis_holdings.get(pos.ticker)
+            if kis_h and kis_h.get("current_price") is not None:
+                cur = Decimal(str(kis_h["current_price"]))
+                strategy_unrealized += (cur - avg) * qty
+            elif pos.current_price is not None:
+                cur = Decimal(str(pos.current_price))
+                strategy_unrealized += (cur - avg) * qty
+        strategy_initial = get_initial_capital(strategy)
+
+        kill_check = risk_mgr.check_kill_switch(
+            strategy_realized, strategy_unrealized, strategy_initial,
+        )
+        if not kill_check.allowed:
+            strategy.is_active = False
+            strategy.is_scheduled = False
+            schedule_log.status = ScheduleLogStatus.SKIPPED
+            schedule_log.skip_reason = kill_check.reason
+            schedule_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+            # DB 커밋 성공 후 인메모리 스케줄 제거 (실패해도 DB 상태는 보존)
+            try:
+                from app.tasks.trading_scheduler import trading_scheduler
+                trading_scheduler.remove_schedule(user_id, strategy_id)
+            except Exception:
+                logger.warning(
+                    "Failed to remove in-memory schedule after kill switch: strategy=%s",
+                    strategy_id, exc_info=True,
+                )
+
+            await send_telegram_message(
+                f"🚨 [킬 스위치 발동]\n전략: {strategy.name}\n{kill_check.reason}\n"
+                f"전략이 자동 비활성화되었습니다."
+            )
+            return
+
         # 5. 보유 포지션 손절 체크 (Phase 3: 해당 전략 보유분만)
 
         for pos in positions:
@@ -390,6 +439,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     held_tickers.discard(pos.ticker)
                     recently_sold_tickers.add(pos.ticker)
                     orders_placed += 1
+                    # 손절은 안전장치이므로 일일 횟수로 차단하지 않지만 카운트에 반영
+                    today_trade_count += 1
                     trade_messages.append(
                         f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
                     )
@@ -397,12 +448,31 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                 except KISClientError as e:
                     logger.error("Stop-loss order failed for %s: %s", pos.ticker, e)
 
-        # 6. 일일 손실 한도 체크
+        # 손절 후 strategy_realized 갱신 (종목 루프 내 킬 스위치 재체크 정확도)
+        if orders_placed > 0:
+            strategy_realized = get_realized_pnl(strategy)
+
+        # 6. 일일 손실 한도 체크 — 실제 오늘 실현 PnL 계산
         today_start = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0)
         today_start_utc = today_start.astimezone(timezone.utc)
 
-        # 오늘 체결된 주문의 손익 합계 (간략 계산)
-        daily_check = risk_mgr.check_daily_loss(Decimal("0"))  # 실현 PnL 추적은 Phase 2에서 상세화
+        today_sell_orders_result = await db.execute(
+            select(TradingOrder).where(
+                TradingOrder.strategy_id == strategy_id,
+                TradingOrder.side == OrderSide.SELL,
+                TradingOrder.status.in_([OrderStatus.FILLED, OrderStatus.SUBMITTED]),
+                TradingOrder.created_at >= today_start_utc,
+            )
+        )
+        today_realized_pnl = Decimal("0")
+        for sell_order in today_sell_orders_result.scalars().all():
+            sell_price = decrypt_decimal(sell_order.price)
+            sell_qty = decrypt_decimal(sell_order.quantity)
+            if sell_order.pre_apply_avg_buy_price:
+                avg_buy = decrypt_decimal(sell_order.pre_apply_avg_buy_price)
+                today_realized_pnl += (sell_price - avg_buy) * sell_qty
+
+        daily_check = risk_mgr.check_daily_loss(today_realized_pnl)
         if not daily_check.allowed:
             schedule_log.status = ScheduleLogStatus.SKIPPED
             schedule_log.skip_reason = daily_check.reason
@@ -411,7 +481,32 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             await send_telegram_message(f"⛔ [일일 손실 한도]\n{daily_check.reason}")
             return
 
+        # 6.5 일일 거래 횟수 한도 체크
+        today_orders_count_result = await db.execute(
+            select(func.count()).select_from(TradingOrder).where(
+                TradingOrder.strategy_id == strategy_id,
+                TradingOrder.status.in_([
+                    OrderStatus.SUBMITTED, OrderStatus.FILLED, OrderStatus.PARTIAL,
+                ]),
+                TradingOrder.created_at >= today_start_utc,
+            )
+        )
+        today_trade_count = today_orders_count_result.scalar() or 0
+        daily_trades_check = risk_mgr.check_daily_trades(today_trade_count)
+        if not daily_trades_check.allowed:
+            schedule_log.status = ScheduleLogStatus.SKIPPED
+            schedule_log.skip_reason = daily_trades_check.reason
+            schedule_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            await send_telegram_message(f"⛔ [일일 거래 횟수 한도]\n{daily_trades_check.reason}")
+            return
+
+        # 사이클 내 일일 거래 횟수 추적 — 주문 생성 시마다 증가시켜
+        # 같은 사이클에서 max_daily_trades를 초과하지 않도록 한다.
+        # today_trade_count를 직접 사용 (손절 루프에서 이미 증가분 반영됨).
+
         # 7. 대상 종목별 전략 평가
+        _kill_switch_tripped = False
         for ticker in strategy.target_tickers:
             tickers_evaluated += 1
             try:
@@ -470,6 +565,34 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             ticker, llm_decision.action, llm_decision.confidence,
                         )
                         continue
+
+                    # Step 3: 사용자 승인 모드 — pending으로 저장 후 발주 스킵
+                    _raw_approval = strategy.params_json.get("approval_required", False)
+                    approval_required = (
+                        _raw_approval is True
+                        or str(_raw_approval).lower() in ("true", "1", "yes")
+                    )
+                    if approval_required and llm_decision.action != "hold":
+                        try:
+                            timeout_minutes = max(1, int(
+                                strategy.params_json.get("approval_timeout_minutes", 30)
+                            ))
+                        except (TypeError, ValueError):
+                            timeout_minutes = 30
+                        decision_row.approval_status = "pending"
+                        decision_row.approval_expires_at = (
+                            datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
+                        )
+                        trade_messages.append(
+                            f"⏳ [승인 대기] {ticker} {llm_decision.action} "
+                            f"(confidence={llm_decision.confidence}): "
+                            f"{llm_decision.reason[:80]}"
+                        )
+                        logger.info(
+                            "LLM decision pending approval: %s %s conf=%d",
+                            ticker, llm_decision.action, llm_decision.confidence,
+                        )
+                        continue
                 else:
                     # 룰베이스: 락 안에서 시세 조회 (LLM 사전 패스 미적용)
                     price_history = await kis.get_price_history(
@@ -482,6 +605,20 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     signal = strat.evaluate(ticker, price_history)
 
                 if signal.action == "hold":
+                    continue
+
+                # 사이클 내 일일 거래 횟수 재체크 (손절 등으로 카운트 증가 가능)
+                if (
+                    risk_mgr.max_daily_trades > 0
+                    and today_trade_count >= risk_mgr.max_daily_trades
+                ):
+                    logger.info(
+                        "Order skipped (daily trade limit in-cycle): %s %s count=%d",
+                        ticker, signal.action, today_trade_count,
+                    )
+                    skip_messages.append(
+                        f"일일 거래 횟수 한도 (사이클 내): {ticker} {signal.action} 스킵"
+                    )
                     continue
 
                 if signal.action == "buy":
@@ -582,6 +719,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         )
                         held_tickers.add(ticker)
                         orders_placed += 1
+                        today_trade_count += 1
                         available_cash -= order_amount
                         trade_messages.append(
                             f"📈 [매수] {ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
@@ -664,14 +802,58 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         held_tickers.discard(ticker)
                         recently_sold_tickers.add(ticker)
                         orders_placed += 1
+                        today_trade_count += 1
                         trade_messages.append(
                             f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
+
+                        # 매도 후 킬 스위치 재체크 — 실현PnL 변동으로 한도 초과 가능
+                        strategy_realized = get_realized_pnl(strategy)
+                        # 매도한 포지션은 제거되었으므로 unrealized 재계산
+                        post_positions = await list_strategy_positions(
+                            db, account.id, strategy.id,
+                        )
+                        strategy_unrealized = Decimal("0")
+                        for pp in post_positions:
+                            pp_qty = decrypt_decimal(pp.quantity)
+                            pp_avg = decrypt_decimal(pp.avg_buy_price)
+                            pp_kis = kis_holdings.get(pp.ticker)
+                            if pp_kis and pp_kis.get("current_price") is not None:
+                                pp_cur = Decimal(str(pp_kis["current_price"]))
+                                strategy_unrealized += (pp_cur - pp_avg) * pp_qty
+                            elif pp.current_price is not None:
+                                pp_cur = Decimal(str(pp.current_price))
+                                strategy_unrealized += (pp_cur - pp_avg) * pp_qty
+
+                        kill_recheck = risk_mgr.check_kill_switch(
+                            strategy_realized, strategy_unrealized, strategy_initial,
+                        )
+                        if not kill_recheck.allowed:
+                            # 전체 비활성화 경로 (초기 킬 스위치와 동일)
+                            strategy.is_active = False
+                            strategy.is_scheduled = False
+                            trade_messages.append(
+                                "🚨 [킬 스위치 발동] 매도 후 누적 손실 기준 초과 — "
+                                "이후 주문 중단"
+                            )
+                            logger.warning(
+                                "Kill switch tripped after sell: %s",
+                                kill_recheck.reason,
+                            )
+                            _kill_switch_tripped = True
+
                     except KISClientError as e:
                         logger.error("Sell order failed for %s: %s", ticker, e)
 
             except Exception:
                 logger.exception("Error evaluating ticker %s", ticker)
+
+            # 킬 스위치가 사이클 내에서 발동되면 더 이상 주문하지 않음
+            if _kill_switch_tripped:
+                break
+
+        # 사이클 내 킬 스위치: 인메모리 스케줄 제거는 db.commit() 이후로 지연
+        # (strategy 변경은 위에서 수행, 텔레그램은 아래 사이클 완료 알림에 포함)
 
         # 8. 포지션 시세 갱신 + KIS 정합성 체크 (Phase 3)
         mismatches = await _sync_positions(db, kis, account)
@@ -698,6 +880,17 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         schedule_log.orders_placed = orders_placed
         schedule_log.completed_at = datetime.now(timezone.utc)
         await db.commit()
+
+        # 사이클 내 킬 스위치: DB 커밋 성공 후 인메모리 스케줄 제거
+        if _kill_switch_tripped:
+            try:
+                from app.tasks.trading_scheduler import trading_scheduler
+                trading_scheduler.remove_schedule(user_id, strategy_id)
+            except Exception:
+                logger.warning(
+                    "Failed to remove in-memory schedule after in-cycle kill switch: "
+                    "strategy=%s", strategy_id, exc_info=True,
+                )
 
         # 10. 텔레그램 알림 (체결 + 사전검증 스킵을 단일 메시지로 배치 전송)
         if trade_messages or skip_messages:
