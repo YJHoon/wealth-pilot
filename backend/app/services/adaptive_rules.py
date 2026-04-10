@@ -112,16 +112,6 @@ async def deactivate_expired_rules(db: AsyncSession, strategy_id: UUID) -> int:
     return len(expired)
 
 
-async def _get_next_version(db: AsyncSession, strategy_id: UUID) -> int:
-    """해당 전략의 다음 버전 번호."""
-    stmt = (
-        select(func.coalesce(func.max(AdaptiveRule.version), 0))
-        .where(AdaptiveRule.strategy_id == strategy_id)
-    )
-    current_max = (await db.execute(stmt)).scalar() or 0
-    return current_max + 1
-
-
 async def create_rules(
     db: AsyncSession,
     strategy_id: UUID,
@@ -134,7 +124,21 @@ async def create_rules(
         rules: [{"rule_text": "...", "rationale": "..."}, ...]
         generated_from: 규칙 출처 태그
     """
-    version = await _get_next_version(db, strategy_id)
+    # 전략 행을 FOR UPDATE로 잠가 동시 create_rules 호출 간 version 경합 방지.
+    # 같은 트랜잭션 내에서 max(version) 조회 → INSERT가 원자적으로 수행된다.
+    from app.models.trading import TradingStrategy
+    await db.execute(
+        select(TradingStrategy.id)
+        .where(TradingStrategy.id == strategy_id)
+        .with_for_update()
+    )
+    version_stmt = (
+        select(func.coalesce(func.max(AdaptiveRule.version), 0))
+        .where(AdaptiveRule.strategy_id == strategy_id)
+    )
+    current_max = (await db.execute(version_stmt)).scalar() or 0
+    version = current_max + 1
+
     ttl = timedelta(days=settings.adaptive_rule_ttl_days)
     now = datetime.now(timezone.utc)
 
@@ -275,7 +279,15 @@ async def run_weekly_meta_analysis(
         logger.warning("Meta-analysis skipped: ANTHROPIC_API_KEY not set")
         return []
 
-    # 1. 지난 7일 의사결정 조회
+    # 1. 만료 규칙 비활성화 (의사결정 유무와 무관하게 항상 실행)
+    expired_count = await deactivate_expired_rules(db, strategy.id)
+    if expired_count > 0:
+        logger.info(
+            "Deactivated %d expired rules: strategy=%s",
+            expired_count, strategy.id,
+        )
+
+    # 2. 지난 7일 의사결정 조회
     window_start = datetime.now(timezone.utc) - timedelta(days=7)
     stmt = (
         select(TradingDecision)
@@ -292,14 +304,6 @@ async def run_weekly_meta_analysis(
             "Meta-analysis skipped (no decisions): strategy=%s", strategy.id,
         )
         return []
-
-    # 2. 만료 규칙 비활성화
-    expired_count = await deactivate_expired_rules(db, strategy.id)
-    if expired_count > 0:
-        logger.info(
-            "Deactivated %d expired rules: strategy=%s",
-            expired_count, strategy.id,
-        )
 
     # 3. 현재 활성 규칙 조회 (프롬프트에 중복 방지용)
     active_rules = await get_active_rules(db, strategy.id)
