@@ -10,13 +10,13 @@ LLM 프롬프트에 주입한다. 모듈 B(최근 20건 단기 기억)를 보완
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -77,23 +77,30 @@ def build_context_text(
     reason: str,
     market_regime: str | None = None,
     used_indicators: dict[str, Any] | None = None,
+    *,
+    is_query: bool = False,
 ) -> str:
     """임베딩할 컨텍스트 텍스트를 구성.
 
-    e5 모델은 "query: " 접두사를 붙여야 검색 성능이 최적이다.
+    e5 모델은 저장 대상 문서에 "passage: ", 검색 쿼리에 "query: " 접두사를
+    붙여야 최적 성능이 나온다.
+
+    Args:
+        is_query: True면 "query: " (검색 시), False면 "passage: " (저장 시).
     """
+    prefix = "query: " if is_query else "passage: "
     regime_part = f" regime={market_regime}" if market_regime else ""
     indicator_part = f" {_summarize_indicators(used_indicators)}" if used_indicators else ""
     reason_short = reason[:200] if reason else ""
 
     return (
-        f"query: {ticker_name or ticker} ({ticker}){regime_part}"
+        f"{prefix}{ticker_name or ticker} ({ticker}){regime_part}"
         f"{indicator_part} {action} conf={confidence} {reason_short}"
     ).strip()
 
 
 def build_context_text_from_decision(decision: TradingDecision) -> str:
-    """TradingDecision 행에서 컨텍스트 텍스트를 구성."""
+    """TradingDecision 행에서 저장용 컨텍스트 텍스트를 구성 (passage 모드)."""
     return build_context_text(
         ticker=decision.ticker,
         ticker_name="",
@@ -102,6 +109,7 @@ def build_context_text_from_decision(decision: TradingDecision) -> str:
         reason=decision.reason or "",
         market_regime=decision.market_regime,
         used_indicators=decision.used_indicators,
+        is_query=False,
     )
 
 
@@ -111,19 +119,8 @@ async def embed_decision(
 ) -> DecisionEmbedding | None:
     """TradingDecision에 대한 임베딩을 생성하고 DB에 저장.
 
-    이미 임베딩이 존재하면 스킵하고 기존 행을 반환한다.
+    동시 호출 시 UNIQUE 제약 위반(IntegrityError)을 잡아 기존 행을 반환한다.
     """
-    # 중복 체크
-    existing = (
-        await db.execute(
-            select(DecisionEmbedding).where(
-                DecisionEmbedding.decision_id == decision_id
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return existing
-
     decision = await db.get(TradingDecision, decision_id)
     if decision is None:
         logger.warning("embed_decision: decision not found: %s", decision_id)
@@ -138,6 +135,17 @@ async def embed_decision(
         context_text=context,
     )
     db.add(row)
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        return (
+            await db.execute(
+                select(DecisionEmbedding).where(
+                    DecisionEmbedding.decision_id == decision_id
+                )
+            )
+        ).scalar_one_or_none()
     return row
 
 
@@ -177,40 +185,37 @@ async def search_similar_cases(
 
     query_vector = _encode_text(context_text)
 
-    # pgvector 코사인 거리 연산자: <=>
+    # pgvector cosine_distance: 0 = 동일, 2 = 정반대
     # similarity = 1 - distance
-    sql = text("""
-        SELECT
-            de.decision_id,
-            td.ticker,
-            td.action,
-            td.confidence,
-            td.reason,
-            td.executed,
-            td.realized_pnl,
-            td.holding_days,
-            td.market_regime,
-            1 - (de.embedding <=> :query_vec) AS similarity
-        FROM decision_embeddings de
-        JOIN trading_decisions td ON td.id = de.decision_id
-        WHERE td.strategy_id = :strategy_id
-            AND (:exclude_id IS NULL OR de.decision_id != :exclude_id)
-            AND 1 - (de.embedding <=> :query_vec) >= :min_sim
-        ORDER BY de.embedding <=> :query_vec
-        LIMIT :top_k
-    """)
+    distance = DecisionEmbedding.embedding.cosine_distance(query_vector)
+    max_distance = 1.0 - min_similarity  # similarity >= min_sim ↔ distance <= max_dist
 
-    result = await db.execute(
-        sql,
-        {
-            "query_vec": str(query_vector),
-            "strategy_id": str(strategy_id),
-            "exclude_id": str(exclude_decision_id) if exclude_decision_id else None,
-            "top_k": top_k,
-            "min_sim": min_similarity,
-        },
+    stmt = (
+        select(
+            DecisionEmbedding.decision_id,
+            TradingDecision.ticker,
+            TradingDecision.action,
+            TradingDecision.confidence,
+            TradingDecision.reason,
+            TradingDecision.executed,
+            TradingDecision.realized_pnl,
+            TradingDecision.holding_days,
+            TradingDecision.market_regime,
+            (1 - distance).label("similarity"),
+        )
+        .join(TradingDecision, TradingDecision.id == DecisionEmbedding.decision_id)
+        .where(
+            TradingDecision.strategy_id == strategy_id,
+            distance <= max_distance,
+        )
+        .order_by(distance)
+        .limit(top_k)
     )
-    rows = result.fetchall()
+    if exclude_decision_id is not None:
+        stmt = stmt.where(DecisionEmbedding.decision_id != exclude_decision_id)
+
+    result = await db.execute(stmt)
+    rows = result.all()
 
     return [
         SimilarCase(
@@ -324,7 +329,11 @@ async def backfill_embeddings(
             context_text=context,
         )
         db.add(row)
-        count += 1
+        try:
+            await db.flush()
+            count += 1
+        except IntegrityError:
+            await db.rollback()
 
     if count > 0:
         logger.info(

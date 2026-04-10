@@ -197,6 +197,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     llm_cache: dict[str, tuple[LLMDecision, list[dict]]] = {}
     decision_memory: DecisionMemory | None = None
     active_adaptive_rules: list[str] | None = None
+    # Step 6: 락 밖에서 임베딩 생성할 decision ID 수집
+    pending_embed_ids: list[UUID] = []
     if is_llm_strategy:
         try:
             pre_balance = await kis.get_balance()
@@ -258,6 +260,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             reason="",
                             market_regime=None,
                             used_indicators=None,
+                            is_query=True,
                         )
                         similar = await search_similar_cases(
                             db, search_ctx, strategy_id,
@@ -582,14 +585,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     db.add(decision_row)
                     await db.flush()
 
-                    # Step 6 (모듈 D): 의사결정 임베딩 생성 (fail-open)
-                    try:
-                        await embed_decision(db, decision_row.id)
-                    except Exception:
-                        logger.warning(
-                            "Embedding creation failed for decision %s (continuing)",
-                            decision_row.id, exc_info=True,
-                        )
+                    # Step 6 (모듈 D): 임베딩은 CPU-bound라 락 밖에서 생성
+                    pending_embed_ids.append(decision_row.id)
 
                     # 신뢰도 임계값 — 미달이면 hold로 강제
                     if (
@@ -969,6 +966,18 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         raise
     finally:
         await kis.close()
+
+    # Step 6 (모듈 D): 계좌 락 해제 후 임베딩 생성 — CPU-bound encode를 락 밖에서 실행
+    for did in pending_embed_ids:
+        try:
+            await embed_decision(db, did)
+        except Exception:
+            logger.warning(
+                "Embedding creation failed for decision %s (continuing)",
+                did, exc_info=True,
+            )
+    if pending_embed_ids:
+        await db.commit()
 
 
 def _build_portfolio_context(

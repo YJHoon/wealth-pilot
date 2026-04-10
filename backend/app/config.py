@@ -82,6 +82,20 @@ class Settings(BaseSettings):
     meta_analysis_max_rules: int = 5  # 한 번에 생성할 최대 규칙 수
     adaptive_rule_ttl_days: int = 14  # 규칙 기본 유효기간 (일)
 
+    @field_validator("rag_top_k")
+    @classmethod
+    def _validate_rag_top_k(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("rag_top_k must be >= 1")
+        return v
+
+    @field_validator("rag_min_similarity")
+    @classmethod
+    def _validate_rag_min_similarity(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("rag_min_similarity must be between 0.0 and 1.0")
+        return v
+
     @field_validator("meta_analysis_max_rules")
     @classmethod
     def _validate_max_rules(cls, v: int) -> int:

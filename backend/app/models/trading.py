@@ -527,5 +527,8 @@ class DecisionEmbedding(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
 
-    # 관계
-    decision = relationship("TradingDecision", backref="embedding_row")
+    # 관계 (1:1 — decision_id UNIQUE)
+    decision = relationship(
+        "TradingDecision",
+        backref=sa.orm.backref("embedding_row", uselist=False),
+    )
