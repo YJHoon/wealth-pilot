@@ -23,6 +23,7 @@ from app.models.trading import (
     OrderSide,
     OrderStatus,
     TradingOrder,
+    TradingPosition,
     TradingStrategy,
 )
 from app.services.crypto_service import (
@@ -62,60 +63,40 @@ async def get_strategy_available_capital(
 ) -> Decimal:
     """전략별 가용 자본 계산.
 
-    available = initial_capital + realized_pnl - locked_cash - 포지션매입가합계
+    available = initial_capital + realized_pnl - locked_cash - 현재포지션매입가합계
 
-    Phase 2에서는 positions가 아직 strategy_id로 격리되지 않았으므로
-    `TradingOrder` (BUY, FILLED+SUBMITTED) 누적금을 보유분 근사치로 쓴다.
-    Phase 3에서 positions.strategy_id 도입 후 더 정확한 계산으로 교체할 것.
+    Phase 3에서 positions.strategy_id가 도입되어 포지션 기반으로 정확하게 계산.
     """
     initial = get_initial_capital(strategy)
     realized = get_realized_pnl(strategy)
 
-    # 해당 전략으로 발주된 주문 전수 조회
-    result = await db.execute(
+    # 현재 보유 포지션의 매입가 합계 (quantity * avg_buy_price)
+    pos_result = await db.execute(
+        select(TradingPosition).where(
+            TradingPosition.strategy_id == strategy.id,
+        )
+    )
+    held_cost = Decimal("0")
+    for pos in pos_result.scalars().all():
+        qty = decrypt_decimal(pos.quantity)
+        avg = decrypt_decimal(pos.avg_buy_price)
+        held_cost += qty * avg
+
+    # 미체결 매수 주문에 묶인 금액 (SUBMITTED/PENDING)
+    order_result = await db.execute(
         select(TradingOrder).where(
             TradingOrder.strategy_id == strategy.id,
+            TradingOrder.side == OrderSide.BUY,
             TradingOrder.status.in_(
-                [OrderStatus.SUBMITTED, OrderStatus.FILLED, OrderStatus.PARTIAL]
+                [OrderStatus.SUBMITTED, OrderStatus.PENDING]
             ),
         )
     )
-    orders = result.scalars().all()
-
-    # 1단계: FILLED/PARTIAL 매수만으로 평균매입가 산출
-    total_bought_qty = Decimal("0")
-    total_bought_cost = Decimal("0")
-    locked_cash = Decimal("0")  # SUBMITTED 매수 (체결 대기)
-
-    for o in orders:
+    locked_cash = Decimal("0")
+    for o in order_result.scalars().all():
         qty = decrypt_decimal(o.quantity)
         price = decrypt_decimal(o.price)
-        amount = qty * price
-        if o.side == OrderSide.BUY:
-            if o.status == OrderStatus.SUBMITTED:
-                locked_cash += amount
-            else:
-                total_bought_qty += qty
-                total_bought_cost += amount
-
-    avg_buy_price = (
-        total_bought_cost / total_bought_qty if total_bought_qty > 0 else Decimal("0")
-    )
-
-    # 2단계: 매도 체결분은 평균매입가 기준으로 cost basis만큼만 차감
-    # (sell_price 차감 시 realized_pnl과 이중 반영되어 가용자본이 부풀려짐)
-    sold_cost_basis = Decimal("0")
-    for o in orders:
-        if o.side != OrderSide.SELL:
-            continue
-        if o.status not in (OrderStatus.FILLED, OrderStatus.PARTIAL):
-            continue
-        sold_qty = decrypt_decimal(o.quantity)
-        sold_cost_basis += avg_buy_price * sold_qty
-
-    held_cost = total_bought_cost - sold_cost_basis
-    if held_cost < 0:
-        held_cost = Decimal("0")
+        locked_cash += qty * price
 
     return initial + realized - locked_cash - held_cost
 

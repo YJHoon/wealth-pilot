@@ -202,8 +202,13 @@ class KISClient:
         tr_id: str,
         params: dict | None = None,
         json_body: dict | None = None,
+        retries: int = 0,
     ) -> dict:
-        """KIS API 요청 — 인증 헤더, rate limit 포함."""
+        """KIS API 요청 — 인증 헤더, rate limit 포함.
+
+        Args:
+            retries: 실패 시 재시도 횟수 (읽기 전용 호출에만 사용).
+        """
         await self._ensure_token()
 
         headers = {
@@ -215,23 +220,39 @@ class KISClient:
             "content-type": "application/json; charset=utf-8",
         }
 
-        async with self._semaphore:
-            await _throttle(self._mode, self._app_key)
-            if method.upper() == "GET":
-                resp = await self._client.get(path, headers=headers, params=params)
-            else:
-                resp = await self._client.post(path, headers=headers, json=json_body)
+        last_exc: Exception | None = None
+        for attempt in range(1 + retries):
+            try:
+                async with self._semaphore:
+                    await _throttle(self._mode, self._app_key)
+                    if method.upper() == "GET":
+                        resp = await self._client.get(path, headers=headers, params=params)
+                    else:
+                        resp = await self._client.post(path, headers=headers, json=json_body)
 
-        data = resp.json()
+                data = resp.json()
 
-        # KIS 에러 체크
-        rt_cd = data.get("rt_cd")
-        if rt_cd and rt_cd != "0":
-            msg = data.get("msg1", "Unknown KIS API error")
-            logger.error("KIS API error: tr_id=%s, rt_cd=%s, msg=%s", tr_id, rt_cd, msg)
-            raise KISClientError(msg, status_code=resp.status_code, response_data=data)
+                # KIS 에러 체크
+                rt_cd = data.get("rt_cd")
+                if rt_cd and rt_cd != "0":
+                    msg = data.get("msg1", "Unknown KIS API error")
+                    logger.error("KIS API error: tr_id=%s, rt_cd=%s, msg=%s", tr_id, rt_cd, msg)
+                    raise KISClientError(msg, status_code=resp.status_code, response_data=data)
 
-        return data
+                return data
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                last_exc = e
+                if attempt < retries:
+                    wait = min(2 ** attempt, 5)
+                    logger.warning(
+                        "KIS request retry %d/%d: tr_id=%s err=%s (waiting %.1fs)",
+                        attempt + 1, retries, tr_id, e, wait,
+                    )
+                    await asyncio.sleep(wait)
+
+        raise KISClientError(
+            f"KIS API 요청 실패 (재시도 {retries}회 소진): {last_exc}",
+        )
 
     # ──────────────────────────────────────────
     # 시세 조회
@@ -251,6 +272,7 @@ class KISClient:
                 "FID_COND_MRKT_DIV_CODE": "J",
                 "FID_INPUT_ISCD": ticker,
             },
+            retries=2,
         )
         output = data.get("output", {})
         return {
@@ -291,6 +313,7 @@ class KISClient:
                 "FID_PERIOD_DIV_CODE": period,
                 "FID_ORG_ADJ_PRC": "0",
             },
+            retries=2,
         )
 
         results = []
@@ -342,6 +365,7 @@ class KISClient:
                 "CTX_AREA_FK100": "",
                 "CTX_AREA_NK100": "",
             },
+            retries=2,
         )
 
         holdings = []
@@ -383,6 +407,9 @@ class KISClient:
     ) -> dict:
         """주식 주문 (현금).
 
+        주문은 중복 위험으로 재시도하지 않는다 (retries=0).
+        타임아웃 발생 시 get_order_status로 체결 여부를 확인한다.
+
         Args:
             side: "buy" 또는 "sell"
             ticker: 종목코드
@@ -398,19 +425,50 @@ class KISClient:
         # 주문 구분: 01=지정가, 05=시장가
         ord_dvsn = "05" if order_type == "market" else "01"
 
-        data = await self._request(
-            "POST",
-            "/uapi/domestic-stock/v1/trading/order-cash",
-            tr_id=tr_id,
-            json_body={
-                "CANO": self._account_number,
-                "ACNT_PRDT_CD": self._account_product_code,
-                "PDNO": ticker,
-                "ORD_DVSN": ord_dvsn,
-                "ORD_QTY": str(quantity),
-                "ORD_UNPR": str(price),
-            },
-        )
+        try:
+            data = await self._request(
+                "POST",
+                "/uapi/domestic-stock/v1/trading/order-cash",
+                tr_id=tr_id,
+                json_body={
+                    "CANO": self._account_number,
+                    "ACNT_PRDT_CD": self._account_product_code,
+                    "PDNO": ticker,
+                    "ORD_DVSN": ord_dvsn,
+                    "ORD_QTY": str(quantity),
+                    "ORD_UNPR": str(price),
+                },
+            )
+        except KISClientError as e:
+            # 타임아웃/네트워크 오류 시 주문이 실제로 접수됐는지 확인
+            if e.status_code is not None:
+                raise  # KIS가 명시적 에러 응답 → 주문 미접수 확실
+            logger.warning(
+                "Order request timed out, checking order status: "
+                "side=%s ticker=%s qty=%d",
+                side, ticker, quantity,
+            )
+            try:
+                await asyncio.sleep(1)  # KIS 반영 대기
+                orders = await self.get_order_status()
+                expected_side = "buy" if side == "buy" else "sell"
+                for o in orders:
+                    if (
+                        o["ticker"] == ticker
+                        and o["side"] == expected_side
+                        and o["quantity"] == quantity
+                    ):
+                        logger.info(
+                            "Order found after timeout: order_id=%s",
+                            o["order_id"],
+                        )
+                        return {
+                            "order_id": o["order_id"],
+                            "order_date": "",
+                        }
+            except Exception as verify_err:
+                logger.error("Order verification after timeout failed: %s", verify_err)
+            raise  # 주문 확인 불가 → 원래 에러 전파
 
         output = data.get("output", {})
         return {
@@ -451,6 +509,7 @@ class KISClient:
                 "CTX_AREA_FK100": "",
                 "CTX_AREA_NK100": "",
             },
+            retries=2,
         )
 
         results = []

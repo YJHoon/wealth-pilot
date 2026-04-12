@@ -513,6 +513,9 @@ async def run_cycle_now(
     db: AsyncSession = Depends(get_db),
 ):
     """수동 즉시 실행 (테스트/디버깅용)."""
+    if not settings.trading_enabled:
+        raise HTTPException(status_code=503, detail="자동매매가 비활성화되어 있습니다.")
+
     strategy = await _get_user_strategy(db, body.strategy_id, user.id)
     account = await _get_user_account(db, strategy.account_id, user.id)
 
@@ -648,6 +651,9 @@ async def approve_decision(
     db: AsyncSession = Depends(get_db),
 ):
     """승인 대기 결정을 승인하고 발주."""
+    if not settings.trading_enabled:
+        raise HTTPException(status_code=503, detail="자동매매가 비활성화되어 있습니다.")
+
     decision = await db.get(TradingDecision, decision_id)
     if not decision or decision.user_id != user.id:
         raise HTTPException(status_code=404, detail="결정을 찾을 수 없습니다.")
@@ -679,6 +685,14 @@ async def approve_decision(
         decision.blocked_reason = "계좌 비활성화"
         await db.commit()
         raise HTTPException(status_code=400, detail="계좌가 비활성화되었습니다.")
+
+    # 장 운영 시간 체크 (장 외 시간에 시장가 주문 방지)
+    from app.tasks.trading_cycle import _is_market_hours
+    if strategy.market_hours_only and not _is_market_hours():
+        decision.approval_status = "rejected"
+        decision.blocked_reason = "장 운영 시간 외"
+        await db.commit()
+        raise HTTPException(status_code=400, detail="장 운영 시간이 아닙니다.")
 
     # KIS 클라이언트 생성
     creds = settings.kis_credentials(account.mode.value)
@@ -854,10 +868,6 @@ async def approve_decision(
                 await db.commit()
                 raise HTTPException(status_code=400, detail=decision.blocked_reason)
 
-            # KIS 발주
-            order_result = await kis.place_order(
-                side="buy", ticker=decision.ticker, quantity=qty, order_type="market",
-            )
             # 폴링 롤백용 pre-state
             pre_pos = await get_strategy_position(
                 db, account.id, strategy.id, decision.ticker,
@@ -865,6 +875,7 @@ async def approve_decision(
             pre_qty = decrypt_decimal(pre_pos.quantity) if pre_pos else Decimal("0")
             pre_avg = decrypt_decimal(pre_pos.avg_buy_price) if pre_pos else Decimal("0")
 
+            # DB에 PENDING 주문 먼저 기록 (고아 주문 방지)
             order = TradingOrder(
                 user_id=user.id,
                 account_id=account.id,
@@ -875,13 +886,21 @@ async def approve_decision(
                 quantity=encrypt_decimal(Decimal(qty)),
                 price=encrypt_decimal(current_price),
                 order_type=OrderType.MARKET,
-                status=OrderStatus.SUBMITTED,
-                kis_order_id=order_result.get("order_id"),
+                status=OrderStatus.PENDING,
                 reason=decision.reason,
                 pre_apply_qty=encrypt_decimal(pre_qty),
                 pre_apply_avg_buy_price=encrypt_decimal(pre_avg),
             )
             db.add(order)
+            await db.flush()
+
+            # KIS 발주
+            order_result = await kis.place_order(
+                side="buy", ticker=decision.ticker, quantity=qty, order_type="market",
+            )
+            order.status = OrderStatus.SUBMITTED
+            order.kis_order_id = order_result.get("order_id")
+
             await apply_buy_fill(
                 db, strategy, decision.ticker, ticker_name,
                 Decimal(qty), current_price,
@@ -908,9 +927,7 @@ async def approve_decision(
             pre_qty = decrypt_decimal(pos.quantity)
             pre_avg = decrypt_decimal(pos.avg_buy_price)
 
-            order_result = await kis.place_order(
-                side="sell", ticker=decision.ticker, quantity=qty, order_type="market",
-            )
+            # DB에 PENDING 주문 먼저 기록 (고아 주문 방지)
             order = TradingOrder(
                 user_id=user.id,
                 account_id=account.id,
@@ -921,13 +938,21 @@ async def approve_decision(
                 quantity=encrypt_decimal(Decimal(qty)),
                 price=encrypt_decimal(current_price),
                 order_type=OrderType.MARKET,
-                status=OrderStatus.SUBMITTED,
-                kis_order_id=order_result.get("order_id"),
+                status=OrderStatus.PENDING,
                 reason=decision.reason,
                 pre_apply_qty=encrypt_decimal(pre_qty),
                 pre_apply_avg_buy_price=encrypt_decimal(pre_avg),
             )
             db.add(order)
+            await db.flush()
+
+            # KIS 발주
+            order_result = await kis.place_order(
+                side="sell", ticker=decision.ticker, quantity=qty, order_type="market",
+            )
+            order.status = OrderStatus.SUBMITTED
+            order.kis_order_id = order_result.get("order_id")
+
             from app.services.strategy_capital import add_realized_pnl
             realized_delta = await apply_sell_fill(
                 db, strategy, decision.ticker, Decimal(qty), current_price,
