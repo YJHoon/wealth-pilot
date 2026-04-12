@@ -450,9 +450,24 @@ class KISClient:
             )
             try:
                 await asyncio.sleep(1)  # KIS 반영 대기
+                request_time = datetime.now(timezone(timedelta(hours=9)))
                 orders = await self.get_order_status()
                 expected_side = "buy" if side == "buy" else "sell"
                 for o in orders:
+                    # 시간 필터: 최근 60초 이내 주문만 매칭
+                    order_time_str = o.get("order_time", "")
+                    if order_time_str:
+                        try:
+                            ot = datetime.strptime(order_time_str, "%H%M%S").replace(
+                                year=request_time.year,
+                                month=request_time.month,
+                                day=request_time.day,
+                                tzinfo=request_time.tzinfo,
+                            )
+                            if abs((request_time - ot).total_seconds()) > 60:
+                                continue
+                        except ValueError:
+                            pass  # 파싱 실패 시 시간 필터 건너뜀
                     if (
                         o["ticker"] == ticker
                         and o["side"] == expected_side
@@ -536,6 +551,7 @@ class KISClient:
                 "filled_quantity": filled_qty,
                 "price": Decimal(item.get("ord_unpr", "0")),
                 "filled_price": Decimal(item.get("avg_prvs", "0")),
+                "order_time": item.get("ord_tmd", ""),
                 "status": status,
             })
 

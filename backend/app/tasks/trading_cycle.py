@@ -484,6 +484,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         )
                     logger.info("Stop-loss sell: %s %d shares", pos.ticker, qty)
                 except KISClientError as e:
+                    order.status = OrderStatus.REJECTED
                     logger.error("Stop-loss order failed for %s: %s", pos.ticker, e)
 
         # 손절 후 strategy_realized 갱신 (종목 루프 내 킬 스위치 재체크 정확도)
@@ -911,6 +912,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             _kill_switch_tripped = True
 
                     except KISClientError as e:
+                        order.status = OrderStatus.REJECTED
                         logger.error("Sell order failed for %s: %s", ticker, e)
 
             except Exception:

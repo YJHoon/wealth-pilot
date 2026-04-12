@@ -142,9 +142,9 @@ async def embed_decision(
         embedding=vector,
         context_text=context,
     )
-    db.add(row)
     try:
         async with db.begin_nested():
+            db.add(row)
             await db.flush()
     except IntegrityError:
         return (
@@ -258,7 +258,7 @@ def format_similar_cases_for_prompt(cases: list[SimilarCase]) -> str | None:
     pnl_count = 0
     # 개별 케이스 복호화 결과 캐시 (요약 + 개별 표시에서 재사용)
     _decrypted_pnl: dict[int, Decimal] = {}
-    for idx, c in enumerate(executed_cases):
+    for c in executed_cases:
         if c.realized_pnl is None:
             continue
         try:
@@ -270,7 +270,11 @@ def format_similar_cases_for_prompt(cases: list[SimilarCase]) -> str | None:
                 win_count += 1
             else:
                 loss_count += 1
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "decrypt_decimal failed for decision %s: %s",
+                c.id, e,
+            )
             continue
 
     lines = []

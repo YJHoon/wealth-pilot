@@ -973,6 +973,7 @@ async def approve_decision(
         await db.commit()
 
     except KISClientError as e:
+        order.status = OrderStatus.REJECTED
         decision.blocked_reason = f"KIS 발주 실패: {e}"
         decision.approval_status = "rejected"
         await db.commit()
