@@ -11,15 +11,19 @@ LLM 프롬프트에 주입한다. 모듈 B(최근 20건 단기 기억)를 보완
 from __future__ import annotations
 
 import asyncio
+import binascii
 import logging
+import threading
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from cryptography.exceptions import InvalidTag
 
 from app.config import settings
 from app.models.trading import DecisionEmbedding, TradingDecision
@@ -29,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 # 모델 싱글턴 — lazy init (첫 호출 시 로드, 이후 재사용)
 _model = None
+_model_lock = threading.Lock()
 
 
 def _get_embedding_model():
@@ -37,19 +42,23 @@ def _get_embedding_model():
     if _model is not None:
         return _model
 
-    from sentence_transformers import SentenceTransformer
+    with _model_lock:
+        if _model is not None:
+            return _model
 
-    cache_folder = settings.embedding_model_cache_dir or None
-    _model = SentenceTransformer(
-        settings.embedding_model_name,
-        cache_folder=cache_folder,
-    )
-    logger.info(
-        "Embedding model loaded: %s (dim=%d)",
-        settings.embedding_model_name,
-        _model.get_sentence_embedding_dimension(),
-    )
-    return _model
+        from sentence_transformers import SentenceTransformer
+
+        cache_folder = settings.embedding_model_cache_dir or None
+        _model = SentenceTransformer(
+            settings.embedding_model_name,
+            cache_folder=cache_folder,
+        )
+        logger.info(
+            "Embedding model loaded: %s (dim=%d)",
+            settings.embedding_model_name,
+            _model.get_sentence_embedding_dimension(),
+        )
+        return _model
 
 
 def _encode_text_sync(text_input: str) -> list[float]:
@@ -270,7 +279,7 @@ def format_similar_cases_for_prompt(cases: list[SimilarCase]) -> str | None:
                 win_count += 1
             else:
                 loss_count += 1
-        except Exception as e:
+        except (InvalidTag, binascii.Error, UnicodeDecodeError, InvalidOperation, ValueError) as e:
             logger.warning(
                 "decrypt_decimal failed for decision %s: %s",
                 c.decision_id, e,
@@ -298,7 +307,7 @@ def format_similar_cases_for_prompt(cases: list[SimilarCase]) -> str | None:
             if pnl_val is None:
                 try:
                     pnl_val = decrypt_decimal(c.realized_pnl)
-                except Exception:
+                except (InvalidTag, binascii.Error, UnicodeDecodeError, InvalidOperation, ValueError):
                     pnl_val = None
             if pnl_val is not None:
                 pnl_tag = f" PnL={int(pnl_val):+,}원"
