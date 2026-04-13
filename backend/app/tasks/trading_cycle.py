@@ -29,6 +29,12 @@ from app.models.trading import (
 )
 from app.services.adaptive_rules import get_active_rules
 from app.services.decision_backfill import backfill_sell_results
+from app.services.decision_embedding import (
+    build_context_text,
+    embed_decision,
+    format_similar_cases_for_prompt,
+    search_similar_cases,
+)
 from app.services.decision_memory import DecisionMemory, load_decision_memory
 from app.services.llm_advisor import (
     LLMDecision,
@@ -125,6 +131,11 @@ async def execute_trading_cycle(user_id_str: str, strategy_id_str: str):
 async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     """매매 사이클 핵심 로직."""
 
+    # 0. 글로벌 킬 스위치 체크 (런타임)
+    if not settings.trading_enabled:
+        logger.info("Trading disabled globally, skipping cycle: strategy=%s", strategy_id)
+        return
+
     # 1. 전략 & 계좌 로드
     strategy = await db.get(TradingStrategy, strategy_id)
     if not strategy or strategy.user_id != user_id or not strategy.is_active:
@@ -134,27 +145,6 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     account = await db.get(TradingAccount, strategy.account_id)
     if not account or not account.is_active:
         logger.warning("Account not found or inactive: %s", strategy.account_id)
-        return
-
-    # Stage 3: LLM 어드바이저는 paper 모드 전용 — live 계좌는 즉시 차단.
-    # 환각/응답지연/검증 부족 위험이 있어 사용자 결정 전 라이브 발주를 막는다.
-    if (
-        strategy.strategy_type == StrategyType.LLM_ADVISOR
-        and account.mode == TradingMode.LIVE
-    ):
-        skip_log = TradingScheduleLog(
-            user_id=user_id,
-            strategy_id=strategy_id,
-            status=ScheduleLogStatus.SKIPPED,
-            skip_reason="LLM 어드바이저는 paper 모드 전용 (Stage 3 Step 1)",
-            completed_at=datetime.now(timezone.utc),
-        )
-        db.add(skip_log)
-        await db.commit()
-        logger.warning(
-            "LLM advisor blocked on live account: strategy=%s account=%s",
-            strategy_id, account.id,
-        )
         return
 
     # 2. 장 운영 시간 체크
@@ -212,6 +202,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
     llm_cache: dict[str, tuple[LLMDecision, list[dict]]] = {}
     decision_memory: DecisionMemory | None = None
     active_adaptive_rules: list[str] | None = None
+    # Step 6: 락 밖에서 임베딩 생성할 decision ID 수집
+    pending_embed_ids: list[UUID] = []
     if is_llm_strategy:
         try:
             pre_balance = await kis.get_balance()
@@ -262,6 +254,29 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             ticker, e, exc_info=True,
                         )
                         tname = ""
+                    # Step 6 (모듈 D): 유사 케이스 검색 (fail-open)
+                    similar_cases_text: str | None = None
+                    try:
+                        search_ctx = build_context_text(
+                            ticker=ticker,
+                            ticker_name=tname,
+                            action="",  # 아직 행동 미결정
+                            confidence=0,
+                            reason="",
+                            market_regime=None,
+                            used_indicators=None,
+                            is_query=True,
+                        )
+                        similar = await search_similar_cases(
+                            db, search_ctx, strategy_id,
+                        )
+                        similar_cases_text = format_similar_cases_for_prompt(similar)
+                    except Exception:
+                        logger.warning(
+                            "RAG search failed for %s (continuing without)",
+                            ticker, exc_info=True,
+                        )
+
                     decision = await get_llm_decision(
                         ticker=ticker,
                         ticker_name=tname,
@@ -269,6 +284,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         portfolio=pre_portfolio_ctx,
                         memory=decision_memory,
                         adaptive_rules=active_adaptive_rules,
+                        similar_cases=similar_cases_text,
                     )
                     llm_cache[ticker] = (decision, ph)
                 except Exception:
@@ -399,14 +415,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     logger.warning("Stop-loss skipped: zero quantity for %s", pos.ticker)
                     continue
                 try:
-                    order_result = await kis.place_order(
-                        side="sell", ticker=pos.ticker, quantity=qty, order_type="market",
-                    )
-                    # NOTE: SUBMITTED를 체결로 간주하는 단순화 모델 (fill polling은 별도 작업).
-                    # 거부/부분체결/슬리피지 정확화는 fill polling 도입 후 처리.
                     # 폴링 롤백용 pre-state: 매도 직전 보유분
                     pre_qty_snap = decrypt_decimal(pos.quantity)
                     pre_avg_snap = decrypt_decimal(pos.avg_buy_price)
+
+                    # DB에 PENDING 주문 먼저 기록 (고아 주문 방지)
                     order = TradingOrder(
                         user_id=user_id,
                         account_id=account.id,
@@ -418,34 +431,36 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         quantity=encrypt_decimal(Decimal(qty)),
                         price=encrypt_decimal(current),
                         order_type=OrderType.MARKET,
-                        status=OrderStatus.SUBMITTED,
-                        kis_order_id=order_result.get("order_id"),
+                        status=OrderStatus.PENDING,
                         reason=f"손절: {stop_check.reason}",
                         pre_apply_qty=encrypt_decimal(pre_qty_snap),
                         pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                     )
                     db.add(order)
+                    await db.flush()
+
+                    # KIS 발주
+                    order_result = await kis.place_order(
+                        side="sell", ticker=pos.ticker, quantity=qty, order_type="market",
+                    )
+                    order.status = OrderStatus.SUBMITTED
+                    order.kis_order_id = order_result.get("order_id")
+
                     # Phase 3: 전략 포지션 차감 + 실현손익 누적
-                    # KIS 주문은 이미 실행된 회복 불가 부수효과이므로, 포지션 갱신이 실패해도
-                    # order 레코드는 진실로 남긴다 (삭제 금지). 대신 critical 경고를 띄우고
-                    # 실현PnL은 누적하지 않는다 — 사이클 말미의 reconcile_with_kis가
-                    # 합계 불일치를 추가로 surface한다.
                     try:
                         realized_delta = await apply_sell_fill(
                             db, strategy, pos.ticker, Decimal(qty), current,
                         )
                         add_realized_pnl(strategy, realized_delta)
                     except ValueError as fill_err:
-                        # 알려진 비즈니스 예외(수량 부족 등)만 swallow.
-                        # DB/암호화 등 미지의 예외는 사이클을 중단해야 한다.
                         logger.critical(
                             "Stop-loss fill apply failed (order persisted): "
                             "kis_order_id=%s ticker=%s qty=%d err=%s",
-                            order_result.get("order_id"), pos.ticker, qty, fill_err,
+                            order.kis_order_id, pos.ticker, qty, fill_err,
                         )
                         skip_messages.append(
                             f"🚨 [회계 오류] 손절 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
-                            f"{pos.ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
+                            f"{pos.ticker} {qty}주 / kis_order_id={order.kis_order_id} / {fill_err}"
                         )
                     # 손절은 전량 매도 → 보유 set에서 제거하고 재매수 금지 set에 등록
                     held_tickers.discard(pos.ticker)
@@ -469,6 +484,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         )
                     logger.info("Stop-loss sell: %s %d shares", pos.ticker, qty)
                 except KISClientError as e:
+                    order.status = OrderStatus.REJECTED
                     logger.error("Stop-loss order failed for %s: %s", pos.ticker, e)
 
         # 손절 후 strategy_realized 갱신 (종목 루프 내 킬 스위치 재체크 정확도)
@@ -573,6 +589,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     )
                     db.add(decision_row)
                     await db.flush()
+
+                    # Step 6 (모듈 D): 임베딩은 CPU-bound라 락 밖에서 생성
+                    pending_embed_ids.append(decision_row.id)
 
                     # 신뢰도 임계값 — 미달이면 hold로 강제
                     if (
@@ -701,9 +720,6 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         price_info = await kis.get_current_price(ticker)
                         ticker_name = price_info.get("name", "")
 
-                        order_result = await kis.place_order(
-                            side="buy", ticker=ticker, quantity=qty, order_type="market",
-                        )
                         # 폴링 롤백용 pre-state: 매수 직전 (없으면 0)
                         pre_pos = await get_strategy_position(
                             db, account.id, strategy.id, ticker,
@@ -714,6 +730,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         else:
                             pre_qty_snap = decrypt_decimal(pre_pos.quantity)
                             pre_avg_snap = decrypt_decimal(pre_pos.avg_buy_price)
+
+                        # DB에 PENDING 주문 먼저 기록 (고아 주문 방지)
                         order = TradingOrder(
                             user_id=user_id,
                             account_id=account.id,
@@ -725,15 +743,22 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             quantity=encrypt_decimal(Decimal(qty)),
                             price=encrypt_decimal(current_price),
                             order_type=OrderType.MARKET,
-                            status=OrderStatus.SUBMITTED,
-                            kis_order_id=order_result.get("order_id"),
+                            status=OrderStatus.PENDING,
                             reason=signal.reason,
                             pre_apply_qty=encrypt_decimal(pre_qty_snap),
                             pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                         )
                         db.add(order)
+                        await db.flush()
+
+                        # KIS 발주
+                        order_result = await kis.place_order(
+                            side="buy", ticker=ticker, quantity=qty, order_type="market",
+                        )
+                        order.status = OrderStatus.SUBMITTED
+                        order.kis_order_id = order_result.get("order_id")
+
                         if llm_decision is not None:
-                            await db.flush()
                             decision_row.executed = True
                             decision_row.order_id = order.id
                         # Phase 3: 전략 포지션 증가 (신규 ticker일 때만 set에 추가)
@@ -748,6 +773,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             f"📈 [매수] {ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
                         )
                     except KISClientError as e:
+                        order.status = OrderStatus.REJECTED
+                        order.reason = (order.reason or "") + f" | KIS error: {e}"
                         logger.error("Buy order failed for %s: %s", ticker, e)
 
                 elif signal.action == "sell":
@@ -769,12 +796,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         continue
 
                     try:
-                        order_result = await kis.place_order(
-                            side="sell", ticker=ticker, quantity=qty, order_type="market",
-                        )
                         # 폴링 롤백용 pre-state
                         pre_qty_snap = decrypt_decimal(pos.quantity)
                         pre_avg_snap = decrypt_decimal(pos.avg_buy_price)
+
+                        # DB에 PENDING 주문 먼저 기록 (고아 주문 방지)
                         order = TradingOrder(
                             user_id=user_id,
                             account_id=account.id,
@@ -786,15 +812,22 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             quantity=encrypt_decimal(Decimal(qty)),
                             price=encrypt_decimal(current_price),
                             order_type=OrderType.MARKET,
-                            status=OrderStatus.SUBMITTED,
-                            kis_order_id=order_result.get("order_id"),
+                            status=OrderStatus.PENDING,
                             reason=signal.reason,
                             pre_apply_qty=encrypt_decimal(pre_qty_snap),
                             pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                         )
                         db.add(order)
+                        await db.flush()
+
+                        # KIS 발주
+                        order_result = await kis.place_order(
+                            side="sell", ticker=ticker, quantity=qty, order_type="market",
+                        )
+                        order.status = OrderStatus.SUBMITTED
+                        order.kis_order_id = order_result.get("order_id")
+
                         if llm_decision is not None:
-                            await db.flush()
                             decision_row.executed = True
                             decision_row.order_id = order.id
                         # Phase 3: 전략 포지션 차감 + 실현손익 누적
@@ -813,11 +846,11 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             logger.critical(
                                 "Signal sell fill apply failed (order persisted): "
                                 "kis_order_id=%s ticker=%s qty=%d err=%s",
-                                order_result.get("order_id"), ticker, qty, fill_err,
+                                order.kis_order_id, ticker, qty, fill_err,
                             )
                             skip_messages.append(
                                 f"🚨 [회계 오류] 시그널 매도는 KIS에서 실행됐으나 내부 포지션 갱신 실패: "
-                                f"{ticker} {qty}주 / kis_order_id={order_result.get('order_id')} / {fill_err}"
+                                f"{ticker} {qty}주 / kis_order_id={order.kis_order_id} / {fill_err}"
                             )
                             if not isinstance(fill_err, ValueError):
                                 raise
@@ -879,6 +912,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             _kill_switch_tripped = True
 
                     except KISClientError as e:
+                        order.status = OrderStatus.REJECTED
                         logger.error("Sell order failed for %s: %s", ticker, e)
 
             except Exception:
@@ -952,6 +986,18 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         raise
     finally:
         await kis.close()
+
+    # Step 6 (모듈 D): 계좌 락 해제 후 임베딩 생성 — CPU-bound encode를 락 밖에서 실행
+    for did in pending_embed_ids:
+        try:
+            await embed_decision(db, did)
+        except Exception:
+            logger.warning(
+                "Embedding creation failed for decision %s (continuing)",
+                did, exc_info=True,
+            )
+    if pending_embed_ids:
+        await db.commit()
 
 
 def _build_portfolio_context(

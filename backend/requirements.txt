@@ -35,6 +35,10 @@ yfinance>=0.2.36
 # 캐시
 cachetools>=5.3,<6.0
 
+# 벡터 검색 (Stage 3 Step 6: RAG)
+pgvector>=0.3,<1.0
+sentence-transformers>=3.0,<4.0
+
 # 스케줄러
 apscheduler>=3.10,<4.0
 

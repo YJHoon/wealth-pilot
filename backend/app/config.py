@@ -65,17 +65,36 @@ class Settings(BaseSettings):
     trading_enabled: bool = False  # 자동매매 글로벌 킬 스위치
 
     # ── Stage 3: LLM 어드바이저 ──
-    # Anthropic Claude API. paper 모드에서만 의사결정에 사용된다.
     anthropic_api_key: str = ""
     llm_advisor_model: str = "claude-sonnet-4-5"
     llm_advisor_min_confidence: int = 70  # 이 값 미만이면 발주 차단
     llm_advisor_timeout_seconds: float = 20.0
     llm_advisor_max_tokens: int = 1024
 
+    # ── Stage 3 Step 6: RAG 유사 케이스 회상 (모듈 D) ──
+    embedding_model_name: str = "intfloat/multilingual-e5-small"
+    embedding_model_cache_dir: str = ""  # 빈 문자열이면 sentence-transformers 기본 경로
+    rag_top_k: int = 5  # 유사 케이스 검색 최대 개수
+    rag_min_similarity: float = 0.5  # 최소 코사인 유사도 임계값
+
     # ── Stage 3 Step 4: 주간 메타 분석 (모듈 C) ──
     meta_analysis_model: str = "claude-sonnet-4-5"
     meta_analysis_max_rules: int = 5  # 한 번에 생성할 최대 규칙 수
     adaptive_rule_ttl_days: int = 14  # 규칙 기본 유효기간 (일)
+
+    @field_validator("rag_top_k")
+    @classmethod
+    def _validate_rag_top_k(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("rag_top_k must be >= 1")
+        return v
+
+    @field_validator("rag_min_similarity")
+    @classmethod
+    def _validate_rag_min_similarity(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("rag_min_similarity must be between 0.0 and 1.0")
+        return v
 
     @field_validator("meta_analysis_max_rules")
     @classmethod

@@ -82,6 +82,24 @@ async def poll_open_orders(
     - kis_filled < ord_qty: 부족분 롤백, 상태 PARTIAL
     - KIS에 없음 + grace 경과: 전량 롤백, 상태 CANCELLED
     """
+    # PENDING 주문 정리: KIS 발주 전 크래시로 남은 고아 PENDING 주문을
+    # grace period 경과 후 CANCELLED로 전환. eager apply 전이므로 롤백 불필요.
+    pending_result = await db.execute(
+        select(TradingOrder).where(
+            TradingOrder.account_id == account.id,
+            TradingOrder.status == OrderStatus.PENDING,
+        )
+    )
+    now = datetime.now(timezone.utc)
+    for pending_order in pending_result.scalars().all():
+        if now - pending_order.created_at >= CANCEL_GRACE_PERIOD:
+            pending_order.status = OrderStatus.CANCELLED
+            pending_order.last_polled_at = now
+            logger.warning(
+                "Stale PENDING order cancelled: id=%s ticker=%s",
+                pending_order.id, pending_order.ticker,
+            )
+
     result = await db.execute(
         select(TradingOrder).where(
             TradingOrder.account_id == account.id,

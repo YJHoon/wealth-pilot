@@ -23,6 +23,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.sql import expression
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -43,7 +44,7 @@ class StrategyType(str, enum.Enum):
     MA_CROSSOVER = "ma_crossover"
     MEAN_REVERSION = "mean_reversion"
     CUSTOM = "custom"
-    # Stage 3: LLM 어드바이저 — paper 모드 전용 (live 차단은 trading_cycle에서)
+    # Stage 3: LLM 어드바이저
     LLM_ADVISOR = "llm_advisor"
 
 
@@ -497,4 +498,37 @@ class AdaptiveRule(Base):
     )
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
+    )
+
+
+class DecisionEmbedding(Base):
+    """모듈 D(RAG 유사 케이스 회상)용 의사결정 벡터 임베딩.
+
+    TradingDecision과 1:1로 매핑되며, 유사한 과거 매매 상황을
+    코사인 유사도로 검색해 LLM 프롬프트에 주입한다.
+    """
+
+    __tablename__ = "decision_embeddings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    decision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trading_decisions.id", ondelete="CASCADE"),
+        nullable=False, unique=True,
+    )
+    # 384차원 벡터 (intfloat/multilingual-e5-small)
+    embedding = mapped_column(Vector(384), nullable=False)
+    # 임베딩 원본 텍스트 (디버그/모델 교체 시 재임베딩용)
+    context_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+    # 관계 (1:1 — decision_id UNIQUE)
+    decision = relationship(
+        "TradingDecision",
+        backref=sa.orm.backref("embedding_row", uselist=False),
     )

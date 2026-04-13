@@ -15,6 +15,7 @@ from app.models.trading import (
     TradingAccount,
     TradingMode,
     TradingOrder,
+    TradingPosition,
     TradingStrategy,
 )
 from app.models.user import User
@@ -148,26 +149,23 @@ async def test_validate_excludes_self_on_update(
 
 
 @pytest.mark.asyncio
-async def test_get_strategy_available_capital_subtracts_orders(
+async def test_get_strategy_available_capital_subtracts_positions_and_locked(
     db_session: AsyncSession, mock_user: User, account: TradingAccount,
 ):
     s = _new_strategy(mock_user.id, account.id, "S", "5000000")
     db_session.add(s)
     await db_session.commit()
 
-    # FILLED 매수 1,000,000원 (held_cost)
-    o1 = TradingOrder(
+    # 보유 포지션 10주 @ 100,000 = 1,000,000원 (held_cost)
+    pos = TradingPosition(
         id=uuid.uuid4(),
         user_id=mock_user.id,
         account_id=account.id,
         strategy_id=s.id,
-        side=OrderSide.BUY,
         ticker="005930",
         ticker_name="삼성전자",
         quantity=encrypt_decimal(Decimal("10")),
-        price=encrypt_decimal(Decimal("100000")),
-        order_type=OrderType.MARKET,
-        status=OrderStatus.FILLED,
+        avg_buy_price=encrypt_decimal(Decimal("100000")),
     )
     # SUBMITTED 매수 500,000원 (locked_cash)
     o2 = TradingOrder(
@@ -183,66 +181,46 @@ async def test_get_strategy_available_capital_subtracts_orders(
         order_type=OrderType.MARKET,
         status=OrderStatus.SUBMITTED,
     )
-    db_session.add_all([o1, o2])
+    db_session.add_all([pos, o2])
     await db_session.commit()
 
     available = await get_strategy_available_capital(db_session, s)
     # 5,000,000 + 0(realized) - 500,000(locked) - 1,000,000(held) = 3,500,000
     assert available == Decimal("3500000")
 
-    await db_session.delete(o1)
+    await db_session.delete(pos)
     await db_session.delete(o2)
     await db_session.delete(s)
     await db_session.commit()
 
 
 @pytest.mark.asyncio
-async def test_get_available_uses_avg_cost_basis_for_sells(
+async def test_get_available_uses_position_held_cost(
     db_session: AsyncSession, mock_user: User, account: TradingAccount,
 ):
-    """SELL은 sell_price가 아니라 평균매입가 기준으로 cost basis 차감해야 한다."""
+    """가용 자본 계산이 포지션 기반 held_cost를 정확히 반영하는지 확인."""
     s = _new_strategy(mock_user.id, account.id, "S", "5000000")
     db_session.add(s)
     await db_session.commit()
 
-    # FILLED 매수 10주 @ 100,000 = 1,000,000 (avg = 100,000)
-    buy = TradingOrder(
+    # 매도 후 남은 보유: 6주 @ 100,000 = 600,000 (held_cost)
+    pos = TradingPosition(
         id=uuid.uuid4(),
         user_id=mock_user.id,
         account_id=account.id,
         strategy_id=s.id,
-        side=OrderSide.BUY,
         ticker="005930",
         ticker_name="삼성전자",
-        quantity=encrypt_decimal(Decimal("10")),
-        price=encrypt_decimal(Decimal("100000")),
-        order_type=OrderType.MARKET,
-        status=OrderStatus.FILLED,
+        quantity=encrypt_decimal(Decimal("6")),
+        avg_buy_price=encrypt_decimal(Decimal("100000")),
     )
-    # FILLED 매도 4주 @ 150,000 (sell_price ≠ avg_buy)
-    sell = TradingOrder(
-        id=uuid.uuid4(),
-        user_id=mock_user.id,
-        account_id=account.id,
-        strategy_id=s.id,
-        side=OrderSide.SELL,
-        ticker="005930",
-        ticker_name="삼성전자",
-        quantity=encrypt_decimal(Decimal("4")),
-        price=encrypt_decimal(Decimal("150000")),
-        order_type=OrderType.MARKET,
-        status=OrderStatus.FILLED,
-    )
-    db_session.add_all([buy, sell])
+    db_session.add(pos)
     await db_session.commit()
 
     available = await get_strategy_available_capital(db_session, s)
-    # held_cost = 1,000,000 - (avg 100,000 * 4) = 600,000  ← 매도가 150,000 무시
-    # 5,000,000 + 0(realized) - 0(locked) - 600,000 = 4,400,000
-    # (realized_pnl이 별도 누적될 때 이중 반영되지 않음을 확인)
+    # 5,000,000 + 0(realized) - 0(locked) - 600,000(held) = 4,400,000
     assert available == Decimal("4400000")
 
-    await db_session.delete(buy)
-    await db_session.delete(sell)
+    await db_session.delete(pos)
     await db_session.delete(s)
     await db_session.commit()
