@@ -273,7 +273,7 @@ def format_similar_cases_for_prompt(cases: list[SimilarCase]) -> str | None:
         except Exception as e:
             logger.warning(
                 "decrypt_decimal failed for decision %s: %s",
-                c.id, e,
+                c.decision_id, e,
             )
             continue
 
@@ -350,9 +350,9 @@ async def backfill_embeddings(
             embedding=vector,
             context_text=context,
         )
-        db.add(row)
         try:
             async with db.begin_nested():
+                db.add(row)
                 await db.flush()
             count += 1
         except IntegrityError:
