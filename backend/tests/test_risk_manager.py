@@ -230,3 +230,4 @@ class TestFromParams:
         assert rm.stop_loss_pct == Decimal("0.05")
         assert rm.daily_loss_limit == Decimal("0")
         assert rm.max_positions == 10
+        assert rm.max_order_amount == Decimal("0")

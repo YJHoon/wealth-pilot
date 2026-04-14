@@ -983,7 +983,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             if skip_messages:
                 sections.append(
                     "⚠️ 사전검증 스킵 (" + str(len(skip_messages)) + "건)\n"
-                    + "\n".join(f"- {m}" for m in skip_messages)
+                    + "\n".join(f"- {escape_html(m)}" for m in skip_messages)
                 )
             await send_telegram_message("\n\n".join(sections), pre_escaped=True)
 

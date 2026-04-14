@@ -534,18 +534,22 @@ async def run_cycle_now(
             raise HTTPException(status_code=409, detail="해당 전략의 매매 사이클이 이미 실행 중입니다.")
         _running_strategies.add(strategy.id)
 
-    await log_access(db, user.id, AccessAction.TRADING_MANUAL_RUN, request)
-    await db.commit()
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_MANUAL_RUN, request)
+        await db.commit()
 
-    from app.tasks.trading_cycle import execute_trading_cycle
+        from app.tasks.trading_cycle import execute_trading_cycle
 
-    async def _guarded_run():
-        try:
-            await execute_trading_cycle(str(user.id), str(strategy.id))
-        finally:
-            _running_strategies.discard(strategy.id)
+        async def _guarded_run():
+            try:
+                await execute_trading_cycle(str(user.id), str(strategy.id))
+            finally:
+                _running_strategies.discard(strategy.id)
 
-    asyncio.create_task(_guarded_run())
+        asyncio.create_task(_guarded_run())
+    except Exception:
+        _running_strategies.discard(strategy.id)
+        raise
 
     return {"message": "매매 사이클이 시작되었습니다.", "strategy_id": str(strategy.id)}
 
