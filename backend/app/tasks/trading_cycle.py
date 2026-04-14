@@ -57,7 +57,7 @@ from app.services.strategy_position import (
     reconcile_with_kis,
     update_position_market_data,
 )
-from app.services.alert_service import send_telegram_message
+from app.services.alert_service import escape_html, send_telegram_message
 from app.services.crypto_service import (
     decrypt_decimal,
     decrypt_value,
@@ -81,11 +81,19 @@ MARKET_CLOSE_MINUTE = 30
 BUY_FEE_BUFFER = Decimal("1.005")
 
 
+import holidays as _holidays_lib
+
+_KR_HOLIDAYS = _holidays_lib.KR()
+
+
 def _is_market_hours() -> bool:
-    """장 운영 시간인지 체크 (KST 기준 평일 09:00~15:30)."""
+    """장 운영 시간인지 체크 (KST 기준 평일 09:00~15:30, 공휴일 제외)."""
     now = datetime.now(KST)
     # 주말 체크 (월=0, 일=6)
     if now.weekday() >= 5:
+        return False
+    # 한국 공휴일 체크
+    if now.date() in _KR_HOLIDAYS:
         return False
     market_open = now.replace(hour=MARKET_OPEN_HOUR, minute=MARKET_OPEN_MINUTE, second=0)
     market_close = now.replace(hour=MARKET_CLOSE_HOUR, minute=MARKET_CLOSE_MINUTE, second=0)
@@ -393,7 +401,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                 )
 
             await send_telegram_message(
-                f"🚨 [킬 스위치 발동]\n전략: {strategy.name}\n{kill_check.reason}\n"
+                f"🚨 [킬 스위치 발동]\n전략: {escape_html(strategy.name)}\n{escape_html(kill_check.reason)}\n"
                 f"전략이 자동 비활성화되었습니다."
             )
             return
@@ -469,7 +477,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     # 손절은 안전장치이므로 일일 횟수로 차단하지 않지만 카운트에 반영
                     today_trade_count += 1
                     trade_messages.append(
-                        f"🚨 [손절 매도] {pos.ticker_name}({pos.ticker}) {qty}주 @ {current:,.0f}원"
+                        f"🚨 [손절 매도] {escape_html(pos.ticker_name)}({escape_html(pos.ticker)}) {qty}주 @ {current:,.0f}원"
                     )
                     # 의사결정 결과 백필 (모듈 B/C 학습 데이터)
                     try:
@@ -626,9 +634,9 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
                         )
                         trade_messages.append(
-                            f"⏳ [승인 대기] {ticker} {llm_decision.action} "
+                            f"⏳ [승인 대기] {escape_html(ticker)} {escape_html(llm_decision.action)} "
                             f"(confidence={llm_decision.confidence}): "
-                            f"{llm_decision.reason[:80]}"
+                            f"{escape_html(llm_decision.reason[:80])}"
                         )
                         logger.info(
                             "LLM decision pending approval: %s %s conf=%d",
@@ -770,7 +778,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         today_trade_count += 1
                         available_cash -= order_amount
                         trade_messages.append(
-                            f"📈 [매수] {ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
+                            f"📈 [매수] {escape_html(ticker_name)}({escape_html(ticker)}) {qty}주 @ {current_price:,.0f}원\n사유: {escape_html(signal.reason)}"
                         )
                     except KISClientError as e:
                         order.status = OrderStatus.REJECTED
@@ -860,7 +868,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         orders_placed += 1
                         today_trade_count += 1
                         trade_messages.append(
-                            f"📉 [매도] {pos.ticker_name}({ticker}) {qty}주 @ {current_price:,.0f}원\n사유: {signal.reason}"
+                            f"📉 [매도] {escape_html(pos.ticker_name)}({escape_html(ticker)}) {qty}주 @ {current_price:,.0f}원\n사유: {escape_html(signal.reason)}"
                         )
                         # 의사결정 결과 백필 (모듈 B/C 학습 데이터)
                         try:
@@ -940,7 +948,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             # 정합성 불일치 사실은 schedule_log.error_message에 이미 기록되어 있다.
             try:
                 await send_telegram_message(
-                    f"⚠️ [포지션 정합성 불일치] 계좌={account.id}\n{mismatch_text}"
+                    f"⚠️ [포지션 정합성 불일치] 계좌={account.id}\n{escape_html(mismatch_text)}"
                 )
             except Exception:
                 logger.exception("Failed to send reconciliation mismatch alert")

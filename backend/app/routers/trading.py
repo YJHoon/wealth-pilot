@@ -1,5 +1,6 @@
 """자동매매 라우터 — 계좌, 전략, 스케줄, 주문, 포지션, 수익률"""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -505,6 +506,10 @@ async def get_schedule_status(
     )
 
 
+# 전략별 실행 중 플래그 (run-now 동시 호출 방지)
+_running_strategies: set[UUID] = set()
+
+
 @router.post("/schedule/run-now", status_code=status.HTTP_200_OK)
 async def run_cycle_now(
     body: ScheduleStartRequest,
@@ -522,13 +527,22 @@ async def run_cycle_now(
     if not account.is_active:
         raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
 
+    if strategy.id in _running_strategies:
+        raise HTTPException(status_code=409, detail="해당 전략의 매매 사이클이 이미 실행 중입니다.")
+
     await log_access(db, user.id, AccessAction.TRADING_MANUAL_RUN, request)
     await db.commit()
 
-    # 비동기로 사이클 실행
     from app.tasks.trading_cycle import execute_trading_cycle
-    import asyncio
-    asyncio.create_task(execute_trading_cycle(str(user.id), str(strategy.id)))
+
+    async def _guarded_run():
+        _running_strategies.add(strategy.id)
+        try:
+            await execute_trading_cycle(str(user.id), str(strategy.id))
+        finally:
+            _running_strategies.discard(strategy.id)
+
+    asyncio.create_task(_guarded_run())
 
     return {"message": "매매 사이클이 시작되었습니다.", "strategy_id": str(strategy.id)}
 
