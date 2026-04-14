@@ -42,6 +42,8 @@ class RiskManager:
         self.max_positions = max_positions
         self.kill_switch_pct = kill_switch_pct
         self.max_daily_trades = max_daily_trades
+        if max_order_amount < 0:
+            raise ValueError("max_order_amount must be >= 0")
         self.max_order_amount = max_order_amount
 
     @classmethod

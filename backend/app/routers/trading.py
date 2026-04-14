@@ -508,9 +508,11 @@ async def get_schedule_status(
 
 # 전략별 실행 중 플래그 (run-now 동시 호출 방지)
 _running_strategies: set[UUID] = set()
+_running_strategies_lock = asyncio.Lock()
 
 
 @router.post("/schedule/run-now", status_code=status.HTTP_200_OK)
+@limiter.limit("100/minute")
 async def run_cycle_now(
     body: ScheduleStartRequest,
     request: Request,
@@ -527,8 +529,10 @@ async def run_cycle_now(
     if not account.is_active:
         raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
 
-    if strategy.id in _running_strategies:
-        raise HTTPException(status_code=409, detail="해당 전략의 매매 사이클이 이미 실행 중입니다.")
+    async with _running_strategies_lock:
+        if strategy.id in _running_strategies:
+            raise HTTPException(status_code=409, detail="해당 전략의 매매 사이클이 이미 실행 중입니다.")
+        _running_strategies.add(strategy.id)
 
     await log_access(db, user.id, AccessAction.TRADING_MANUAL_RUN, request)
     await db.commit()
@@ -536,7 +540,6 @@ async def run_cycle_now(
     from app.tasks.trading_cycle import execute_trading_cycle
 
     async def _guarded_run():
-        _running_strategies.add(strategy.id)
         try:
             await execute_trading_cycle(str(user.id), str(strategy.id))
         finally:
@@ -1247,4 +1250,4 @@ async def _get_user_strategy(db: AsyncSession, strategy_id: UUID, user_id: UUID)
 
 
 # 임포트 for send_telegram_message in endpoints
-from app.services.alert_service import send_telegram_message
+from app.services.alert_service import escape_html, send_telegram_message

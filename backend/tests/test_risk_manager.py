@@ -85,6 +85,19 @@ class TestCheckCanBuy:
         assert result.allowed is False
         assert "비중" in result.reason
 
+    def test_order_amount_equal_to_max_order_amount(self):
+        rm = RiskManager(max_order_amount=Decimal("5000000"))
+        result = rm.check_can_buy(
+            portfolio_value=Decimal("100000000"),
+            order_amount=Decimal("5000000"),  # exactly == max
+            current_position_count=0,
+        )
+        assert result.allowed is True
+
+    def test_negative_max_order_amount_raises(self):
+        with pytest.raises(ValueError, match="max_order_amount must be >= 0"):
+            RiskManager(max_order_amount=Decimal("-1"))
+
 
 class TestCheckStopLoss:
     def test_stop_loss_triggered(self):

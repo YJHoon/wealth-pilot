@@ -90,7 +90,7 @@ async def _check_single_item(price_service: PriceService, item: Watchlist) -> No
                 current_price=f"{current_price:,.0f}",
                 target_price=f"{target_buy:,.0f}",
             )
-            sent = await send_telegram_message(message, chat_id=user_chat_id)
+            sent = await send_telegram_message(message, chat_id=user_chat_id, pre_escaped=True)
             if sent:
                 item.alerted_target_buy = True
     else:
@@ -105,7 +105,7 @@ async def _check_single_item(price_service: PriceService, item: Watchlist) -> No
                 current_price=f"{current_price:,.0f}",
                 target_price=f"{target_sell:,.0f}",
             )
-            sent = await send_telegram_message(message, chat_id=user_chat_id)
+            sent = await send_telegram_message(message, chat_id=user_chat_id, pre_escaped=True)
             if sent:
                 item.alerted_target_sell = True
     else:
@@ -127,7 +127,7 @@ async def _check_single_item(price_service: PriceService, item: Watchlist) -> No
                         change_pct=f"{change_pct:.1f}",
                         threshold_pct=f"{threshold_pct:.1f}",
                     )
-                    sent = await send_telegram_message(message, chat_id=user_chat_id)
+                    sent = await send_telegram_message(message, chat_id=user_chat_id, pre_escaped=True)
                     if sent:
                         item.alerted_threshold = True
             else:

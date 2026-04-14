@@ -402,7 +402,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
 
             await send_telegram_message(
                 f"🚨 [킬 스위치 발동]\n전략: {escape_html(strategy.name)}\n{escape_html(kill_check.reason)}\n"
-                f"전략이 자동 비활성화되었습니다."
+                f"전략이 자동 비활성화되었습니다.",
+                pre_escaped=True,
             )
             return
 
@@ -948,7 +949,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             # 정합성 불일치 사실은 schedule_log.error_message에 이미 기록되어 있다.
             try:
                 await send_telegram_message(
-                    f"⚠️ [포지션 정합성 불일치] 계좌={account.id}\n{escape_html(mismatch_text)}"
+                    f"⚠️ [포지션 정합성 불일치] 계좌={account.id}\n{escape_html(mismatch_text)}",
+                    pre_escaped=True,
                 )
             except Exception:
                 logger.exception("Failed to send reconciliation mismatch alert")
@@ -983,7 +985,7 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     "⚠️ 사전검증 스킵 (" + str(len(skip_messages)) + "건)\n"
                     + "\n".join(f"- {m}" for m in skip_messages)
                 )
-            await send_telegram_message("\n\n".join(sections))
+            await send_telegram_message("\n\n".join(sections), pre_escaped=True)
 
     except Exception:
         schedule_log.status = ScheduleLogStatus.ERROR
