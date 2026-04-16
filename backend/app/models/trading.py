@@ -172,6 +172,13 @@ class TradingStrategy(Base):
     # 누적 실현 손익 (AES-256 암호화). None은 0으로 해석.
     realized_pnl: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Phase 4: 킬 스위치 발동 기록 (수동 비활성화와 구분)
+    # killed_at이 NULL이면 정상, 값이 있으면 자동 중단된 전략.
+    killed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    killed_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )

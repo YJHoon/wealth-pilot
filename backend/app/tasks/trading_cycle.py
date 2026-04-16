@@ -385,6 +385,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         if not kill_check.allowed:
             strategy.is_active = False
             strategy.is_scheduled = False
+            strategy.killed_at = datetime.now(timezone.utc)
+            strategy.killed_reason = kill_check.reason
             schedule_log.status = ScheduleLogStatus.SKIPPED
             schedule_log.skip_reason = kill_check.reason
             schedule_log.completed_at = datetime.now(timezone.utc)
@@ -910,6 +912,8 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                             # 전체 비활성화 경로 (초기 킬 스위치와 동일)
                             strategy.is_active = False
                             strategy.is_scheduled = False
+                            strategy.killed_at = datetime.now(timezone.utc)
+                            strategy.killed_reason = kill_recheck.reason
                             trade_messages.append(
                                 "🚨 [킬 스위치 발동] 매도 후 누적 손실 기준 초과 — "
                                 "이후 주문 중단"

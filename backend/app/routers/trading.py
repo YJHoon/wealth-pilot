@@ -60,6 +60,7 @@ from app.services.account_lock import acquire_account_lock, clear_account_lock
 from app.services.kis_client import KISClient, KISClientError
 from app.services.risk_manager import RiskManager
 from app.services.strategy_capital import (
+    add_realized_pnl,
     get_initial_capital,
     get_realized_pnl,
     get_strategy_available_capital,
@@ -414,6 +415,238 @@ async def update_strategy(
         logger.warning("TRADING_STRATEGY_UPDATE access logging failed", exc_info=True)
 
     return strategy_to_response(strategy)
+
+
+@router.delete("/strategies/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("100/minute")
+async def delete_strategy(
+    strategy_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """전략 삭제.
+
+    Phase 4 (Task 6): 안전장치 — 보유 포지션이나 미체결 주문이 있으면 거부.
+    킬 스위치로 비활성화된 전략(is_active=False)도 삭제 가능.
+
+    Cascade 동작:
+    - schedule_logs: CASCADE 삭제
+    - decisions: CASCADE 삭제
+    - orders: SET NULL (감사 이력 보존)
+    - positions: RESTRICT (포지션 있으면 사전 체크에서 차단)
+
+    포지션 있으면 먼저 POST /strategies/{id}/liquidate 호출 → 체결 폴링 완료 후
+    DELETE 재호출하는 흐름.
+    """
+    strategy = await _get_user_strategy(db, strategy_id, user.id, include_inactive=True)
+
+    # 사이클 동시 실행 방지: account_lock 안에서 사전 체크 + 삭제
+    async with acquire_account_lock(strategy.account_id):
+        # 보유 포지션 체크
+        pos_count_result = await db.execute(
+            select(func.count()).select_from(TradingPosition).where(
+                TradingPosition.strategy_id == strategy.id,
+            )
+        )
+        if (pos_count_result.scalar() or 0) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "보유 포지션이 있어 삭제할 수 없습니다. "
+                    "POST /api/trading/strategies/{id}/liquidate 호출로 청산한 뒤 "
+                    "체결 폴링이 완료되면 다시 시도하세요."
+                ),
+            )
+
+        # 미체결(PENDING/SUBMITTED/PARTIAL) 주문 체크
+        open_count_result = await db.execute(
+            select(func.count()).select_from(TradingOrder).where(
+                TradingOrder.strategy_id == strategy.id,
+                TradingOrder.status.in_([
+                    OrderStatus.PENDING,
+                    OrderStatus.SUBMITTED,
+                    OrderStatus.PARTIAL,
+                ]),
+            )
+        )
+        if (open_count_result.scalar() or 0) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="미체결 주문이 있어 삭제할 수 없습니다. 체결 폴링 완료 후 재시도하세요.",
+            )
+
+        # 인메모리 스케줄 제거 (있다면)
+        if strategy.is_scheduled:
+            try:
+                trading_scheduler.remove_schedule(user.id, strategy.id)
+            except Exception:
+                logger.warning(
+                    "Failed to remove in-memory schedule on delete: strategy=%s",
+                    strategy.id, exc_info=True,
+                )
+
+        await db.delete(strategy)
+        await db.commit()
+
+    await clear_account_lock(strategy.account_id)
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_STRATEGY_DELETE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_STRATEGY_DELETE access logging failed", exc_info=True)
+
+
+@router.post("/strategies/{strategy_id}/liquidate", status_code=status.HTTP_200_OK)
+@limiter.limit("100/minute")
+async def liquidate_strategy(
+    strategy_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """전략 청산 — 모든 보유 포지션을 시장가 매도.
+
+    Phase 4 (Task 6): DELETE의 전제조건. 청산 후 체결 폴링이 완료되면 DELETE 가능.
+    킬 스위치로 자동 중단된 전략(is_active=False)도 청산 가능.
+
+    안전장치:
+    - 시장 시간 외 거부 (장중에만 시장가 매도)
+    - 계좌 활성 상태 필요
+    - 미체결 주문이 있으면 거부 (체결 폴링 후 재시도)
+    - account_lock으로 사이클 동시 실행 차단
+    """
+    if not settings.trading_enabled:
+        raise HTTPException(status_code=503, detail="자동매매가 비활성화되어 있습니다.")
+
+    strategy = await _get_user_strategy(db, strategy_id, user.id, include_inactive=True)
+    account = await _get_user_account(db, strategy.account_id, user.id)
+
+    if not account.is_active:
+        raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+    # 시장 시간 체크 (trading_cycle._is_market_hours 재사용)
+    from app.tasks.trading_cycle import _is_market_hours
+    if not _is_market_hours():
+        raise HTTPException(
+            status_code=400,
+            detail="시장 시간 외에는 청산할 수 없습니다 (한국 장 운영 시간 09:00-15:30, 평일).",
+        )
+
+    creds = settings.kis_credentials(account.mode.value)
+    kis = KISClient(
+        app_key=creds["app_key"],
+        app_secret=creds["app_secret"],
+        account_number=creds["account_number"],
+        account_product_code=creds["account_product_code"],
+        mode=account.mode,
+    )
+
+    orders_created: list[UUID] = []
+    orders_rejected: list[dict] = []
+
+    try:
+        async with acquire_account_lock(account.id):
+            # 미체결 주문 체크
+            open_count_result = await db.execute(
+                select(func.count()).select_from(TradingOrder).where(
+                    TradingOrder.strategy_id == strategy.id,
+                    TradingOrder.status.in_([
+                        OrderStatus.PENDING,
+                        OrderStatus.SUBMITTED,
+                        OrderStatus.PARTIAL,
+                    ]),
+                )
+            )
+            if (open_count_result.scalar() or 0) > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="미체결 주문이 있어 청산할 수 없습니다. 체결 폴링 후 재시도하세요.",
+                )
+
+            positions = await list_strategy_positions(db, account.id, strategy.id)
+            if not positions:
+                raise HTTPException(status_code=400, detail="청산할 포지션이 없습니다.")
+
+            for pos in positions:
+                qty = int(decrypt_decimal(pos.quantity))
+                if qty <= 0:
+                    continue
+
+                # 현재가 조회 (최신 시세로 주문가 기록)
+                try:
+                    price_info = await kis.get_current_price(pos.ticker)
+                    current_price = Decimal(str(price_info["price"]))
+                except KISClientError as e:
+                    logger.warning(
+                        "Liquidate: price fetch failed for %s: %s", pos.ticker, e,
+                    )
+                    orders_rejected.append({"ticker": pos.ticker, "reason": str(e)})
+                    continue
+
+                pre_qty_snap = decrypt_decimal(pos.quantity)
+                pre_avg_snap = decrypt_decimal(pos.avg_buy_price)
+
+                order = TradingOrder(
+                    user_id=user.id,
+                    account_id=account.id,
+                    strategy_id=strategy.id,
+                    side=OrderSide.SELL,
+                    ticker=pos.ticker,
+                    ticker_name=pos.ticker_name,
+                    quantity=encrypt_decimal(Decimal(qty)),
+                    price=encrypt_decimal(current_price),
+                    order_type=OrderType.MARKET,
+                    status=OrderStatus.PENDING,
+                    reason="전략 청산",
+                    pre_apply_qty=encrypt_decimal(pre_qty_snap),
+                    pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
+                )
+                db.add(order)
+                await db.flush()
+
+                try:
+                    order_result = await kis.place_order(
+                        side="sell",
+                        ticker=pos.ticker,
+                        quantity=qty,
+                        order_type="market",
+                    )
+                    order.status = OrderStatus.SUBMITTED
+                    order.kis_order_id = order_result.get("order_id")
+
+                    # eager apply: trading_cycle과 동일하게 즉시 포지션 반영
+                    realized_delta = await apply_sell_fill(
+                        db, strategy, pos.ticker, Decimal(qty), current_price,
+                    )
+                    add_realized_pnl(strategy, realized_delta)
+                    orders_created.append(order.id)
+                except KISClientError as e:
+                    order.status = OrderStatus.REJECTED
+                    order.error_message = str(e)
+                    logger.error("Liquidation sell failed for %s: %s", pos.ticker, e)
+                    orders_rejected.append({"ticker": pos.ticker, "reason": str(e)})
+
+            await db.commit()
+
+        await clear_account_lock(account.id)
+    finally:
+        await kis.close()
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_STRATEGY_LIQUIDATE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_STRATEGY_LIQUIDATE access logging failed", exc_info=True)
+
+    return {
+        "orders_placed": len(orders_created),
+        "order_ids": [str(o) for o in orders_created],
+        "rejected": orders_rejected,
+    }
 
 
 # ──────────────────────────────────────────────
@@ -1239,14 +1472,25 @@ async def _get_user_account(db: AsyncSession, account_id: UUID, user_id: UUID) -
     return account
 
 
-async def _get_user_strategy(db: AsyncSession, strategy_id: UUID, user_id: UUID) -> TradingStrategy:
-    result = await db.execute(
-        select(TradingStrategy).where(
-            TradingStrategy.id == strategy_id,
-            TradingStrategy.user_id == user_id,
-            TradingStrategy.is_active.is_(True),
-        )
-    )
+async def _get_user_strategy(
+    db: AsyncSession,
+    strategy_id: UUID,
+    user_id: UUID,
+    *,
+    include_inactive: bool = False,
+) -> TradingStrategy:
+    """유저 소유 전략 조회.
+
+    include_inactive=True면 is_active=False인 전략(킬 스위치로 자동 중단된 전략 등)도
+    조회 가능. DELETE/LIQUIDATE 같이 비활성 전략도 다뤄야 하는 엔드포인트에서 사용.
+    """
+    conditions = [
+        TradingStrategy.id == strategy_id,
+        TradingStrategy.user_id == user_id,
+    ]
+    if not include_inactive:
+        conditions.append(TradingStrategy.is_active.is_(True))
+    result = await db.execute(select(TradingStrategy).where(*conditions))
     strategy = result.scalar_one_or_none()
     if strategy is None:
         raise HTTPException(status_code=404, detail="전략을 찾을 수 없습니다.")
