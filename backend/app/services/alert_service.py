@@ -36,17 +36,32 @@ WATCHLIST_ALERT_TEMPLATES = {
 }
 
 
-async def send_telegram_message(message: str, *, chat_id: str | None = None) -> bool:
-    """텔레그램 메시지 전송. chat_id 지정 시 해당 채팅으로, 미지정 시 시스템 chat_id 사용."""
+def escape_html(text: str) -> str:
+    """텔레그램 HTML 파싱에 안전하도록 특수문자 이스케이프."""
+    return escape(str(text))
+
+
+async def send_telegram_message(
+    message: str,
+    *,
+    chat_id: str | None = None,
+    pre_escaped: bool = False,
+) -> bool:
+    """텔레그램 메시지 전송. chat_id 지정 시 해당 채팅으로, 미지정 시 시스템 chat_id 사용.
+
+    기본적으로 message를 HTML escape한 뒤 전송합니다.
+    이미 호출자가 escape를 처리한 경우 pre_escaped=True를 전달하세요.
+    """
     resolved_chat_id = chat_id or settings.telegram_chat_id
     if not settings.telegram_bot_token or not resolved_chat_id:
         logger.debug("Telegram credentials not configured, skipping alert")
         return False
 
+    safe_message = message if pre_escaped else escape_html(message)
     url = TELEGRAM_API_URL.format(token=settings.telegram_bot_token)
     payload = {
         "chat_id": resolved_chat_id,
-        "text": message,
+        "text": safe_message,
         "parse_mode": "HTML",
     }
 
@@ -74,4 +89,4 @@ async def send_security_alert(
         ip=escape(ip),
         device=escape(device),
     )
-    return await send_telegram_message(message)
+    return await send_telegram_message(message, pre_escaped=True)

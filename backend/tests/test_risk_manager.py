@@ -55,6 +55,49 @@ class TestCheckCanBuy:
         )
         assert result.allowed is True
 
+    def test_blocked_by_max_order_amount(self):
+        rm = RiskManager(max_order_amount=Decimal("5000000"))
+        result = rm.check_can_buy(
+            portfolio_value=Decimal("100000000"),
+            order_amount=Decimal("6000000"),  # 6% < 20% but > 500만원
+            current_position_count=0,
+        )
+        assert result.allowed is False
+        assert "주문 금액" in result.reason
+
+    def test_allowed_within_max_order_amount(self):
+        rm = RiskManager(max_order_amount=Decimal("5000000"))
+        result = rm.check_can_buy(
+            portfolio_value=Decimal("100000000"),
+            order_amount=Decimal("4000000"),
+            current_position_count=0,
+        )
+        assert result.allowed is True
+
+    def test_max_order_amount_zero_means_unlimited(self):
+        rm = RiskManager(max_order_amount=Decimal("0"))
+        result = rm.check_can_buy(
+            portfolio_value=Decimal("100000000"),
+            order_amount=Decimal("50000000"),  # 50% > 20% → 비중으로 차단
+            current_position_count=0,
+        )
+        # 금액 한도는 통과하지만 비중 초과로 차단
+        assert result.allowed is False
+        assert "비중" in result.reason
+
+    def test_order_amount_equal_to_max_order_amount(self):
+        rm = RiskManager(max_order_amount=Decimal("5000000"))
+        result = rm.check_can_buy(
+            portfolio_value=Decimal("100000000"),
+            order_amount=Decimal("5000000"),  # exactly == max
+            current_position_count=0,
+        )
+        assert result.allowed is True
+
+    def test_negative_max_order_amount_raises(self):
+        with pytest.raises(ValueError, match="max_order_amount must be >= 0"):
+            RiskManager(max_order_amount=Decimal("-1"))
+
 
 class TestCheckStopLoss:
     def test_stop_loss_triggered(self):
@@ -173,11 +216,13 @@ class TestFromParams:
             "stop_loss_pct": "0.10",
             "daily_loss_limit": "500000",
             "max_positions": 5,
+            "max_order_amount": "10000000",
         })
         assert rm.max_position_pct == Decimal("0.30")
         assert rm.stop_loss_pct == Decimal("0.10")
         assert rm.daily_loss_limit == Decimal("500000")
         assert rm.max_positions == 5
+        assert rm.max_order_amount == Decimal("10000000")
 
     def test_default_params(self):
         rm = RiskManager.from_params({})
@@ -185,3 +230,4 @@ class TestFromParams:
         assert rm.stop_loss_pct == Decimal("0.05")
         assert rm.daily_loss_limit == Decimal("0")
         assert rm.max_positions == 10
+        assert rm.max_order_amount == Decimal("0")

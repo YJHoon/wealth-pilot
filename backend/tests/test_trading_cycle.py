@@ -53,3 +53,18 @@ class TestIsMarketHours:
         now = datetime(2024, 1, 2, 15, 30, tzinfo=KST)
         mock_dt.now.return_value = now
         assert _is_market_hours() is True
+
+    @patch("app.tasks.trading_cycle.datetime")
+    def test_korean_holiday_closed(self, mock_dt):
+        # 2026-03-01 삼일절 (일요일이 아닌 해의 삼일절)
+        # 2025-03-01은 토요일이므로 2024-03-01 금요일 사용
+        now = datetime(2024, 3, 1, 10, 0, tzinfo=KST)  # 삼일절, 금요일
+        mock_dt.now.return_value = now
+        assert _is_market_hours() is False
+
+    @patch("app.tasks.trading_cycle.datetime")
+    def test_non_holiday_weekday_open(self, mock_dt):
+        # 2024-04-15 월요일, 공휴일 아님
+        now = datetime(2024, 4, 15, 10, 0, tzinfo=KST)
+        mock_dt.now.return_value = now
+        assert _is_market_hours() is True

@@ -34,6 +34,7 @@ class RiskManager:
         max_positions: int = 10,
         kill_switch_pct: Decimal = Decimal("0"),
         max_daily_trades: int = 0,
+        max_order_amount: Decimal = Decimal("0"),
     ):
         self.max_position_pct = max_position_pct
         self.stop_loss_pct = stop_loss_pct
@@ -41,6 +42,9 @@ class RiskManager:
         self.max_positions = max_positions
         self.kill_switch_pct = kill_switch_pct
         self.max_daily_trades = max_daily_trades
+        if max_order_amount < 0:
+            raise ValueError("max_order_amount must be >= 0")
+        self.max_order_amount = max_order_amount
 
     @classmethod
     def from_params(cls, params: dict) -> RiskManager:
@@ -52,6 +56,7 @@ class RiskManager:
             max_positions=int(params.get("max_positions", 10)),
             kill_switch_pct=Decimal(str(params.get("kill_switch_pct", "0"))),
             max_daily_trades=max(0, int(params.get("max_daily_trades", 0))),
+            max_order_amount=Decimal(str(params.get("max_order_amount", "0"))),
         )
 
     def check_can_buy(
@@ -75,6 +80,13 @@ class RiskManager:
             return RiskCheck(
                 allowed=False,
                 reason=f"최대 보유 종목 수({self.max_positions})에 도달했습니다.",
+            )
+
+        # 최대 주문 금액 절대 한도 체크
+        if self.max_order_amount > 0 and order_amount > self.max_order_amount:
+            return RiskCheck(
+                allowed=False,
+                reason=f"주문 금액({order_amount:,.0f}원)이 최대 허용({self.max_order_amount:,.0f}원)을 초과합니다.",
             )
 
         # 단일 종목 비중 체크
