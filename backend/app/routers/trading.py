@@ -476,20 +476,23 @@ async def delete_strategy(
                 detail="미체결 주문이 있어 삭제할 수 없습니다. 체결 폴링 완료 후 재시도하세요.",
             )
 
-        # 인메모리 스케줄 제거 (있다면)
-        if strategy.is_scheduled:
-            try:
-                trading_scheduler.remove_schedule(user.id, strategy.id)
-            except Exception:
-                logger.warning(
-                    "Failed to remove in-memory schedule on delete: strategy=%s",
-                    strategy.id, exc_info=True,
-                )
-
+        # DB 커밋 성공 전에는 스케줄만 제거해두면 불일치 발생 →
+        # trading_cycle 킬 스위치와 동일하게 commit 이후로 지연.
+        had_schedule = strategy.is_scheduled
         await db.delete(strategy)
         await db.commit()
 
     await clear_account_lock(strategy.account_id)
+
+    # DB 커밋 성공 후 인메모리 스케줄 제거 (실패해도 DB 상태는 이미 보존)
+    if had_schedule:
+        try:
+            trading_scheduler.remove_schedule(user.id, strategy_id)
+        except Exception:
+            logger.warning(
+                "Failed to remove in-memory schedule after delete: strategy=%s",
+                strategy_id, exc_info=True,
+            )
 
     try:
         await log_access(db, user.id, AccessAction.TRADING_STRATEGY_DELETE, request)
@@ -549,6 +552,18 @@ async def liquidate_strategy(
 
     try:
         async with acquire_account_lock(account.id):
+            # 락 획득 전 사이에 다른 요청이 계좌 비활성화/전략 삭제를 했을 수 있으므로
+            # stale ORM 객체 대신 최신 상태를 재조회한다.
+            # (deactivate_trading_account 주석 및 _run_cycle 동일 패턴)
+            await db.refresh(account)
+            if not account.is_active:
+                raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+            refreshed_strategy = await db.get(TradingStrategy, strategy.id)
+            if refreshed_strategy is None or refreshed_strategy.user_id != user.id:
+                raise HTTPException(status_code=404, detail="전략을 찾을 수 없습니다.")
+            strategy = refreshed_strategy
+
             # 미체결 주문 체크
             open_count_result = await db.execute(
                 select(func.count()).select_from(TradingOrder).where(
