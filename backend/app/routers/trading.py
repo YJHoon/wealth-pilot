@@ -29,9 +29,11 @@ from app.models.trading import (
 )
 from app.models.user import User
 from app.schemas.trading import (
+    AccountDepositRequest,
     AccountRebalanceRequest,
     AdaptiveRuleResponse,
     AdaptiveRuleUpdate,
+    DepositAllocationMode,
     ScheduleStartRequest,
     ScheduleStatusResponse,
     TradingAccountCreate,
@@ -323,6 +325,146 @@ async def rebalance_account(
         logger.warning("TRADING_ACCOUNT_REBALANCE access logging failed", exc_info=True)
 
     return [strategy_to_response(s) for s in updated]
+
+
+@router.post(
+    "/accounts/{account_id}/deposit",
+    response_model=TradingAccountResponse,
+)
+@limiter.limit("100/minute")
+async def deposit_to_account(
+    account_id: UUID,
+    body: AccountDepositRequest,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """신규 입금 반영 + 전략 할당.
+
+    Phase 4:
+    - account.initial_capital += amount
+    - 할당 방식:
+        - manual: body.allocations의 합이 amount와 같아야 함
+        - pro_rata: 현재 전략 initial_capital 비율대로 자동 분배 (반올림 잔차는 마지막 전략이 흡수)
+        - reserve: 전략에 배분하지 않고 계좌 총액만 증액 (추후 rebalance로 분배)
+    - account_lock으로 사이클과 직렬화
+    """
+    account = await _get_user_account(db, account_id, user.id)
+    if not account.is_active:
+        raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+    amount = body.amount
+
+    try:
+        async with acquire_account_lock(account_id):
+            await db.refresh(account)
+            if not account.is_active:
+                raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+            # 계좌 활성 전략 조회
+            strat_result = await db.execute(
+                select(TradingStrategy).where(
+                    TradingStrategy.account_id == account_id,
+                    TradingStrategy.is_active.is_(True),
+                )
+            )
+            strategies = list(strat_result.scalars().all())
+
+            if body.mode == DepositAllocationMode.MANUAL:
+                if not body.allocations:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="manual 모드에서는 allocations가 필요합니다.",
+                    )
+                alloc_ids = [a.strategy_id for a in body.allocations]
+                if len(alloc_ids) != len(set(alloc_ids)):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="중복된 전략 ID가 포함되어 있습니다.",
+                    )
+                total_alloc = sum(
+                    (a.amount for a in body.allocations), Decimal("0"),
+                )
+                if total_alloc != amount:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"할당 합계와 입금액이 다릅니다: "
+                            f"합계 {total_alloc:,.0f}원 vs 입금 {amount:,.0f}원"
+                        ),
+                    )
+                strategy_map = {s.id: s for s in strategies}
+                missing = set(alloc_ids) - set(strategy_map.keys())
+                if missing:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "일부 전략을 찾을 수 없거나 계좌에 속하지 않습니다: "
+                            f"{', '.join(str(m) for m in missing)}"
+                        ),
+                    )
+                for alloc in body.allocations:
+                    s = strategy_map[alloc.strategy_id]
+                    new_cap = decrypt_decimal(s.initial_capital) + alloc.amount
+                    s.initial_capital = encrypt_decimal(new_cap)
+
+            elif body.mode == DepositAllocationMode.PRO_RATA:
+                if not strategies:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="활성 전략이 없어 pro_rata 분배가 불가합니다.",
+                    )
+                current_caps = [
+                    (s, decrypt_decimal(s.initial_capital)) for s in strategies
+                ]
+                total_cap = sum(
+                    (c for _, c in current_caps), Decimal("0"),
+                )
+                if total_cap <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "모든 전략의 할당 자본이 0이라 비율 분배가 불가합니다. "
+                            "manual 모드로 배분하거나 먼저 rebalance를 실행하세요."
+                        ),
+                    )
+                # 반올림 후 잔차는 마지막 전략이 흡수
+                accumulated = Decimal("0")
+                for idx, (s, cap) in enumerate(current_caps):
+                    if idx == len(current_caps) - 1:
+                        share = amount - accumulated
+                    else:
+                        share = (amount * cap / total_cap).quantize(Decimal("1"))
+                        accumulated += share
+                    s.initial_capital = encrypt_decimal(cap + share)
+
+            elif body.mode == DepositAllocationMode.RESERVE:
+                # 전략 변경 없음
+                pass
+
+            # 계좌 총액 증액
+            account.initial_capital = encrypt_decimal(
+                decrypt_decimal(account.initial_capital) + amount,
+            )
+            await db.commit()
+            await db.refresh(account)
+    finally:
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after deposit_to_account: account=%s",
+                account_id, exc_info=True,
+            )
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_DEPOSIT, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_DEPOSIT access logging failed", exc_info=True)
+
+    return account_to_response(account)
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

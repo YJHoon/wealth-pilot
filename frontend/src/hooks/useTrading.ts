@@ -23,6 +23,7 @@ import {
   type TradingStrategyCreateRequest,
   type TradingStrategyUpdateRequest,
   type AccountRebalanceRequest,
+  type AccountDepositRequest,
   type OrderSide,
   type OrderStatus,
   toTradingAccount,
@@ -77,6 +78,10 @@ export interface UseTradingReturn {
     id: string,
     data: AccountRebalanceRequest,
   ) => Promise<TradingStrategy[]>;
+  depositToAccount: (
+    id: string,
+    data: AccountDepositRequest,
+  ) => Promise<TradingAccount>;
   deactivateAccount: (id: string) => Promise<void>;
   // Strategy mutations
   createStrategy: (data: TradingStrategyCreateRequest) => Promise<TradingStrategy>;
@@ -301,6 +306,27 @@ export function useTrading(): UseTradingReturn {
     [canFetch, fetchOpts, fetchStrategies],
   );
 
+  const depositToAccount = useCallback(
+    async (
+      id: string,
+      data: AccountDepositRequest,
+    ): Promise<TradingAccount> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      const res = await apiFetch<TradingAccountApi>(
+        `/api/trading/accounts/${id}/deposit`,
+        {
+          method: "POST",
+          body: JSON.stringify(data),
+          ...fetchOpts,
+        },
+      );
+      await fetchAccounts();
+      await fetchStrategies();
+      return toTradingAccount(res);
+    },
+    [canFetch, fetchOpts, fetchAccounts, fetchStrategies],
+  );
+
   // ── Schedule ──
 
   const startSchedule = useCallback(
@@ -482,6 +508,7 @@ export function useTrading(): UseTradingReturn {
     createAccount,
     updateAccount,
     rebalanceAccount,
+    depositToAccount,
     deactivateAccount,
     createStrategy,
     updateStrategy,

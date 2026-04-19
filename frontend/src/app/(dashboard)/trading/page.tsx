@@ -14,7 +14,9 @@ import {
 import { useTrading } from "@/hooks/useTrading";
 import { StrategyFormDialog } from "@/components/trading/StrategyFormDialog";
 import { RebalanceDialog } from "@/components/trading/RebalanceDialog";
+import { DepositDialog } from "@/components/trading/DepositDialog";
 import type {
+  AccountDepositRequest,
   AccountRebalanceRequest,
   TradingStrategyCreateRequest,
   TradingStrategyUpdateRequest,
@@ -22,7 +24,16 @@ import type {
 } from "@/types/trading";
 import { tradingModeLabels, strategyTypeLabels } from "@/types/trading";
 import Link from "next/link";
-import { Bot, Pencil, Play, Plus, Scale, Square, Zap } from "lucide-react";
+import {
+  Banknote,
+  Bot,
+  Pencil,
+  Play,
+  Plus,
+  Scale,
+  Square,
+  Zap,
+} from "lucide-react";
 
 export default function TradingPage() {
   const trading = useTrading();
@@ -31,6 +42,8 @@ export default function TradingPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
   const [isRebalancing, setIsRebalancing] = useState(false);
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [isDepositing, setIsDepositing] = useState(false);
 
   // ── Strategy handlers ──
 
@@ -146,6 +159,23 @@ export default function TradingPage() {
     [trading],
   );
 
+  const handleDeposit = useCallback(
+    async (data: AccountDepositRequest) => {
+      if (!trading.selectedAccountId) return;
+      setIsDepositing(true);
+      try {
+        await trading.depositToAccount(trading.selectedAccountId, data);
+        toast.success("입금을 반영했습니다.");
+        setDepositOpen(false);
+      } catch {
+        toast.error("입금 반영에 실패했습니다.");
+      } finally {
+        setIsDepositing(false);
+      }
+    },
+    [trading],
+  );
+
   const selectedAccount = trading.accounts.find((a) => a.id === trading.selectedAccountId);
   const accountStrategies = trading.strategies.filter(
     (s) => s.accountId === trading.selectedAccountId,
@@ -177,6 +207,16 @@ export default function TradingPage() {
                 ))}
               </SelectContent>
             </Select>
+          )}
+          {selectedAccount && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDepositOpen(true)}
+            >
+              <Banknote className="size-3.5 mr-1" />
+              입금 반영
+            </Button>
           )}
           {selectedAccount && accountStrategies.length > 0 && (
             <Button
@@ -359,6 +399,18 @@ export default function TradingPage() {
           strategies={accountStrategies}
           onSubmit={handleRebalance}
           isSubmitting={isRebalancing}
+        />
+      )}
+
+      {/* 입금 다이얼로그 */}
+      {selectedAccount && (
+        <DepositDialog
+          open={depositOpen}
+          onOpenChange={setDepositOpen}
+          account={selectedAccount}
+          strategies={accountStrategies}
+          onSubmit={handleDeposit}
+          isSubmitting={isDepositing}
         />
       )}
     </div>

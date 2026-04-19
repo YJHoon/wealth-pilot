@@ -280,6 +280,19 @@ export interface AccountRebalanceRequest {
   allocations: RebalanceAllocationItem[];
 }
 
+export type DepositAllocationMode = "manual" | "pro_rata" | "reserve";
+
+export interface DepositAllocationItem {
+  strategy_id: string;
+  amount: number;
+}
+
+export interface AccountDepositRequest {
+  amount: number;
+  mode: DepositAllocationMode;
+  allocations?: DepositAllocationItem[];
+}
+
 // ── 변환 함수 ──
 
 export function toTradingAccount(api: TradingAccountApi): TradingAccount {

@@ -41,6 +41,7 @@ class AccessAction:
     TRADING_ACCOUNT_DELETE = "trading_account_delete"
     TRADING_ACCOUNT_UPDATE = "trading_account_update"
     TRADING_ACCOUNT_REBALANCE = "trading_account_rebalance"
+    TRADING_ACCOUNT_DEPOSIT = "trading_account_deposit"
     TRADING_BALANCE_INQUIRY = "trading_balance_inquiry"
     TRADING_SCHEDULE_START = "trading_schedule_start"
     TRADING_SCHEDULE_STOP = "trading_schedule_stop"

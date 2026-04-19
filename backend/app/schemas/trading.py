@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -67,6 +68,27 @@ class RebalanceAllocationItem(BaseModel):
 class AccountRebalanceRequest(BaseModel):
     """계좌 내 활성 전략들의 initial_capital 일괄 재배분."""
     allocations: list[RebalanceAllocationItem]
+
+
+class DepositAllocationMode(str, Enum):
+    """입금 할당 방식."""
+    MANUAL = "manual"       # 사용자가 전략별 금액을 직접 지정
+    PRO_RATA = "pro_rata"   # 기존 전략 initial_capital 비율대로 자동 분배
+    RESERVE = "reserve"     # 계좌 총액만 증액, 전략에는 배분하지 않음
+
+
+class DepositAllocationItem(BaseModel):
+    """수동 입금 분배: 전략별 추가 금액."""
+    strategy_id: UUID
+    amount: Decimal = Field(ge=Decimal("0"))
+
+
+class AccountDepositRequest(BaseModel):
+    """계좌 신규 입금 반영 + 전략 할당."""
+    amount: Decimal = Field(gt=Decimal("0"))
+    mode: DepositAllocationMode
+    # mode=manual일 때만 사용
+    allocations: list[DepositAllocationItem] | None = None
 
 
 def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:

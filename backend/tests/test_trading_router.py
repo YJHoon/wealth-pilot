@@ -325,6 +325,161 @@ class TestRebalanceEndpoint:
 
 
 @pytest.mark.asyncio
+class TestDepositEndpoint:
+    async def test_deposit_manual_success(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s1 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S1",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("3000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        s2 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S2",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("2000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add_all([s1, s2])
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={
+                "amount": "1000000",
+                "mode": "manual",
+                "allocations": [
+                    {"strategy_id": str(s1.id), "amount": "700000"},
+                    {"strategy_id": str(s2.id), "amount": "300000"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        # 계좌 총액 11,000,000으로 증액
+        assert Decimal(resp.json()["initial_capital"]) == Decimal("11000000")
+
+    async def test_deposit_manual_sum_mismatch_rejected(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={
+                "amount": "1000000",
+                "mode": "manual",
+                "allocations": [
+                    {"strategy_id": str(s.id), "amount": "500000"},
+                ],
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_deposit_pro_rata_distributes_by_ratio(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        # 3:2 비율 → 입금 1,000,000을 600,000 / 400,000로 분배
+        s1 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="P1",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("3000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        s2 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="P2",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("2000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add_all([s1, s2])
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={"amount": "1000000", "mode": "pro_rata"},
+        )
+        assert resp.status_code == 200
+
+        list_resp = await auth_client.get("/api/trading/strategies")
+        assert list_resp.status_code == 200
+        data = {row["id"]: Decimal(row["initial_capital"]) for row in list_resp.json()}
+        assert data[str(s1.id)] == Decimal("3600000")
+        assert data[str(s2.id)] == Decimal("2400000")
+
+    async def test_deposit_pro_rata_all_zero_rejected(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="Z",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={"amount": "1000000", "mode": "pro_rata"},
+        )
+        assert resp.status_code == 400
+
+    async def test_deposit_reserve_bumps_account_only(
+        self,
+        auth_client: AsyncClient,
+        trading_account: TradingAccount,
+    ):
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={"amount": "500000", "mode": "reserve"},
+        )
+        assert resp.status_code == 200
+        assert Decimal(resp.json()["initial_capital"]) == Decimal("10500000")
+
+    async def test_deposit_zero_amount_rejected(
+        self,
+        auth_client: AsyncClient,
+        trading_account: TradingAccount,
+    ):
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={"amount": "0", "mode": "reserve"},
+        )
+        # Pydantic gt=0 검증 실패
+        assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 class TestStrategyEndpoints:
     async def test_create_strategy(
         self, auth_client: AsyncClient, trading_account: TradingAccount,
