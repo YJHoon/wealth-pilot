@@ -179,6 +179,12 @@ class TradingStrategy(Base):
     )
     killed_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Phase 4: 전략 처리 우선순위 (높을수록 우선).
+    # 같은 종목 반대 방향 주문 네팅·충돌 해결 시 tiebreaker로 사용.
+    priority: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )

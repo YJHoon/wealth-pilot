@@ -31,6 +31,7 @@ export interface TradingStrategyApi {
   is_scheduled: boolean;
   market_hours_only: boolean;
   is_active: boolean;
+  priority: number;
   created_at: string;
   updated_at: string;
 }
@@ -124,6 +125,7 @@ export interface TradingStrategy {
   isScheduled: boolean;
   marketHoursOnly: boolean;
   isActive: boolean;
+  priority: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -248,6 +250,7 @@ export interface TradingStrategyCreateRequest {
   params_json: Record<string, number>;
   interval_minutes: number;
   market_hours_only: boolean;
+  priority?: number;
 }
 
 export interface TradingStrategyUpdateRequest {
@@ -255,6 +258,7 @@ export interface TradingStrategyUpdateRequest {
   params_json?: Record<string, number>;
   interval_minutes?: number;
   market_hours_only?: boolean;
+  priority?: number;
 }
 
 // ── 변환 함수 ──
@@ -284,6 +288,7 @@ export function toTradingStrategy(api: TradingStrategyApi): TradingStrategy {
     isScheduled: api.is_scheduled,
     marketHoursOnly: api.market_hours_only,
     isActive: api.is_active,
+    priority: api.priority ?? 0,
     createdAt: api.created_at,
     updatedAt: api.updated_at,
   };

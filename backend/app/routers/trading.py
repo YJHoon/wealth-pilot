@@ -325,6 +325,7 @@ async def create_strategy(
         market_hours_only=body.market_hours_only,
         initial_capital=encrypt_decimal(body.initial_capital),
         realized_pnl=encrypt_decimal(Decimal("0")),
+        priority=body.priority,
     )
     db.add(strategy)
     await db.commit()
@@ -350,7 +351,10 @@ async def list_strategies(
         select(TradingStrategy).where(
             TradingStrategy.user_id == user.id,
             TradingStrategy.is_active.is_(True),
-        ).order_by(TradingStrategy.created_at.desc())
+        ).order_by(
+            TradingStrategy.priority.desc(),
+            TradingStrategy.created_at.asc(),
+        )
     )
     return [strategy_to_response(s) for s in result.scalars().all()]
 

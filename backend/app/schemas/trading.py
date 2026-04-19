@@ -89,6 +89,8 @@ class TradingStrategyCreate(BaseModel):
     market_hours_only: bool = True
     # Phase 2: 전략별 초기 할당 자본 (필수). 0이면 매수 불가.
     initial_capital: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
+    # Phase 4: 처리 우선순위 (높을수록 우선). 0~100.
+    priority: int = Field(default=0, ge=0, le=100)
 
 
 class TradingStrategyUpdate(BaseModel):
@@ -98,6 +100,7 @@ class TradingStrategyUpdate(BaseModel):
     interval_minutes: int | None = Field(default=None, ge=1, le=60)
     market_hours_only: bool | None = None
     initial_capital: Decimal | None = Field(default=None, ge=Decimal("0"))
+    priority: int | None = Field(default=None, ge=0, le=100)
 
 
 class TradingStrategyResponse(BaseModel):
@@ -113,6 +116,7 @@ class TradingStrategyResponse(BaseModel):
     is_active: bool
     initial_capital: Decimal
     realized_pnl: Decimal
+    priority: int
     created_at: datetime
     updated_at: datetime
 
@@ -132,6 +136,7 @@ def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyRespo
         is_active=strategy.is_active,
         initial_capital=get_initial_capital(strategy),
         realized_pnl=get_realized_pnl(strategy),
+        priority=strategy.priority,
         created_at=strategy.created_at,
         updated_at=strategy.updated_at,
     )
