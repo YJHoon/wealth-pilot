@@ -105,10 +105,16 @@ async def _persist_kis_token(
     account: TradingAccount,
     kis: KISClient,
 ) -> None:
-    """KIS 호출 후 갱신된 토큰을 DB에 저장.
+    """KIS 호출 후 갱신된 토큰을 DB에 반영.
 
-    토큰이 없거나 기존 DB 값과 동일하면 no-op. commit은 호출자 책임이 아니라
-    이 함수 내부에서 수행한다 (락 내부에서 호출되어야 직렬화 보장).
+    토큰이 없거나 기존 DB 값과 동일하면 no-op.
+
+    주의:
+    - 이 함수는 **commit하지 않는다**. 호출 시점에 세션이 깨끗한 상태(다른 dirty
+      객체가 없는 상태)여야 하며, 호출자가 명시적으로 ``await db.commit()``을
+      수행해야 한다. 세션에 다른 변경이 섞여 있으면 의도치 않은 부분 커밋이
+      발생할 수 있기 때문이다.
+    - 락 내부에서 호출되어야 동시 호출 간 직렬화가 보장된다.
     """
     new_token = kis.access_token
     if not new_token:
@@ -118,7 +124,7 @@ async def _persist_kis_token(
         return
     account.access_token = encrypt_value(new_token)
     account.token_expires_at = kis.token_expires_at
-    await db.commit()
+    await db.flush()
 
 
 # ──────────────────────────────────────────────
@@ -649,6 +655,7 @@ async def get_account_balance(
             except KISClientError as e:
                 raise HTTPException(status_code=502, detail=str(e)) from None
             await _persist_kis_token(db, account, kis)
+            await db.commit()
             return balance
     finally:
         try:
@@ -1116,9 +1123,11 @@ async def liquidate_strategy(
                         "reason": f"내부 오류: {e!s}",
                     })
 
-            # 청산 루프 중 갱신된 KIS 토큰을 락 내부에서 영속화
+            # 청산 루프 중 갱신된 KIS 토큰을 락 내부에서 영속화.
+            # 루프 내 각 주문은 이미 개별 commit되므로 이 시점 세션은 clean.
             try:
                 await _persist_kis_token(db, account, kis)
+                await db.commit()
             except SQLAlchemyError:
                 logger.warning(
                     "liquidate: KIS token persist failed", exc_info=True,
@@ -1455,8 +1464,9 @@ async def approve_decision(
 
     order = None
     kis: KISClient | None = None
+    account_id = account.id
     try:
-      async with acquire_account_lock(account.id):
+      async with acquire_account_lock(account_id):
         # ── 락 내부 상태 재검증 (TOCTOU 방지) ──
         await db.refresh(decision)
         await db.refresh(strategy)
@@ -1733,9 +1743,11 @@ async def approve_decision(
         decision.order_id = order.id
         await db.commit()
 
-        # 승인 과정에서 갱신된 KIS 토큰을 락 내부에서 영속화
+        # 승인 과정에서 갱신된 KIS 토큰을 락 내부에서 영속화.
+        # 바로 위에서 decision.approval_status='approved' 커밋을 마친 상태.
         try:
             await _persist_kis_token(db, account, kis)
+            await db.commit()
         except SQLAlchemyError:
             logger.warning(
                 "approve_decision: KIS token persist failed", exc_info=True,
@@ -1750,6 +1762,15 @@ async def approve_decision(
         await db.commit()
         raise HTTPException(status_code=502, detail=str(e)) from None
     finally:
+        # 다른 엔드포인트와 동일하게 레지스트리에서 계좌 락 항목을 정리한다
+        # (refcount=0 + unlocked일 때만 제거되므로 진행 중인 호출은 보호됨).
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after approve_decision: account=%s",
+                account_id, exc_info=True,
+            )
         if kis is not None:
             await kis.close()
 

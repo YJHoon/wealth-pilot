@@ -93,12 +93,15 @@ class AccountDepositRequest(BaseModel):
     @model_validator(mode="after")
     def _check_mode_consistency(self) -> "AccountDepositRequest":
         if self.mode == DepositAllocationMode.MANUAL:
-            if not self.allocations:
+            # MANUAL은 반드시 비어있지 않은 allocations를 요구
+            if self.allocations is None or len(self.allocations) == 0:
                 raise ValueError(
                     "manual 모드에서는 allocations가 비어있을 수 없습니다.",
                 )
         elif self.mode in (DepositAllocationMode.PRO_RATA, DepositAllocationMode.RESERVE):
-            if self.allocations:
+            # PRO_RATA/RESERVE는 allocations 필드 자체를 지정해서는 안 됨
+            # (빈 리스트 []도 부적절한 입력으로 취급)
+            if self.allocations is not None:
                 raise ValueError(
                     f"{self.mode.value} 모드에서는 allocations를 지정할 수 없습니다.",
                 )
