@@ -479,10 +479,13 @@ async def delete_strategy(
         # DB 커밋 성공 전에는 스케줄만 제거해두면 불일치 발생 →
         # trading_cycle 킬 스위치와 동일하게 commit 이후로 지연.
         had_schedule = strategy.is_scheduled
+        # delete/commit 이후에는 ORM 속성 접근이 ObjectDeletedError/
+        # DetachedInstanceError를 낼 수 있으므로 account_id를 미리 스냅샷.
+        account_id = strategy.account_id
         await db.delete(strategy)
         await db.commit()
 
-    await clear_account_lock(strategy.account_id)
+    await clear_account_lock(account_id)
 
     # DB 커밋 성공 후 인메모리 스케줄 제거 (실패해도 DB 상태는 이미 보존)
     if had_schedule:
@@ -619,32 +622,68 @@ async def liquidate_strategy(
                     pre_apply_qty=encrypt_decimal(pre_qty_snap),
                     pre_apply_avg_buy_price=encrypt_decimal(pre_avg_snap),
                 )
-                db.add(order)
-                await db.flush()
-
+                # 매 주문마다 즉시 commit — KIS로 전송된 주문이 DB에 기록되지
+                # 않는 상황을 방지하고, 예기치 않은 예외가 루프 전체를 중단시키는
+                # 것도 막는다.
                 try:
-                    order_result = await kis.place_order(
-                        side="sell",
-                        ticker=pos.ticker,
-                        quantity=qty,
-                        order_type="market",
-                    )
-                    order.status = OrderStatus.SUBMITTED
-                    order.kis_order_id = order_result.get("order_id")
+                    db.add(order)
+                    await db.flush()
+                    try:
+                        order_result = await kis.place_order(
+                            side="sell",
+                            ticker=pos.ticker,
+                            quantity=qty,
+                            order_type="market",
+                        )
+                        order.status = OrderStatus.SUBMITTED
+                        order.kis_order_id = order_result.get("order_id")
 
-                    # eager apply: trading_cycle과 동일하게 즉시 포지션 반영
-                    realized_delta = await apply_sell_fill(
-                        db, strategy, pos.ticker, Decimal(qty), current_price,
+                        # apply_sell_fill/add_realized_pnl 예외는 KIS 주문
+                        # 전송 이후이므로 SUBMITTED 상태는 반드시 보존한다
+                        # (trading_cycle 손절 루프와 동일 패턴).
+                        try:
+                            realized_delta = await apply_sell_fill(
+                                db, strategy, pos.ticker, Decimal(qty), current_price,
+                            )
+                            add_realized_pnl(strategy, realized_delta)
+                            orders_created.append(order.id)
+                        except Exception as fill_err:
+                            logger.critical(
+                                "Liquidation fill apply failed (order persisted): "
+                                "kis_order_id=%s ticker=%s qty=%d err=%s",
+                                order.kis_order_id, pos.ticker, qty, fill_err,
+                            )
+                            orders_rejected.append({
+                                "ticker": pos.ticker,
+                                "reason": (
+                                    f"KIS 주문 전송됨/포지션 갱신 실패: "
+                                    f"kis_order_id={order.kis_order_id} / {fill_err}"
+                                ),
+                            })
+                    except KISClientError as e:
+                        order.status = OrderStatus.REJECTED
+                        order.error_message = str(e)
+                        logger.error("Liquidation sell failed for %s: %s", pos.ticker, e)
+                        orders_rejected.append({"ticker": pos.ticker, "reason": str(e)})
+                    await db.commit()
+                except Exception as e:
+                    # place_order 이전 flush 실패, 또는 commit 자체가 실패한 경우.
+                    # 주문 상태를 더 이상 안정적으로 보존할 수 없으므로 롤백 후
+                    # 다음 종목으로 진행한다.
+                    logger.exception(
+                        "Unexpected liquidation error for %s", pos.ticker,
                     )
-                    add_realized_pnl(strategy, realized_delta)
-                    orders_created.append(order.id)
-                except KISClientError as e:
-                    order.status = OrderStatus.REJECTED
-                    order.error_message = str(e)
-                    logger.error("Liquidation sell failed for %s: %s", pos.ticker, e)
-                    orders_rejected.append({"ticker": pos.ticker, "reason": str(e)})
-
-            await db.commit()
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        logger.warning(
+                            "Rollback failed after liquidation error",
+                            exc_info=True,
+                        )
+                    orders_rejected.append({
+                        "ticker": pos.ticker,
+                        "reason": f"내부 오류: {e!s}",
+                    })
 
         await clear_account_lock(account.id)
     finally:
