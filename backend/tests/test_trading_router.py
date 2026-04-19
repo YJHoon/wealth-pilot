@@ -142,6 +142,189 @@ class TestAccountEndpoints:
 
 
 @pytest.mark.asyncio
+class TestRebalanceEndpoint:
+    async def test_rebalance_success(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        # 활성 전략 2개 생성
+        s1 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S1",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("3000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        s2 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S2",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("2000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add_all([s1, s2])
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    {"strategy_id": str(s1.id), "initial_capital": "4000000"},
+                    {"strategy_id": str(s2.id), "initial_capital": "1000000"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        caps = {row["id"]: Decimal(row["initial_capital"]) for row in data}
+        assert caps[str(s1.id)] == Decimal("4000000")
+        assert caps[str(s2.id)] == Decimal("1000000")
+
+    async def test_rebalance_exceeds_account_total(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    # 계좌 총 자본은 10,000,000 — 초과
+                    {"strategy_id": str(s.id), "initial_capital": "20000000"},
+                ],
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_rebalance_foreign_strategy_rejected(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        # 다른 계좌 소속 전략 ID로 시도
+        other_account = TradingAccount(
+            user_id=mock_user.id,
+            mode=TradingMode.LIVE,
+            initial_capital=encrypt_decimal(Decimal("5000000")),
+        )
+        db_session.add(other_account)
+        await db_session.commit()
+        await db_session.refresh(other_account)
+
+        foreign = TradingStrategy(
+            user_id=mock_user.id, account_id=other_account.id, name="Foreign",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(foreign)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    {"strategy_id": str(foreign.id), "initial_capital": "100000"},
+                ],
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_rebalance_empty_allocations_rejected(
+        self,
+        auth_client: AsyncClient,
+        trading_account: TradingAccount,
+    ):
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={"allocations": []},
+        )
+        assert resp.status_code == 400
+
+    async def test_rebalance_duplicate_strategy_id_rejected(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="Sdup",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    {"strategy_id": str(s.id), "initial_capital": "100000"},
+                    {"strategy_id": str(s.id), "initial_capital": "200000"},
+                ],
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_rebalance_preserves_realized_pnl(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        from app.services.crypto_service import decrypt_decimal
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="Sp",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("1000000")),
+            realized_pnl=encrypt_decimal(Decimal("500000")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+        sid = s.id
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    {"strategy_id": str(sid), "initial_capital": "2000000"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+
+        # 응답으로 검증 (세션 expire_all은 fixture teardown과 충돌)
+        rows = resp.json()
+        row = next(r for r in rows if r["id"] == str(sid))
+        assert Decimal(row["initial_capital"]) == Decimal("2000000")
+        assert Decimal(row["realized_pnl"]) == Decimal("500000")
+
+
+@pytest.mark.asyncio
 class TestStrategyEndpoints:
     async def test_create_strategy(
         self, auth_client: AsyncClient, trading_account: TradingAccount,

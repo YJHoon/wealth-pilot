@@ -58,6 +58,17 @@ class TradingAccountUpdate(BaseModel):
     allow_netting: bool | None = None
 
 
+class RebalanceAllocationItem(BaseModel):
+    """리밸런싱: 전략별 신규 initial_capital."""
+    strategy_id: UUID
+    initial_capital: Decimal = Field(ge=Decimal("0"))
+
+
+class AccountRebalanceRequest(BaseModel):
+    """계좌 내 활성 전략들의 initial_capital 일괄 재배분."""
+    allocations: list[RebalanceAllocationItem]
+
+
 def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:
     return TradingAccountResponse(
         id=account.id,

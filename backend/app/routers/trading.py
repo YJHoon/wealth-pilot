@@ -29,6 +29,7 @@ from app.models.trading import (
 )
 from app.models.user import User
 from app.schemas.trading import (
+    AccountRebalanceRequest,
     AdaptiveRuleResponse,
     AdaptiveRuleUpdate,
     ScheduleStartRequest,
@@ -221,6 +222,107 @@ async def update_trading_account(
         logger.warning("TRADING_ACCOUNT_UPDATE access logging failed", exc_info=True)
 
     return account_to_response(account)
+
+
+@router.post(
+    "/accounts/{account_id}/rebalance",
+    response_model=list[TradingStrategyResponse],
+)
+@limiter.limit("100/minute")
+async def rebalance_account(
+    account_id: UUID,
+    body: AccountRebalanceRequest,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """계좌 내 활성 전략들의 initial_capital 일괄 재배분.
+
+    Phase 4: 수동 리밸런싱.
+    - realized_pnl은 보존 (과거 성과 유지)
+    - 합계가 계좌 총 자본 이하여야 함
+    - account_lock 내에서 직렬화 — 사이클 실행과 경합 방지
+    """
+    account = await _get_user_account(db, account_id, user.id)
+    if not account.is_active:
+        raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+    if not body.allocations:
+        raise HTTPException(status_code=400, detail="할당 내역이 비어있습니다.")
+
+    # 중복 strategy_id 금지
+    alloc_ids = [a.strategy_id for a in body.allocations]
+    if len(alloc_ids) != len(set(alloc_ids)):
+        raise HTTPException(status_code=400, detail="중복된 전략 ID가 포함되어 있습니다.")
+
+    account_total = decrypt_decimal(account.initial_capital)
+    total_allocated = sum((a.initial_capital for a in body.allocations), Decimal("0"))
+    if total_allocated > account_total:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"할당 합계 초과: {total_allocated:,.0f}원 > "
+                f"계좌 총 자본 {account_total:,.0f}원"
+            ),
+        )
+
+    try:
+        async with acquire_account_lock(account_id):
+            # 락 내 재검증
+            await db.refresh(account)
+            if not account.is_active:
+                raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+            # 대상 전략 조회 (해당 계좌 소속 + 활성)
+            result = await db.execute(
+                select(TradingStrategy).where(
+                    TradingStrategy.account_id == account_id,
+                    TradingStrategy.id.in_(alloc_ids),
+                    TradingStrategy.is_active.is_(True),
+                )
+            )
+            strategies = {s.id: s for s in result.scalars().all()}
+
+            # 요청된 모든 전략이 조회되어야 함
+            missing = set(alloc_ids) - set(strategies.keys())
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "일부 전략을 찾을 수 없거나 계좌에 속하지 않습니다: "
+                        f"{', '.join(str(m) for m in missing)}"
+                    ),
+                )
+
+            # initial_capital만 갱신 (realized_pnl 보존)
+            for alloc in body.allocations:
+                strategy = strategies[alloc.strategy_id]
+                strategy.initial_capital = encrypt_decimal(alloc.initial_capital)
+
+            await db.commit()
+
+            # refresh for response
+            for s in strategies.values():
+                await db.refresh(s)
+
+            updated = [strategies[aid] for aid in alloc_ids]
+    finally:
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after rebalance_account: account=%s",
+                account_id, exc_info=True,
+            )
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_REBALANCE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_REBALANCE access logging failed", exc_info=True)
+
+    return [strategy_to_response(s) for s in updated]
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -13,20 +13,24 @@ import {
 } from "@/components/ui/select";
 import { useTrading } from "@/hooks/useTrading";
 import { StrategyFormDialog } from "@/components/trading/StrategyFormDialog";
+import { RebalanceDialog } from "@/components/trading/RebalanceDialog";
 import type {
+  AccountRebalanceRequest,
   TradingStrategyCreateRequest,
   TradingStrategyUpdateRequest,
   TradingStrategy,
 } from "@/types/trading";
 import { tradingModeLabels, strategyTypeLabels } from "@/types/trading";
 import Link from "next/link";
-import { Bot, Pencil, Play, Plus, Square, Zap } from "lucide-react";
+import { Bot, Pencil, Play, Plus, Scale, Square, Zap } from "lucide-react";
 
 export default function TradingPage() {
   const trading = useTrading();
   const [strategyFormOpen, setStrategyFormOpen] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState<TradingStrategy | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [rebalanceOpen, setRebalanceOpen] = useState(false);
+  const [isRebalancing, setIsRebalancing] = useState(false);
 
   // ── Strategy handlers ──
 
@@ -125,6 +129,23 @@ export default function TradingPage() {
     [trading],
   );
 
+  const handleRebalance = useCallback(
+    async (data: AccountRebalanceRequest) => {
+      if (!trading.selectedAccountId) return;
+      setIsRebalancing(true);
+      try {
+        await trading.rebalanceAccount(trading.selectedAccountId, data);
+        toast.success("전략 자본을 재배분했습니다.");
+        setRebalanceOpen(false);
+      } catch {
+        toast.error("재배분에 실패했습니다.");
+      } finally {
+        setIsRebalancing(false);
+      }
+    },
+    [trading],
+  );
+
   const selectedAccount = trading.accounts.find((a) => a.id === trading.selectedAccountId);
   const accountStrategies = trading.strategies.filter(
     (s) => s.accountId === trading.selectedAccountId,
@@ -156,6 +177,16 @@ export default function TradingPage() {
                 ))}
               </SelectContent>
             </Select>
+          )}
+          {selectedAccount && accountStrategies.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRebalanceOpen(true)}
+            >
+              <Scale className="size-3.5 mr-1" />
+              재배분
+            </Button>
           )}
           {selectedAccount && (
             <Button size="sm" onClick={handleAddStrategy}>
@@ -316,6 +347,18 @@ export default function TradingPage() {
           onSubmitCreate={handleCreateStrategy}
           onSubmitUpdate={handleUpdateStrategy}
           isSubmitting={isSubmitting}
+        />
+      )}
+
+      {/* 재배분 다이얼로그 */}
+      {selectedAccount && (
+        <RebalanceDialog
+          open={rebalanceOpen}
+          onOpenChange={setRebalanceOpen}
+          account={selectedAccount}
+          strategies={accountStrategies}
+          onSubmit={handleRebalance}
+          isSubmitting={isRebalancing}
         />
       )}
     </div>

@@ -32,6 +32,8 @@ export interface TradingStrategyApi {
   is_scheduled: boolean;
   market_hours_only: boolean;
   is_active: boolean;
+  initial_capital: number;
+  realized_pnl: number;
   priority: number;
   created_at: string;
   updated_at: string;
@@ -127,6 +129,8 @@ export interface TradingStrategy {
   isScheduled: boolean;
   marketHoursOnly: boolean;
   isActive: boolean;
+  initialCapital: number;
+  realizedPnl: number;
   priority: number;
   createdAt: string;
   updatedAt: string;
@@ -267,6 +271,15 @@ export interface TradingStrategyUpdateRequest {
   priority?: number;
 }
 
+export interface RebalanceAllocationItem {
+  strategy_id: string;
+  initial_capital: number;
+}
+
+export interface AccountRebalanceRequest {
+  allocations: RebalanceAllocationItem[];
+}
+
 // ── 변환 함수 ──
 
 export function toTradingAccount(api: TradingAccountApi): TradingAccount {
@@ -295,6 +308,8 @@ export function toTradingStrategy(api: TradingStrategyApi): TradingStrategy {
     isScheduled: api.is_scheduled,
     marketHoursOnly: api.market_hours_only,
     isActive: api.is_active,
+    initialCapital: api.initial_capital ?? 0,
+    realizedPnl: api.realized_pnl ?? 0,
     priority: api.priority ?? 0,
     createdAt: api.created_at,
     updatedAt: api.updated_at,
