@@ -441,51 +441,61 @@ async def delete_strategy(
     """
     strategy = await _get_user_strategy(db, strategy_id, user.id, include_inactive=True)
 
-    # 사이클 동시 실행 방지: account_lock 안에서 사전 체크 + 삭제
-    async with acquire_account_lock(strategy.account_id):
-        # 보유 포지션 체크
-        pos_count_result = await db.execute(
-            select(func.count()).select_from(TradingPosition).where(
-                TradingPosition.strategy_id == strategy.id,
-            )
-        )
-        if (pos_count_result.scalar() or 0) > 0:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "보유 포지션이 있어 삭제할 수 없습니다. "
-                    "POST /api/trading/strategies/{id}/liquidate 호출로 청산한 뒤 "
-                    "체결 폴링이 완료되면 다시 시도하세요."
-                ),
-            )
+    # 409/DB 예외 경로에서도 락 레지스트리가 정리되도록 사전 스냅샷.
+    # delete/commit 이후 ORM 속성 접근이 ObjectDeletedError/
+    # DetachedInstanceError를 낼 수 있는 점도 함께 방지한다.
+    account_id = strategy.account_id
+    had_schedule = False
 
-        # 미체결(PENDING/SUBMITTED/PARTIAL) 주문 체크
-        open_count_result = await db.execute(
-            select(func.count()).select_from(TradingOrder).where(
-                TradingOrder.strategy_id == strategy.id,
-                TradingOrder.status.in_([
-                    OrderStatus.PENDING,
-                    OrderStatus.SUBMITTED,
-                    OrderStatus.PARTIAL,
-                ]),
+    try:
+        # 사이클 동시 실행 방지: account_lock 안에서 사전 체크 + 삭제
+        async with acquire_account_lock(account_id):
+            # 보유 포지션 체크
+            pos_count_result = await db.execute(
+                select(func.count()).select_from(TradingPosition).where(
+                    TradingPosition.strategy_id == strategy.id,
+                )
             )
-        )
-        if (open_count_result.scalar() or 0) > 0:
-            raise HTTPException(
-                status_code=409,
-                detail="미체결 주문이 있어 삭제할 수 없습니다. 체결 폴링 완료 후 재시도하세요.",
+            if (pos_count_result.scalar() or 0) > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "보유 포지션이 있어 삭제할 수 없습니다. "
+                        "POST /api/trading/strategies/{id}/liquidate 호출로 청산한 뒤 "
+                        "체결 폴링이 완료되면 다시 시도하세요."
+                    ),
+                )
+
+            # 미체결(PENDING/SUBMITTED/PARTIAL) 주문 체크
+            open_count_result = await db.execute(
+                select(func.count()).select_from(TradingOrder).where(
+                    TradingOrder.strategy_id == strategy.id,
+                    TradingOrder.status.in_([
+                        OrderStatus.PENDING,
+                        OrderStatus.SUBMITTED,
+                        OrderStatus.PARTIAL,
+                    ]),
+                )
             )
+            if (open_count_result.scalar() or 0) > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="미체결 주문이 있어 삭제할 수 없습니다. 체결 폴링 완료 후 재시도하세요.",
+                )
 
-        # DB 커밋 성공 전에는 스케줄만 제거해두면 불일치 발생 →
-        # trading_cycle 킬 스위치와 동일하게 commit 이후로 지연.
-        had_schedule = strategy.is_scheduled
-        # delete/commit 이후에는 ORM 속성 접근이 ObjectDeletedError/
-        # DetachedInstanceError를 낼 수 있으므로 account_id를 미리 스냅샷.
-        account_id = strategy.account_id
-        await db.delete(strategy)
-        await db.commit()
-
-    await clear_account_lock(account_id)
+            # DB 커밋 성공 전에는 스케줄만 제거해두면 불일치 발생 →
+            # trading_cycle 킬 스위치와 동일하게 commit 이후로 지연.
+            had_schedule = strategy.is_scheduled
+            await db.delete(strategy)
+            await db.commit()
+    finally:
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after delete_strategy: account=%s",
+                account_id, exc_info=True,
+            )
 
     # DB 커밋 성공 후 인메모리 스케줄 제거 (실패해도 DB 상태는 이미 보존)
     if had_schedule:
@@ -553,14 +563,24 @@ async def liquidate_strategy(
     orders_created: list[UUID] = []
     orders_rejected: list[dict] = []
 
+    # finally에서 account_id/kis를 항상 정리할 수 있도록 사전 스냅샷.
+    account_id = account.id
+
     try:
-        async with acquire_account_lock(account.id):
+        async with acquire_account_lock(account_id):
             # 락 획득 전 사이에 다른 요청이 계좌 비활성화/전략 삭제를 했을 수 있으므로
             # stale ORM 객체 대신 최신 상태를 재조회한다.
             # (deactivate_trading_account 주석 및 _run_cycle 동일 패턴)
             await db.refresh(account)
             if not account.is_active:
                 raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+            # 락 획득 사이에 장 마감 시각을 통과했을 수 있으므로 동일 메시지로 재검증.
+            if not _is_market_hours():
+                raise HTTPException(
+                    status_code=400,
+                    detail="시장 시간 외에는 청산할 수 없습니다 (한국 장 운영 시간 09:00-15:30, 평일).",
+                )
 
             refreshed_strategy = await db.get(TradingStrategy, strategy.id)
             if refreshed_strategy is None or refreshed_strategy.user_id != user.id:
@@ -637,6 +657,9 @@ async def liquidate_strategy(
                         )
                         order.status = OrderStatus.SUBMITTED
                         order.kis_order_id = order_result.get("order_id")
+                        # KIS 전송이 성공했으므로 fill apply 실패와 무관하게
+                        # 외부 주문 ID는 응답에 포함되어야 한다.
+                        orders_created.append(order.id)
 
                         # apply_sell_fill/add_realized_pnl 예외는 KIS 주문
                         # 전송 이후이므로 SUBMITTED 상태는 반드시 보존한다
@@ -646,7 +669,6 @@ async def liquidate_strategy(
                                 db, strategy, pos.ticker, Decimal(qty), current_price,
                             )
                             add_realized_pnl(strategy, realized_delta)
-                            orders_created.append(order.id)
                         except Exception as fill_err:
                             logger.critical(
                                 "Liquidation fill apply failed (order persisted): "
@@ -685,8 +707,14 @@ async def liquidate_strategy(
                         "reason": f"내부 오류: {e!s}",
                     })
 
-        await clear_account_lock(account.id)
     finally:
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after liquidate_strategy: account=%s",
+                account_id, exc_info=True,
+            )
         await kis.close()
 
     try:
