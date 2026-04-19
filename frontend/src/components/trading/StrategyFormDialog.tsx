@@ -44,6 +44,10 @@ const schema = z.object({
     z.number({ message: "숫자를 입력해주세요" }).int().min(1).max(60),
   ),
   market_hours_only: z.boolean(),
+  priority: z.preprocess(
+    toNum,
+    z.number({ message: "숫자를 입력해주세요" }).int().min(0).max(100),
+  ),
 });
 
 type StrategyFormValues = z.output<typeof schema>;
@@ -76,6 +80,7 @@ export function StrategyFormDialog({
       strategy_type: "ma_crossover",
       interval_minutes: 10,
       market_hours_only: true,
+      priority: 0,
     },
   });
 
@@ -86,6 +91,7 @@ export function StrategyFormDialog({
         strategy_type: editingStrategy.strategyType,
         interval_minutes: editingStrategy.intervalMinutes,
         market_hours_only: editingStrategy.marketHoursOnly,
+        priority: editingStrategy.priority ?? 0,
       });
     } else {
       form.reset({
@@ -93,6 +99,7 @@ export function StrategyFormDialog({
         strategy_type: "ma_crossover",
         interval_minutes: 10,
         market_hours_only: true,
+        priority: 0,
       });
     }
   }, [editingStrategy, form, open]);
@@ -103,6 +110,7 @@ export function StrategyFormDialog({
         name: values.name,
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
+        priority: values.priority,
       });
     } else {
       await onSubmitCreate({
@@ -112,6 +120,7 @@ export function StrategyFormDialog({
         params_json: DEFAULT_PARAMS[values.strategy_type],
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
+        priority: values.priority,
       });
     }
   });
@@ -186,6 +195,22 @@ export function StrategyFormDialog({
                 장중에만 실행
               </Label>
             </div>
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="priority">우선순위 (0~100, 높을수록 우선)</Label>
+            <Input
+              id="priority"
+              type="number"
+              min={0}
+              max={100}
+              {...form.register("priority")}
+            />
+            {form.formState.errors.priority && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.priority.message}
+              </p>
+            )}
           </div>
 
           {!isEditing && (

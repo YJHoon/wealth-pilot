@@ -77,6 +77,8 @@ class TestAccountEndpoints:
         }
         with patch("app.routers.trading.KISClient") as MockKIS:
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.get_balance = AsyncMock(return_value=mock_balance)
             instance.close = AsyncMock()
             MockKIS.return_value = instance
@@ -94,6 +96,8 @@ class TestAccountEndpoints:
     async def test_create_account_kis_failure_returns_502(self, auth_client: AsyncClient):
         with patch("app.routers.trading.KISClient") as MockKIS:
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.get_balance = AsyncMock(side_effect=KISClientError("connection refused"))
             instance.close = AsyncMock()
             MockKIS.return_value = instance
@@ -116,6 +120,8 @@ class TestAccountEndpoints:
         }
         with patch("app.routers.trading.KISClient") as MockKIS:
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.get_balance = AsyncMock(return_value=mock_balance)
             instance.close = AsyncMock()
             MockKIS.return_value = instance
@@ -139,6 +145,460 @@ class TestAccountEndpoints:
     ):
         resp = await auth_client.delete(f"/api/trading/accounts/{trading_account.id}")
         assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+class TestKisTokenCaching:
+    """KIS 토큰 캐싱 — 재발급 최소화 검증."""
+
+    async def test_create_account_persists_new_token(
+        self, auth_client: AsyncClient, db_session: AsyncSession, mock_user: User,
+    ):
+        """신규 계좌 생성 시 KIS에서 받은 토큰이 DB에 암호화 저장된다."""
+        from app.services.crypto_service import decrypt_value
+        from sqlalchemy import select as sa_select
+
+        mock_balance = {
+            "cash": Decimal("5000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        expires = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.access_token = "tok-new"
+            instance.token_expires_at = expires
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                "/api/trading/accounts",
+                json={"mode": "paper"},
+            )
+        assert resp.status_code == 201
+
+        result = await db_session.execute(
+            sa_select(TradingAccount).where(TradingAccount.user_id == mock_user.id),
+        )
+        account = result.scalar_one()
+        assert account.access_token is not None
+        assert decrypt_value(account.access_token) == "tok-new"
+        assert account.token_expires_at == expires
+
+    async def test_get_balance_reuses_cached_token(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        trading_account: TradingAccount,
+    ):
+        """DB에 캐시된 토큰이 KISClient 생성자에 주입된다 (재발급 방지)."""
+        from app.services.crypto_service import encrypt_value
+        from datetime import timedelta
+
+        # 기존 계좌에 유효 토큰 사전 저장
+        trading_account.access_token = encrypt_value("tok-cached")
+        trading_account.token_expires_at = datetime.now(timezone.utc) + timedelta(hours=10)
+        await db_session.commit()
+
+        mock_balance = {
+            "cash": Decimal("1000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.access_token = "tok-cached"
+            instance.token_expires_at = trading_account.token_expires_at
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.get(
+                f"/api/trading/accounts/{trading_account.id}/balance",
+            )
+        assert resp.status_code == 200
+        # KISClient 생성자에 토큰이 주입되었는지 확인
+        _, kwargs = MockKIS.call_args
+        assert kwargs.get("access_token") == "tok-cached"
+        assert kwargs.get("token_expires_at") is not None
+
+    async def test_get_balance_persists_refreshed_token(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        trading_account: TradingAccount,
+    ):
+        """KISClient가 토큰을 재발급하면 새 값이 DB에 저장된다."""
+        from app.services.crypto_service import decrypt_value, encrypt_value
+        from datetime import timedelta
+
+        # 기존 토큰은 만료 임박 (인스턴스 내부에서 재발급했다고 가정)
+        old_expires = datetime.now(timezone.utc) + timedelta(minutes=1)
+        trading_account.access_token = encrypt_value("tok-old")
+        trading_account.token_expires_at = old_expires
+        await db_session.commit()
+
+        new_expires = datetime.now(timezone.utc) + timedelta(hours=20)
+        mock_balance = {
+            "cash": Decimal("1000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            # 호출 후 인스턴스가 새 토큰을 보유 (authenticate 호출 시뮬레이션)
+            instance.access_token = "tok-refreshed"
+            instance.token_expires_at = new_expires
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.get(
+                f"/api/trading/accounts/{trading_account.id}/balance",
+            )
+        assert resp.status_code == 200
+
+        await db_session.refresh(trading_account)
+        assert decrypt_value(trading_account.access_token) == "tok-refreshed"
+        assert trading_account.token_expires_at == new_expires
+
+
+@pytest.mark.asyncio
+class TestRebalanceEndpoint:
+    async def test_rebalance_success(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        # 활성 전략 2개 생성
+        s1 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S1",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("3000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        s2 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S2",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("2000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add_all([s1, s2])
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    {"strategy_id": str(s1.id), "initial_capital": "4000000"},
+                    {"strategy_id": str(s2.id), "initial_capital": "1000000"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        caps = {row["id"]: Decimal(row["initial_capital"]) for row in data}
+        assert caps[str(s1.id)] == Decimal("4000000")
+        assert caps[str(s2.id)] == Decimal("1000000")
+
+    async def test_rebalance_exceeds_account_total(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    # 계좌 총 자본은 10,000,000 — 초과
+                    {"strategy_id": str(s.id), "initial_capital": "20000000"},
+                ],
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_rebalance_foreign_strategy_rejected(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        # 다른 계좌 소속 전략 ID로 시도
+        other_account = TradingAccount(
+            user_id=mock_user.id,
+            mode=TradingMode.LIVE,
+            initial_capital=encrypt_decimal(Decimal("5000000")),
+        )
+        db_session.add(other_account)
+        await db_session.commit()
+        await db_session.refresh(other_account)
+
+        foreign = TradingStrategy(
+            user_id=mock_user.id, account_id=other_account.id, name="Foreign",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(foreign)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    {"strategy_id": str(foreign.id), "initial_capital": "100000"},
+                ],
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_rebalance_empty_allocations_rejected(
+        self,
+        auth_client: AsyncClient,
+        trading_account: TradingAccount,
+    ):
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={"allocations": []},
+        )
+        assert resp.status_code == 400
+
+    async def test_rebalance_duplicate_strategy_id_rejected(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="Sdup",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    {"strategy_id": str(s.id), "initial_capital": "100000"},
+                    {"strategy_id": str(s.id), "initial_capital": "200000"},
+                ],
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_rebalance_preserves_realized_pnl(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        from app.services.crypto_service import decrypt_decimal
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="Sp",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("1000000")),
+            realized_pnl=encrypt_decimal(Decimal("500000")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+        sid = s.id
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/rebalance",
+            json={
+                "allocations": [
+                    {"strategy_id": str(sid), "initial_capital": "2000000"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+
+        # 응답으로 검증 (세션 expire_all은 fixture teardown과 충돌)
+        rows = resp.json()
+        row = next(r for r in rows if r["id"] == str(sid))
+        assert Decimal(row["initial_capital"]) == Decimal("2000000")
+        assert Decimal(row["realized_pnl"]) == Decimal("500000")
+
+
+@pytest.mark.asyncio
+class TestDepositEndpoint:
+    async def test_deposit_manual_success(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s1 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S1",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("3000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        s2 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S2",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("2000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add_all([s1, s2])
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={
+                "amount": "1000000",
+                "mode": "manual",
+                "allocations": [
+                    {"strategy_id": str(s1.id), "amount": "700000"},
+                    {"strategy_id": str(s2.id), "amount": "300000"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        # 계좌 총액 11,000,000으로 증액
+        assert Decimal(resp.json()["initial_capital"]) == Decimal("11000000")
+
+    async def test_deposit_manual_sum_mismatch_rejected(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="S",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={
+                "amount": "1000000",
+                "mode": "manual",
+                "allocations": [
+                    {"strategy_id": str(s.id), "amount": "500000"},
+                ],
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_deposit_pro_rata_distributes_by_ratio(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        # 3:2 비율 → 입금 1,000,000을 600,000 / 400,000로 분배
+        s1 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="P1",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("3000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        s2 = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="P2",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("2000000")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add_all([s1, s2])
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={"amount": "1000000", "mode": "pro_rata"},
+        )
+        assert resp.status_code == 200
+
+        list_resp = await auth_client.get("/api/trading/strategies")
+        assert list_resp.status_code == 200
+        data = {row["id"]: Decimal(row["initial_capital"]) for row in list_resp.json()}
+        assert data[str(s1.id)] == Decimal("3600000")
+        assert data[str(s2.id)] == Decimal("2400000")
+
+    async def test_deposit_pro_rata_all_zero_rejected(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        mock_user: User,
+        trading_account: TradingAccount,
+    ):
+        s = TradingStrategy(
+            user_id=mock_user.id, account_id=trading_account.id, name="Z",
+            strategy_type=StrategyType.MA_CROSSOVER, params_json={}, target_tickers=[],
+            interval_minutes=10,
+            initial_capital=encrypt_decimal(Decimal("0")),
+            realized_pnl=encrypt_decimal(Decimal("0")),
+        )
+        db_session.add(s)
+        await db_session.commit()
+
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={"amount": "1000000", "mode": "pro_rata"},
+        )
+        assert resp.status_code == 400
+
+    async def test_deposit_reserve_bumps_account_only(
+        self,
+        auth_client: AsyncClient,
+        trading_account: TradingAccount,
+    ):
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={"amount": "500000", "mode": "reserve"},
+        )
+        assert resp.status_code == 200
+        assert Decimal(resp.json()["initial_capital"]) == Decimal("10500000")
+
+    async def test_deposit_zero_amount_rejected(
+        self,
+        auth_client: AsyncClient,
+        trading_account: TradingAccount,
+    ):
+        resp = await auth_client.post(
+            f"/api/trading/accounts/{trading_account.id}/deposit",
+            json={"amount": "0", "mode": "reserve"},
+        )
+        # Pydantic gt=0 검증 실패
+        assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -476,6 +936,8 @@ class TestStrategyLiquidate:
                 "account_number": "1", "account_product_code": "01",
             }
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.close = AsyncMock()
             MockKIS.return_value = instance
 
@@ -517,6 +979,8 @@ class TestStrategyLiquidate:
                 "account_number": "1", "account_product_code": "01",
             }
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.close = AsyncMock()
             MockKIS.return_value = instance
 
@@ -547,6 +1011,8 @@ class TestStrategyLiquidate:
                 "account_number": "1", "account_product_code": "01",
             }
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.get_current_price = AsyncMock(
                 return_value={"price": 65000, "name": "삼성전자"},
             )

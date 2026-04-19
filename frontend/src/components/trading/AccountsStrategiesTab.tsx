@@ -18,6 +18,7 @@ interface AccountsStrategiesTabProps {
   strategies: TradingStrategy[];
   selectedAccountId: string | null;
   onDeactivateAccount: (id: string) => void;
+  onToggleNetting?: (accountId: string, enabled: boolean) => void;
   onStartSchedule: (strategyId: string) => void;
   onStopSchedule: (strategyId: string) => void;
   onRunNow: (strategyId: string) => void;
@@ -30,6 +31,7 @@ export function AccountsStrategiesTab({
   strategies,
   selectedAccountId,
   onDeactivateAccount,
+  onToggleNetting,
   onStartSchedule,
   onStopSchedule,
   onRunNow,
@@ -90,6 +92,24 @@ export function AccountsStrategiesTab({
                       {account.isActive ? "활성" : "비활성"}
                     </Badge>
                   </div>
+                  {onToggleNetting && (
+                    <div className="flex items-center justify-between text-sm mt-1">
+                      <span className="text-muted-foreground">주문 네팅</span>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="size-3.5 rounded border-border"
+                          checked={account.allowNetting}
+                          onChange={(e) =>
+                            onToggleNetting(account.id, e.target.checked)
+                          }
+                        />
+                        <span className="text-xs text-muted-foreground">
+                          {account.allowNetting ? "ON" : "OFF"}
+                        </span>
+                      </label>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}

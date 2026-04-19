@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.trading import (
     OrderSide,
@@ -48,9 +49,63 @@ class TradingAccountResponse(BaseModel):
     initial_capital: Decimal
     cash_balance: Decimal | None
     is_active: bool
+    allow_netting: bool
     token_expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class TradingAccountUpdate(BaseModel):
+    allow_netting: bool | None = None
+
+
+class RebalanceAllocationItem(BaseModel):
+    """리밸런싱: 전략별 신규 initial_capital."""
+    strategy_id: UUID
+    initial_capital: Decimal = Field(ge=Decimal("0"))
+
+
+class AccountRebalanceRequest(BaseModel):
+    """계좌 내 활성 전략들의 initial_capital 일괄 재배분."""
+    allocations: list[RebalanceAllocationItem]
+
+
+class DepositAllocationMode(str, Enum):
+    """입금 할당 방식."""
+    MANUAL = "manual"       # 사용자가 전략별 금액을 직접 지정
+    PRO_RATA = "pro_rata"   # 기존 전략 initial_capital 비율대로 자동 분배
+    RESERVE = "reserve"     # 계좌 총액만 증액, 전략에는 배분하지 않음
+
+
+class DepositAllocationItem(BaseModel):
+    """수동 입금 분배: 전략별 추가 금액."""
+    strategy_id: UUID
+    amount: Decimal = Field(ge=Decimal("0"))
+
+
+class AccountDepositRequest(BaseModel):
+    """계좌 신규 입금 반영 + 전략 할당."""
+    amount: Decimal = Field(gt=Decimal("0"))
+    mode: DepositAllocationMode
+    # mode=manual일 때만 사용
+    allocations: list[DepositAllocationItem] | None = None
+
+    @model_validator(mode="after")
+    def _check_mode_consistency(self) -> "AccountDepositRequest":
+        if self.mode == DepositAllocationMode.MANUAL:
+            # MANUAL은 반드시 비어있지 않은 allocations를 요구
+            if self.allocations is None or len(self.allocations) == 0:
+                raise ValueError(
+                    "manual 모드에서는 allocations가 비어있을 수 없습니다.",
+                )
+        elif self.mode in (DepositAllocationMode.PRO_RATA, DepositAllocationMode.RESERVE):
+            # PRO_RATA/RESERVE는 allocations 필드 자체를 지정해서는 안 됨
+            # (빈 리스트 []도 부적절한 입력으로 취급)
+            if self.allocations is not None:
+                raise ValueError(
+                    f"{self.mode.value} 모드에서는 allocations를 지정할 수 없습니다.",
+                )
+        return self
 
 
 def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:
@@ -60,6 +115,7 @@ def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:
         initial_capital=decrypt_decimal(account.initial_capital),
         cash_balance=decrypt_decimal_optional(account.cash_balance),
         is_active=account.is_active,
+        allow_netting=account.allow_netting,
         token_expires_at=account.token_expires_at,
         created_at=account.created_at,
         updated_at=account.updated_at,
@@ -89,6 +145,8 @@ class TradingStrategyCreate(BaseModel):
     market_hours_only: bool = True
     # Phase 2: 전략별 초기 할당 자본 (필수). 0이면 매수 불가.
     initial_capital: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
+    # Phase 4: 처리 우선순위 (높을수록 우선). 0~100.
+    priority: int = Field(default=0, ge=0, le=100)
 
 
 class TradingStrategyUpdate(BaseModel):
@@ -98,6 +156,7 @@ class TradingStrategyUpdate(BaseModel):
     interval_minutes: int | None = Field(default=None, ge=1, le=60)
     market_hours_only: bool | None = None
     initial_capital: Decimal | None = Field(default=None, ge=Decimal("0"))
+    priority: int | None = Field(default=None, ge=0, le=100)
 
 
 class TradingStrategyResponse(BaseModel):
@@ -113,6 +172,7 @@ class TradingStrategyResponse(BaseModel):
     is_active: bool
     initial_capital: Decimal
     realized_pnl: Decimal
+    priority: int
     created_at: datetime
     updated_at: datetime
 
@@ -132,6 +192,7 @@ def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyRespo
         is_active=strategy.is_active,
         initial_capital=get_initial_capital(strategy),
         realized_pnl=get_realized_pnl(strategy),
+        priority=strategy.priority,
         created_at=strategy.created_at,
         updated_at=strategy.updated_at,
     )

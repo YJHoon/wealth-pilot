@@ -13,20 +13,38 @@ import {
 } from "@/components/ui/select";
 import { useTrading } from "@/hooks/useTrading";
 import { StrategyFormDialog } from "@/components/trading/StrategyFormDialog";
+import { RebalanceDialog } from "@/components/trading/RebalanceDialog";
+import { DepositDialog } from "@/components/trading/DepositDialog";
 import type {
+  AccountDepositRequest,
+  AccountRebalanceRequest,
   TradingStrategyCreateRequest,
   TradingStrategyUpdateRequest,
   TradingStrategy,
 } from "@/types/trading";
 import { tradingModeLabels, strategyTypeLabels } from "@/types/trading";
 import Link from "next/link";
-import { Bot, Pencil, Play, Plus, Square, Zap } from "lucide-react";
+import {
+  Banknote,
+  Bot,
+  Pencil,
+  Play,
+  Plus,
+  Scale,
+  Square,
+  Zap,
+} from "lucide-react";
 
 export default function TradingPage() {
   const trading = useTrading();
   const [strategyFormOpen, setStrategyFormOpen] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState<TradingStrategy | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [rebalanceOpen, setRebalanceOpen] = useState(false);
+  const [isRebalancing, setIsRebalancing] = useState(false);
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [isDepositing, setIsDepositing] = useState(false);
+  const [nettingUpdating, setNettingUpdating] = useState(false);
 
   // ── Strategy handlers ──
 
@@ -111,6 +129,58 @@ export default function TradingPage() {
     [trading],
   );
 
+  const handleToggleNetting = useCallback(
+    async (accountId: string, enabled: boolean) => {
+      if (nettingUpdating) return;
+      setNettingUpdating(true);
+      try {
+        await trading.updateAccount(accountId, { allow_netting: enabled });
+        toast.success(
+          enabled ? "주문 네팅을 활성화했습니다." : "주문 네팅을 비활성화했습니다.",
+        );
+      } catch {
+        toast.error("네팅 설정 변경에 실패했습니다.");
+      } finally {
+        setNettingUpdating(false);
+      }
+    },
+    [trading, nettingUpdating],
+  );
+
+  const handleRebalance = useCallback(
+    async (data: AccountRebalanceRequest) => {
+      if (!trading.selectedAccountId) return;
+      setIsRebalancing(true);
+      try {
+        await trading.rebalanceAccount(trading.selectedAccountId, data);
+        toast.success("전략 자본을 재배분했습니다.");
+        setRebalanceOpen(false);
+      } catch {
+        toast.error("재배분에 실패했습니다.");
+      } finally {
+        setIsRebalancing(false);
+      }
+    },
+    [trading],
+  );
+
+  const handleDeposit = useCallback(
+    async (data: AccountDepositRequest) => {
+      if (!trading.selectedAccountId) return;
+      setIsDepositing(true);
+      try {
+        await trading.depositToAccount(trading.selectedAccountId, data);
+        toast.success("입금을 반영했습니다.");
+        setDepositOpen(false);
+      } catch {
+        toast.error("입금 반영에 실패했습니다.");
+      } finally {
+        setIsDepositing(false);
+      }
+    },
+    [trading],
+  );
+
   const selectedAccount = trading.accounts.find((a) => a.id === trading.selectedAccountId);
   const accountStrategies = trading.strategies.filter(
     (s) => s.accountId === trading.selectedAccountId,
@@ -144,6 +214,26 @@ export default function TradingPage() {
             </Select>
           )}
           {selectedAccount && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDepositOpen(true)}
+            >
+              <Banknote className="size-3.5 mr-1" />
+              입금 반영
+            </Button>
+          )}
+          {selectedAccount && accountStrategies.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRebalanceOpen(true)}
+            >
+              <Scale className="size-3.5 mr-1" />
+              재배분
+            </Button>
+          )}
+          {selectedAccount && (
             <Button size="sm" onClick={handleAddStrategy}>
               <Plus className="size-3.5 mr-1" />
               전략 추가
@@ -174,6 +264,24 @@ export default function TradingPage() {
         <p className="text-sm text-muted-foreground text-center py-8">
           계좌를 선택해주세요.
         </p>
+      )}
+
+      {/* 계좌 설정 */}
+      {selectedAccount && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              className="size-3.5 rounded border-border"
+              checked={selectedAccount.allowNetting}
+              disabled={nettingUpdating}
+              onChange={(e) =>
+                handleToggleNetting(selectedAccount.id, e.target.checked)
+              }
+            />
+            <span>주문 네팅 (같은 종목 반대 방향 주문 스킵)</span>
+          </label>
+        </div>
       )}
 
       {/* 전략 카드 목록 */}
@@ -285,6 +393,30 @@ export default function TradingPage() {
           onSubmitCreate={handleCreateStrategy}
           onSubmitUpdate={handleUpdateStrategy}
           isSubmitting={isSubmitting}
+        />
+      )}
+
+      {/* 재배분 다이얼로그 */}
+      {selectedAccount && (
+        <RebalanceDialog
+          open={rebalanceOpen}
+          onOpenChange={setRebalanceOpen}
+          account={selectedAccount}
+          strategies={accountStrategies}
+          onSubmit={handleRebalance}
+          isSubmitting={isRebalancing}
+        />
+      )}
+
+      {/* 입금 다이얼로그 */}
+      {selectedAccount && (
+        <DepositDialog
+          open={depositOpen}
+          onOpenChange={setDepositOpen}
+          account={selectedAccount}
+          strategies={accountStrategies}
+          onSubmit={handleDeposit}
+          isSubmitting={isDepositing}
         />
       )}
     </div>

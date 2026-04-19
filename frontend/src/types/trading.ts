@@ -15,6 +15,7 @@ export interface TradingAccountApi {
   initial_capital: number;
   cash_balance: number | null;
   is_active: boolean;
+  allow_netting: boolean;
   token_expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -31,6 +32,9 @@ export interface TradingStrategyApi {
   is_scheduled: boolean;
   market_hours_only: boolean;
   is_active: boolean;
+  initial_capital: number;
+  realized_pnl: number;
+  priority: number;
   created_at: string;
   updated_at: string;
 }
@@ -108,6 +112,7 @@ export interface TradingAccount {
   initialCapital: number;
   cashBalance: number | null;
   isActive: boolean;
+  allowNetting: boolean;
   tokenExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -124,6 +129,9 @@ export interface TradingStrategy {
   isScheduled: boolean;
   marketHoursOnly: boolean;
   isActive: boolean;
+  initialCapital: number;
+  realizedPnl: number;
+  priority: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -241,6 +249,10 @@ export interface TradingAccountCreateRequest {
   mode: TradingMode;
 }
 
+export interface TradingAccountUpdateRequest {
+  allow_netting?: boolean;
+}
+
 export interface TradingStrategyCreateRequest {
   account_id: string;
   name: string;
@@ -248,6 +260,7 @@ export interface TradingStrategyCreateRequest {
   params_json: Record<string, number>;
   interval_minutes: number;
   market_hours_only: boolean;
+  priority?: number;
 }
 
 export interface TradingStrategyUpdateRequest {
@@ -255,6 +268,29 @@ export interface TradingStrategyUpdateRequest {
   params_json?: Record<string, number>;
   interval_minutes?: number;
   market_hours_only?: boolean;
+  priority?: number;
+}
+
+export interface RebalanceAllocationItem {
+  strategy_id: string;
+  initial_capital: number;
+}
+
+export interface AccountRebalanceRequest {
+  allocations: RebalanceAllocationItem[];
+}
+
+export type DepositAllocationMode = "manual" | "pro_rata" | "reserve";
+
+export interface DepositAllocationItem {
+  strategy_id: string;
+  amount: number;
+}
+
+export interface AccountDepositRequest {
+  amount: number;
+  mode: DepositAllocationMode;
+  allocations?: DepositAllocationItem[];
 }
 
 // ── 변환 함수 ──
@@ -266,6 +302,7 @@ export function toTradingAccount(api: TradingAccountApi): TradingAccount {
     initialCapital: api.initial_capital,
     cashBalance: api.cash_balance,
     isActive: api.is_active,
+    allowNetting: api.allow_netting ?? false,
     tokenExpiresAt: api.token_expires_at,
     createdAt: api.created_at,
     updatedAt: api.updated_at,
@@ -284,6 +321,9 @@ export function toTradingStrategy(api: TradingStrategyApi): TradingStrategy {
     isScheduled: api.is_scheduled,
     marketHoursOnly: api.market_hours_only,
     isActive: api.is_active,
+    initialCapital: api.initial_capital ?? 0,
+    realizedPnl: api.realized_pnl ?? 0,
+    priority: api.priority ?? 0,
     createdAt: api.created_at,
     updatedAt: api.updated_at,
   };

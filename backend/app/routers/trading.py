@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -29,12 +29,16 @@ from app.models.trading import (
 )
 from app.models.user import User
 from app.schemas.trading import (
+    AccountDepositRequest,
+    AccountRebalanceRequest,
     AdaptiveRuleResponse,
     AdaptiveRuleUpdate,
+    DepositAllocationMode,
     ScheduleStartRequest,
     ScheduleStatusResponse,
     TradingAccountCreate,
     TradingAccountResponse,
+    TradingAccountUpdate,
     TradingDecisionResponse,
     TradingOrderResponse,
     TradingPerformanceResponse,
@@ -55,6 +59,7 @@ from app.services.crypto_service import (
     decrypt_decimal,
     decrypt_value,
     encrypt_decimal,
+    encrypt_value,
 )
 from app.services.account_lock import acquire_account_lock, clear_account_lock
 from app.services.kis_client import KISClient, KISClientError
@@ -78,6 +83,48 @@ from app.tasks.trading_scheduler import trading_scheduler
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/trading", tags=["자동매매"])
+
+
+# ──────────────────────────────────────────────
+# KIS 토큰 캐싱 헬퍼
+# ──────────────────────────────────────────────
+
+def _load_kis_token(account: TradingAccount) -> tuple[str | None, datetime | None]:
+    """계좌에 캐시된 KIS 토큰을 복호화하여 반환.
+
+    프로세스 재시작 후에도 DB에 저장된 유효 토큰을 재사용해 재발급을 피한다.
+    (KIS는 1분당 1회 발급 제한이 있어 불필요한 재발급은 장애 위험이 크다.)
+    """
+    if not account.access_token:
+        return None, None
+    return decrypt_value(account.access_token), account.token_expires_at
+
+
+async def _persist_kis_token(
+    db: AsyncSession,
+    account: TradingAccount,
+    kis: KISClient,
+) -> None:
+    """KIS 호출 후 갱신된 토큰을 DB에 반영.
+
+    토큰이 없거나 기존 DB 값과 동일하면 no-op.
+
+    주의:
+    - 이 함수는 **commit하지 않는다**. 호출 시점에 세션이 깨끗한 상태(다른 dirty
+      객체가 없는 상태)여야 하며, 호출자가 명시적으로 ``await db.commit()``을
+      수행해야 한다. 세션에 다른 변경이 섞여 있으면 의도치 않은 부분 커밋이
+      발생할 수 있기 때문이다.
+    - 락 내부에서 호출되어야 동시 호출 간 직렬화가 보장된다.
+    """
+    new_token = kis.access_token
+    if not new_token:
+        return
+    old_token = decrypt_value(account.access_token) if account.access_token else None
+    if new_token == old_token and account.token_expires_at == kis.token_expires_at:
+        return
+    account.access_token = encrypt_value(new_token)
+    account.token_expires_at = kis.token_expires_at
+    await db.flush()
 
 
 # ──────────────────────────────────────────────
@@ -127,11 +174,17 @@ async def create_trading_account(
     finally:
         await kis.close()
 
+    # KIS 호출 과정에서 발급된 토큰을 계좌에 즉시 저장해 재발급을 피한다.
+    new_token = kis.access_token
+    new_token_expires_at = kis.token_expires_at
     if existing is not None:
         # 비활성 계좌 재활성화 (잔액 갱신)
         existing.is_active = True
         existing.initial_capital = encrypt_decimal(initial_capital)
         existing.cash_balance = encrypt_decimal(balance["cash"])
+        if new_token:
+            existing.access_token = encrypt_value(new_token)
+            existing.token_expires_at = new_token_expires_at
         account = existing
     else:
         account = TradingAccount(
@@ -139,6 +192,8 @@ async def create_trading_account(
             mode=body.mode,
             initial_capital=encrypt_decimal(initial_capital),
             cash_balance=encrypt_decimal(balance["cash"]),
+            access_token=encrypt_value(new_token) if new_token else None,
+            token_expires_at=new_token_expires_at,
         )
         db.add(account)
     try:
@@ -191,6 +246,321 @@ async def list_trading_accounts(
         logger.warning("TRADING_ACCOUNT_LIST access logging failed", exc_info=True)
 
     return response
+
+
+@router.patch("/accounts/{account_id}", response_model=TradingAccountResponse)
+@limiter.limit("100/minute")
+async def update_trading_account(
+    account_id: UUID,
+    body: TradingAccountUpdate,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """계좌 속성 수정 (Phase 4: allow_netting 토글 등).
+
+    account_lock으로 매매 사이클과 직렬화 — allow_netting은 주문 생성 분기에
+    영향을 주므로 사이클 실행 도중 변경되지 않도록 보장한다.
+    """
+    account = await _get_user_account(db, account_id, user.id)
+
+    update_data = body.model_dump(exclude_unset=True)
+
+    try:
+        async with acquire_account_lock(account_id):
+            await db.refresh(account)
+            for key, value in update_data.items():
+                setattr(account, key, value)
+            await db.commit()
+            await db.refresh(account)
+    finally:
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after update_trading_account: account=%s",
+                account_id, exc_info=True,
+            )
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_UPDATE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_UPDATE access logging failed", exc_info=True)
+
+    return account_to_response(account)
+
+
+@router.post(
+    "/accounts/{account_id}/rebalance",
+    response_model=list[TradingStrategyResponse],
+)
+@limiter.limit("100/minute")
+async def rebalance_account(
+    account_id: UUID,
+    body: AccountRebalanceRequest,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """계좌 내 활성 전략들의 initial_capital 일괄 재배분.
+
+    Phase 4: 수동 리밸런싱.
+    - realized_pnl은 보존 (과거 성과 유지)
+    - 합계가 계좌 총 자본 이하여야 함
+    - account_lock 내에서 직렬화 — 사이클 실행과 경합 방지
+    """
+    account = await _get_user_account(db, account_id, user.id)
+    if not account.is_active:
+        raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+    if not body.allocations:
+        raise HTTPException(status_code=400, detail="할당 내역이 비어있습니다.")
+
+    # 중복 strategy_id 금지
+    alloc_ids = [a.strategy_id for a in body.allocations]
+    if len(alloc_ids) != len(set(alloc_ids)):
+        raise HTTPException(status_code=400, detail="중복된 전략 ID가 포함되어 있습니다.")
+
+    account_total = decrypt_decimal(account.initial_capital)
+    total_allocated = sum((a.initial_capital for a in body.allocations), Decimal("0"))
+    if total_allocated > account_total:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"할당 합계 초과: {total_allocated:,.0f}원 > "
+                f"계좌 총 자본 {account_total:,.0f}원"
+            ),
+        )
+
+    try:
+        async with acquire_account_lock(account_id):
+            # 락 내 재검증
+            await db.refresh(account)
+            if not account.is_active:
+                raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+            # 계좌의 모든 활성 전략 조회 (요청에 없는 전략도 최종 합산에 포함)
+            all_result = await db.execute(
+                select(TradingStrategy).where(
+                    TradingStrategy.account_id == account_id,
+                    TradingStrategy.is_active.is_(True),
+                )
+            )
+            all_strategies = {s.id: s for s in all_result.scalars().all()}
+
+            # 요청된 모든 전략이 조회되어야 함
+            missing = set(alloc_ids) - set(all_strategies.keys())
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "일부 전략을 찾을 수 없거나 계좌에 속하지 않습니다: "
+                        f"{', '.join(str(m) for m in missing)}"
+                    ),
+                )
+
+            # 최종 할당 합계 검증: 요청된 전략은 새 값, 나머지는 현재 값
+            alloc_map = {a.strategy_id: a.initial_capital for a in body.allocations}
+            final_allocated = Decimal("0")
+            for sid, s in all_strategies.items():
+                if sid in alloc_map:
+                    final_allocated += alloc_map[sid]
+                else:
+                    final_allocated += decrypt_decimal(s.initial_capital)
+            if final_allocated > account_total:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"최종 할당 합계 초과: {final_allocated:,.0f}원 > "
+                        f"계좌 총 자본 {account_total:,.0f}원 "
+                        f"(요청 외 활성 전략 자본 포함)"
+                    ),
+                )
+
+            # initial_capital만 갱신 (realized_pnl 보존)
+            strategies = {
+                sid: all_strategies[sid] for sid in alloc_ids
+            }
+            for alloc in body.allocations:
+                strategy = strategies[alloc.strategy_id]
+                strategy.initial_capital = encrypt_decimal(alloc.initial_capital)
+
+            await db.commit()
+
+            # refresh for response
+            for s in strategies.values():
+                await db.refresh(s)
+
+            updated = [strategies[aid] for aid in alloc_ids]
+    finally:
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after rebalance_account: account=%s",
+                account_id, exc_info=True,
+            )
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_REBALANCE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_REBALANCE access logging failed", exc_info=True)
+
+    return [strategy_to_response(s) for s in updated]
+
+
+@router.post(
+    "/accounts/{account_id}/deposit",
+    response_model=TradingAccountResponse,
+)
+@limiter.limit("100/minute")
+async def deposit_to_account(
+    account_id: UUID,
+    body: AccountDepositRequest,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """신규 입금 반영 + 전략 할당.
+
+    Phase 4:
+    - account.initial_capital += amount
+    - 할당 방식:
+        - manual: body.allocations의 합이 amount와 같아야 함
+        - pro_rata: 현재 전략 initial_capital 비율대로 자동 분배 (반올림 잔차는 마지막 전략이 흡수)
+        - reserve: 전략에 배분하지 않고 계좌 총액만 증액 (추후 rebalance로 분배)
+    - account_lock으로 사이클과 직렬화
+    """
+    account = await _get_user_account(db, account_id, user.id)
+    if not account.is_active:
+        raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+    amount = body.amount
+
+    try:
+        async with acquire_account_lock(account_id):
+            await db.refresh(account)
+            if not account.is_active:
+                raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+
+            # 계좌 활성 전략 조회 — pro_rata 잔차 흡수자가 결정적이도록 정렬
+            strat_result = await db.execute(
+                select(TradingStrategy).where(
+                    TradingStrategy.account_id == account_id,
+                    TradingStrategy.is_active.is_(True),
+                ).order_by(
+                    TradingStrategy.priority.desc(),
+                    TradingStrategy.created_at.asc(),
+                    TradingStrategy.id.asc(),
+                )
+            )
+            strategies = list(strat_result.scalars().all())
+
+            if body.mode == DepositAllocationMode.MANUAL:
+                if not body.allocations:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="manual 모드에서는 allocations가 필요합니다.",
+                    )
+                alloc_ids = [a.strategy_id for a in body.allocations]
+                if len(alloc_ids) != len(set(alloc_ids)):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="중복된 전략 ID가 포함되어 있습니다.",
+                    )
+                total_alloc = sum(
+                    (a.amount for a in body.allocations), Decimal("0"),
+                )
+                if total_alloc != amount:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"할당 합계와 입금액이 다릅니다: "
+                            f"합계 {total_alloc:,.0f}원 vs 입금 {amount:,.0f}원"
+                        ),
+                    )
+                strategy_map = {s.id: s for s in strategies}
+                missing = set(alloc_ids) - set(strategy_map.keys())
+                if missing:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "일부 전략을 찾을 수 없거나 계좌에 속하지 않습니다: "
+                            f"{', '.join(str(m) for m in missing)}"
+                        ),
+                    )
+                for alloc in body.allocations:
+                    s = strategy_map[alloc.strategy_id]
+                    new_cap = decrypt_decimal(s.initial_capital) + alloc.amount
+                    s.initial_capital = encrypt_decimal(new_cap)
+
+            elif body.mode == DepositAllocationMode.PRO_RATA:
+                if not strategies:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="활성 전략이 없어 pro_rata 분배가 불가합니다.",
+                    )
+                current_caps = [
+                    (s, decrypt_decimal(s.initial_capital)) for s in strategies
+                ]
+                total_cap = sum(
+                    (c for _, c in current_caps), Decimal("0"),
+                )
+                if total_cap <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "모든 전략의 할당 자본이 0이라 비율 분배가 불가합니다. "
+                            "manual 모드로 배분하거나 먼저 rebalance를 실행하세요."
+                        ),
+                    )
+                # 반올림 후 잔차는 마지막 전략이 흡수.
+                # ROUND_DOWN으로 계산해 누적값이 amount를 초과하지 못하게 하고,
+                # 마지막 전략은 잔차(음수 방지) 흡수.
+                accumulated = Decimal("0")
+                for idx, (s, cap) in enumerate(current_caps):
+                    if idx == len(current_caps) - 1:
+                        share = amount - accumulated
+                        if share < 0:
+                            share = Decimal("0")
+                    else:
+                        share = (amount * cap / total_cap).quantize(
+                            Decimal("1"), rounding=ROUND_DOWN,
+                        )
+                        accumulated += share
+                    s.initial_capital = encrypt_decimal(cap + share)
+
+            elif body.mode == DepositAllocationMode.RESERVE:
+                # 전략 변경 없음
+                pass
+
+            # 계좌 총액 증액
+            account.initial_capital = encrypt_decimal(
+                decrypt_decimal(account.initial_capital) + amount,
+            )
+            await db.commit()
+            await db.refresh(account)
+    finally:
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after deposit_to_account: account=%s",
+                account_id, exc_info=True,
+            )
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_DEPOSIT, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_DEPOSIT access logging failed", exc_info=True)
+
+    return account_to_response(account)
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -260,20 +630,43 @@ async def get_account_balance(
     mode_value = account_mode.value
 
     creds = settings.kis_credentials(mode_value)
-    kis = KISClient(
-        app_key=creds["app_key"],
-        app_secret=creds["app_secret"],
-        account_number=creds["account_number"],
-        account_product_code=creds["account_product_code"],
-        mode=account_mode,
-    )
+
+    # 토큰 로드/재발급/영속화는 account_lock 내부에서 수행.
+    # 동시 요청이 같은 계좌의 토큰을 두 번 재발급해 KIS 발급 레이트리밋(1회/분)
+    # 에 걸리는 상황을 방지한다.
+    kis: KISClient | None = None
     try:
-        balance = await kis.get_balance()
-        return balance
-    except KISClientError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from None
+        async with acquire_account_lock(account_id):
+            await db.refresh(account)
+            if not account.is_active:
+                raise HTTPException(status_code=400, detail="비활성화된 계좌입니다.")
+            cached_token, cached_expires = _load_kis_token(account)
+            kis = KISClient(
+                app_key=creds["app_key"],
+                app_secret=creds["app_secret"],
+                account_number=creds["account_number"],
+                account_product_code=creds["account_product_code"],
+                mode=account_mode,
+                access_token=cached_token,
+                token_expires_at=cached_expires,
+            )
+            try:
+                balance = await kis.get_balance()
+            except KISClientError as e:
+                raise HTTPException(status_code=502, detail=str(e)) from None
+            await _persist_kis_token(db, account, kis)
+            await db.commit()
+            return balance
     finally:
-        await kis.close()
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after get_account_balance: account=%s",
+                account_id, exc_info=True,
+            )
+        if kis is not None:
+            await kis.close()
 
 
 # ──────────────────────────────────────────────
@@ -325,6 +718,7 @@ async def create_strategy(
         market_hours_only=body.market_hours_only,
         initial_capital=encrypt_decimal(body.initial_capital),
         realized_pnl=encrypt_decimal(Decimal("0")),
+        priority=body.priority,
     )
     db.add(strategy)
     await db.commit()
@@ -341,7 +735,9 @@ async def create_strategy(
 
 
 @router.get("/strategies", response_model=list[TradingStrategyResponse])
+@limiter.limit("100/minute")
 async def list_strategies(
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -350,9 +746,21 @@ async def list_strategies(
         select(TradingStrategy).where(
             TradingStrategy.user_id == user.id,
             TradingStrategy.is_active.is_(True),
-        ).order_by(TradingStrategy.created_at.desc())
+        ).order_by(
+            TradingStrategy.priority.desc(),
+            TradingStrategy.created_at.asc(),
+        )
     )
-    return [strategy_to_response(s) for s in result.scalars().all()]
+    response = [strategy_to_response(s) for s in result.scalars().all()]
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_STRATEGY_LIST, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_STRATEGY_LIST access logging failed", exc_info=True)
+
+    return response
 
 
 @router.put("/strategies/{strategy_id}", response_model=TradingStrategyResponse)
@@ -552,19 +960,14 @@ async def liquidate_strategy(
         )
 
     creds = settings.kis_credentials(account.mode.value)
-    kis = KISClient(
-        app_key=creds["app_key"],
-        app_secret=creds["app_secret"],
-        account_number=creds["account_number"],
-        account_product_code=creds["account_product_code"],
-        mode=account.mode,
-    )
+    account_mode = account.mode
 
     orders_created: list[UUID] = []
     orders_rejected: list[dict] = []
 
     # finally에서 account_id/kis를 항상 정리할 수 있도록 사전 스냅샷.
     account_id = account.id
+    kis: KISClient | None = None
 
     try:
         async with acquire_account_lock(account_id):
@@ -581,6 +984,19 @@ async def liquidate_strategy(
                     status_code=400,
                     detail="시장 시간 외에는 청산할 수 없습니다 (한국 장 운영 시간 09:00-15:30, 평일).",
                 )
+
+            # 토큰 로드 + KISClient 구성은 락 내부에서 수행 — 동시 요청이
+            # 같은 계좌의 토큰을 중복 재발급하지 않도록 직렬화한다.
+            cached_token, cached_expires = _load_kis_token(account)
+            kis = KISClient(
+                app_key=creds["app_key"],
+                app_secret=creds["app_secret"],
+                account_number=creds["account_number"],
+                account_product_code=creds["account_product_code"],
+                mode=account_mode,
+                access_token=cached_token,
+                token_expires_at=cached_expires,
+            )
 
             refreshed_strategy = await db.get(TradingStrategy, strategy.id)
             if refreshed_strategy is None or refreshed_strategy.user_id != user.id:
@@ -707,6 +1123,17 @@ async def liquidate_strategy(
                         "reason": f"내부 오류: {e!s}",
                     })
 
+            # 청산 루프 중 갱신된 KIS 토큰을 락 내부에서 영속화.
+            # 루프 내 각 주문은 이미 개별 commit되므로 이 시점 세션은 clean.
+            try:
+                await _persist_kis_token(db, account, kis)
+                await db.commit()
+            except SQLAlchemyError:
+                logger.warning(
+                    "liquidate: KIS token persist failed", exc_info=True,
+                )
+                await db.rollback()
+
     finally:
         try:
             await clear_account_lock(account_id)
@@ -715,7 +1142,8 @@ async def liquidate_strategy(
                 "clear_account_lock failed after liquidate_strategy: account=%s",
                 account_id, exc_info=True,
             )
-        await kis.close()
+        if kis is not None:
+            await kis.close()
 
     try:
         await log_access(db, user.id, AccessAction.TRADING_STRATEGY_LIQUIDATE, request)
@@ -1030,25 +1458,32 @@ async def approve_decision(
         await db.commit()
         raise HTTPException(status_code=400, detail="장 운영 시간이 아닙니다.")
 
-    # KIS 클라이언트 생성
+    # KIS 클라이언트 자격증명 (토큰 로드는 락 내부에서 수행)
     creds = settings.kis_credentials(account.mode.value)
-    kis = KISClient(
-        app_key=creds["app_key"],
-        app_secret=creds["app_secret"],
-        account_number=creds["account_number"],
-        account_product_code=creds["account_product_code"],
-        mode=account.mode,
-        access_token=decrypt_value(account.access_token) if account.access_token else None,
-        token_expires_at=account.token_expires_at,
-    )
+    account_mode = account.mode
 
     order = None
+    kis: KISClient | None = None
+    account_id = account.id
     try:
-      async with acquire_account_lock(account.id):
+      async with acquire_account_lock(account_id):
         # ── 락 내부 상태 재검증 (TOCTOU 방지) ──
         await db.refresh(decision)
         await db.refresh(strategy)
         await db.refresh(account)
+
+        # 토큰 로드 + KISClient 구성은 락 내부에서 수행 — 동시 승인 요청이
+        # 같은 계좌의 토큰을 중복 재발급하지 않도록 직렬화한다.
+        cached_token, cached_expires = _load_kis_token(account)
+        kis = KISClient(
+            app_key=creds["app_key"],
+            app_secret=creds["app_secret"],
+            account_number=creds["account_number"],
+            account_product_code=creds["account_product_code"],
+            mode=account_mode,
+            access_token=cached_token,
+            token_expires_at=cached_expires,
+        )
 
         now_lock = datetime.now(timezone.utc)
         if decision.approval_status != "pending":
@@ -1308,6 +1743,17 @@ async def approve_decision(
         decision.order_id = order.id
         await db.commit()
 
+        # 승인 과정에서 갱신된 KIS 토큰을 락 내부에서 영속화.
+        # 바로 위에서 decision.approval_status='approved' 커밋을 마친 상태.
+        try:
+            await _persist_kis_token(db, account, kis)
+            await db.commit()
+        except SQLAlchemyError:
+            logger.warning(
+                "approve_decision: KIS token persist failed", exc_info=True,
+            )
+            await db.rollback()
+
     except KISClientError as e:
         if order is not None:
             order.status = OrderStatus.REJECTED
@@ -1316,7 +1762,17 @@ async def approve_decision(
         await db.commit()
         raise HTTPException(status_code=502, detail=str(e)) from None
     finally:
-        await kis.close()
+        # 다른 엔드포인트와 동일하게 레지스트리에서 계좌 락 항목을 정리한다
+        # (refcount=0 + unlocked일 때만 제거되므로 진행 중인 호출은 보호됨).
+        try:
+            await clear_account_lock(account_id)
+        except Exception:
+            logger.warning(
+                "clear_account_lock failed after approve_decision: account=%s",
+                account_id, exc_info=True,
+            )
+        if kis is not None:
+            await kis.close()
 
     try:
         await send_telegram_message(

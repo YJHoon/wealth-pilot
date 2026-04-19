@@ -19,8 +19,11 @@ import {
   type ScheduleStatusApi,
   type KisBalanceApi,
   type TradingAccountCreateRequest,
+  type TradingAccountUpdateRequest,
   type TradingStrategyCreateRequest,
   type TradingStrategyUpdateRequest,
+  type AccountRebalanceRequest,
+  type AccountDepositRequest,
   type OrderSide,
   type OrderStatus,
   toTradingAccount,
@@ -70,6 +73,15 @@ export interface UseTradingReturn {
   error: string | null;
   // Account mutations
   createAccount: (data: TradingAccountCreateRequest) => Promise<TradingAccount>;
+  updateAccount: (id: string, data: TradingAccountUpdateRequest) => Promise<TradingAccount>;
+  rebalanceAccount: (
+    id: string,
+    data: AccountRebalanceRequest,
+  ) => Promise<TradingStrategy[]>;
+  depositToAccount: (
+    id: string,
+    data: AccountDepositRequest,
+  ) => Promise<TradingAccount>;
   deactivateAccount: (id: string) => Promise<void>;
   // Strategy mutations
   createStrategy: (data: TradingStrategyCreateRequest) => Promise<TradingStrategy>;
@@ -145,6 +157,20 @@ export function useTrading(): UseTradingReturn {
       if (!canFetch) throw new Error("인증이 필요합니다.");
       const res = await apiFetch<TradingAccountApi>("/api/trading/accounts", {
         method: "POST",
+        body: JSON.stringify(data),
+        ...fetchOpts,
+      });
+      await fetchAccounts();
+      return toTradingAccount(res);
+    },
+    [canFetch, fetchOpts, fetchAccounts],
+  );
+
+  const updateAccount = useCallback(
+    async (id: string, data: TradingAccountUpdateRequest): Promise<TradingAccount> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      const res = await apiFetch<TradingAccountApi>(`/api/trading/accounts/${id}`, {
+        method: "PATCH",
         body: JSON.stringify(data),
         ...fetchOpts,
       });
@@ -257,6 +283,48 @@ export function useTrading(): UseTradingReturn {
       return toTradingStrategy(res);
     },
     [canFetch, fetchOpts, fetchStrategies],
+  );
+
+  const rebalanceAccount = useCallback(
+    async (
+      id: string,
+      data: AccountRebalanceRequest,
+    ): Promise<TradingStrategy[]> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      const res = await apiFetch<TradingStrategyApi[]>(
+        `/api/trading/accounts/${id}/rebalance`,
+        {
+          method: "POST",
+          body: JSON.stringify(data),
+          ...fetchOpts,
+        },
+      );
+      const mapped = res.map(toTradingStrategy);
+      await fetchStrategies();
+      return mapped;
+    },
+    [canFetch, fetchOpts, fetchStrategies],
+  );
+
+  const depositToAccount = useCallback(
+    async (
+      id: string,
+      data: AccountDepositRequest,
+    ): Promise<TradingAccount> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      const res = await apiFetch<TradingAccountApi>(
+        `/api/trading/accounts/${id}/deposit`,
+        {
+          method: "POST",
+          body: JSON.stringify(data),
+          ...fetchOpts,
+        },
+      );
+      await fetchAccounts();
+      await fetchStrategies();
+      return toTradingAccount(res);
+    },
+    [canFetch, fetchOpts, fetchAccounts, fetchStrategies],
   );
 
   // ── Schedule ──
@@ -438,6 +506,9 @@ export function useTrading(): UseTradingReturn {
     loading,
     error,
     createAccount,
+    updateAccount,
+    rebalanceAccount,
+    depositToAccount,
     deactivateAccount,
     createStrategy,
     updateStrategy,
