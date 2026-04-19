@@ -46,6 +46,8 @@ class AccessAction:
     TRADING_ORDER_PLACED = "trading_order_placed"
     TRADING_STRATEGY_CREATE = "trading_strategy_create"
     TRADING_STRATEGY_UPDATE = "trading_strategy_update"
+    TRADING_STRATEGY_DELETE = "trading_strategy_delete"
+    TRADING_STRATEGY_LIQUIDATE = "trading_strategy_liquidate"
     TRADING_DECISION_LIST = "trading_decision_list"
     TRADING_DECISION_APPROVE = "trading_decision_approve"
     TRADING_DECISION_REJECT = "trading_decision_reject"

@@ -1,6 +1,7 @@
 """자동매매 라우터 테스트 — KIS 클라이언트 mock 기반"""
 
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
@@ -10,9 +11,14 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.trading import (
+    OrderSide,
+    OrderStatus,
+    OrderType,
     StrategyType,
     TradingAccount,
     TradingMode,
+    TradingOrder,
+    TradingPosition,
     TradingStrategy,
 )
 from app.models.user import User
@@ -281,3 +287,288 @@ class TestOwnershipValidation:
             json={"name": "test"},
         )
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestKillSwitchPersistence:
+    """Phase 4: 킬 스위치 발동 시 killed_at/killed_reason 영속화."""
+
+    async def test_killed_at_field_persists(
+        self, db_session: AsyncSession, mock_user: User, trading_account: TradingAccount,
+    ):
+        """모델 + 마이그레이션: killed_at, killed_reason 필드가 DB에 영속화됨."""
+        strategy = TradingStrategy(
+            id=uuid.uuid4(),
+            user_id=mock_user.id,
+            account_id=trading_account.id,
+            name="kill_switch persistence",
+            strategy_type=StrategyType.MA_CROSSOVER,
+            params_json={},
+            target_tickers=[],
+            killed_at=datetime(2026, 4, 16, 9, 30, tzinfo=timezone.utc),
+            killed_reason="누적 손실률 35% >= 30%",
+        )
+        db_session.add(strategy)
+        await db_session.commit()
+
+        await db_session.refresh(strategy)
+        assert strategy.killed_at == datetime(2026, 4, 16, 9, 30, tzinfo=timezone.utc)
+        assert strategy.killed_reason == "누적 손실률 35% >= 30%"
+
+
+@pytest.mark.asyncio
+class TestStrategyDelete:
+    """Phase 4 (Task 6): 전략 삭제 엔드포인트."""
+
+    async def _create_fresh_strategy(
+        self, db_session: AsyncSession, user_id: uuid.UUID, account_id: uuid.UUID,
+        *, is_active: bool = True,
+    ) -> TradingStrategy:
+        """fixture와 격리된 새 전략 생성 — DELETE 후 fixture teardown 충돌 방지."""
+        strategy = TradingStrategy(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            account_id=account_id,
+            name="삭제 테스트",
+            strategy_type=StrategyType.MA_CROSSOVER,
+            params_json={},
+            target_tickers=["005930"],
+            is_active=is_active,
+        )
+        db_session.add(strategy)
+        await db_session.commit()
+        await db_session.refresh(strategy)
+        return strategy
+
+    async def test_delete_empty_strategy(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        mock_user: User, trading_account: TradingAccount,
+    ):
+        strategy = await self._create_fresh_strategy(
+            db_session, mock_user.id, trading_account.id,
+        )
+        resp = await auth_client.delete(f"/api/trading/strategies/{strategy.id}")
+        assert resp.status_code == 204
+
+    async def test_delete_killed_strategy_succeeds(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        mock_user: User, trading_account: TradingAccount,
+    ):
+        """is_active=False(킬 스위치 발동된 전략)도 삭제 가능."""
+        strategy = await self._create_fresh_strategy(
+            db_session, mock_user.id, trading_account.id, is_active=False,
+        )
+        strategy.killed_at = datetime.now(timezone.utc)
+        strategy.killed_reason = "테스트 중단"
+        await db_session.commit()
+
+        resp = await auth_client.delete(f"/api/trading/strategies/{strategy.id}")
+        assert resp.status_code == 204
+
+    async def test_delete_with_position_returns_409(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        mock_user: User, trading_account: TradingAccount,
+    ):
+        strategy = await self._create_fresh_strategy(
+            db_session, mock_user.id, trading_account.id,
+        )
+        position = TradingPosition(
+            id=uuid.uuid4(),
+            user_id=mock_user.id,
+            account_id=trading_account.id,
+            strategy_id=strategy.id,
+            ticker="005930",
+            ticker_name="삼성전자",
+            quantity=encrypt_decimal(Decimal("10")),
+            avg_buy_price=encrypt_decimal(Decimal("60000")),
+        )
+        db_session.add(position)
+        await db_session.commit()
+
+        resp = await auth_client.delete(f"/api/trading/strategies/{strategy.id}")
+        assert resp.status_code == 409
+        assert "포지션" in resp.json()["detail"]
+
+    async def test_delete_with_open_order_returns_409(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        mock_user: User, trading_account: TradingAccount,
+    ):
+        strategy = await self._create_fresh_strategy(
+            db_session, mock_user.id, trading_account.id,
+        )
+        order = TradingOrder(
+            id=uuid.uuid4(),
+            user_id=mock_user.id,
+            account_id=trading_account.id,
+            strategy_id=strategy.id,
+            side=OrderSide.BUY,
+            ticker="005930",
+            ticker_name="삼성전자",
+            quantity=encrypt_decimal(Decimal("10")),
+            price=encrypt_decimal(Decimal("60000")),
+            order_type=OrderType.MARKET,
+            status=OrderStatus.SUBMITTED,
+        )
+        db_session.add(order)
+        await db_session.commit()
+
+        resp = await auth_client.delete(f"/api/trading/strategies/{strategy.id}")
+        assert resp.status_code == 409
+        assert "미체결" in resp.json()["detail"]
+
+    async def test_delete_nonexistent_404(self, auth_client: AsyncClient):
+        resp = await auth_client.delete(f"/api/trading/strategies/{uuid.uuid4()}")
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestStrategyLiquidate:
+    """Phase 4 (Task 6): 전략 청산 엔드포인트."""
+
+    async def _create_position(
+        self, db_session: AsyncSession, user_id: uuid.UUID,
+        account_id: uuid.UUID, strategy_id: uuid.UUID,
+        *, ticker: str = "005930", qty: int = 10, avg: int = 60000,
+    ) -> TradingPosition:
+        position = TradingPosition(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            account_id=account_id,
+            strategy_id=strategy_id,
+            ticker=ticker,
+            ticker_name="삼성전자",
+            quantity=encrypt_decimal(Decimal(qty)),
+            avg_buy_price=encrypt_decimal(Decimal(avg)),
+        )
+        db_session.add(position)
+        await db_session.commit()
+        return position
+
+    async def test_liquidate_outside_market_hours_returns_400(
+        self, auth_client: AsyncClient, trading_strategy: TradingStrategy,
+    ):
+        with (
+            patch("app.routers.trading.settings") as mock_settings,
+            patch("app.tasks.trading_cycle._is_market_hours", return_value=False),
+        ):
+            mock_settings.trading_enabled = True
+            mock_settings.kis_credentials = lambda mode: {
+                "app_key": "k", "app_secret": "s",
+                "account_number": "1", "account_product_code": "01",
+            }
+            resp = await auth_client.post(
+                f"/api/trading/strategies/{trading_strategy.id}/liquidate",
+            )
+        assert resp.status_code == 400
+        assert "시장 시간" in resp.json()["detail"]
+
+    async def test_liquidate_no_positions_returns_400(
+        self, auth_client: AsyncClient, trading_strategy: TradingStrategy,
+    ):
+        with (
+            patch("app.routers.trading.settings") as mock_settings,
+            patch("app.tasks.trading_cycle._is_market_hours", return_value=True),
+            patch("app.routers.trading.KISClient") as MockKIS,
+        ):
+            mock_settings.trading_enabled = True
+            mock_settings.kis_credentials = lambda mode: {
+                "app_key": "k", "app_secret": "s",
+                "account_number": "1", "account_product_code": "01",
+            }
+            instance = AsyncMock()
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                f"/api/trading/strategies/{trading_strategy.id}/liquidate",
+            )
+        assert resp.status_code == 400
+        assert "포지션" in resp.json()["detail"]
+
+    async def test_liquidate_with_open_order_returns_409(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        mock_user: User, trading_account: TradingAccount,
+        trading_strategy: TradingStrategy,
+    ):
+        order = TradingOrder(
+            id=uuid.uuid4(),
+            user_id=mock_user.id,
+            account_id=trading_account.id,
+            strategy_id=trading_strategy.id,
+            side=OrderSide.BUY,
+            ticker="005930",
+            ticker_name="삼성전자",
+            quantity=encrypt_decimal(Decimal("10")),
+            price=encrypt_decimal(Decimal("60000")),
+            order_type=OrderType.MARKET,
+            status=OrderStatus.SUBMITTED,
+        )
+        db_session.add(order)
+        await db_session.commit()
+
+        with (
+            patch("app.routers.trading.settings") as mock_settings,
+            patch("app.tasks.trading_cycle._is_market_hours", return_value=True),
+            patch("app.routers.trading.KISClient") as MockKIS,
+        ):
+            mock_settings.trading_enabled = True
+            mock_settings.kis_credentials = lambda mode: {
+                "app_key": "k", "app_secret": "s",
+                "account_number": "1", "account_product_code": "01",
+            }
+            instance = AsyncMock()
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                f"/api/trading/strategies/{trading_strategy.id}/liquidate",
+            )
+        assert resp.status_code == 409
+        assert "미체결" in resp.json()["detail"]
+
+    async def test_liquidate_creates_sell_orders(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        mock_user: User, trading_account: TradingAccount,
+        trading_strategy: TradingStrategy,
+    ):
+        await self._create_position(
+            db_session, mock_user.id, trading_account.id, trading_strategy.id,
+            ticker="005930", qty=10, avg=60000,
+        )
+
+        with (
+            patch("app.routers.trading.settings") as mock_settings,
+            patch("app.tasks.trading_cycle._is_market_hours", return_value=True),
+            patch("app.routers.trading.KISClient") as MockKIS,
+        ):
+            mock_settings.trading_enabled = True
+            mock_settings.kis_credentials = lambda mode: {
+                "app_key": "k", "app_secret": "s",
+                "account_number": "1", "account_product_code": "01",
+            }
+            instance = AsyncMock()
+            instance.get_current_price = AsyncMock(
+                return_value={"price": 65000, "name": "삼성전자"},
+            )
+            instance.place_order = AsyncMock(return_value={"order_id": "KIS123"})
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                f"/api/trading/strategies/{trading_strategy.id}/liquidate",
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["orders_placed"] == 1
+        assert len(data["order_ids"]) == 1
+        instance.place_order.assert_awaited_once()
+
+    async def test_liquidate_disabled_globally_returns_503(
+        self, auth_client: AsyncClient, trading_strategy: TradingStrategy,
+    ):
+        with patch("app.routers.trading.settings") as mock_settings:
+            mock_settings.trading_enabled = False
+            resp = await auth_client.post(
+                f"/api/trading/strategies/{trading_strategy.id}/liquidate",
+            )
+        assert resp.status_code == 503
