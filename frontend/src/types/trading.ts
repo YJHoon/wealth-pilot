@@ -15,6 +15,7 @@ export interface TradingAccountApi {
   initial_capital: number;
   cash_balance: number | null;
   is_active: boolean;
+  allow_netting: boolean;
   token_expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -109,6 +110,7 @@ export interface TradingAccount {
   initialCapital: number;
   cashBalance: number | null;
   isActive: boolean;
+  allowNetting: boolean;
   tokenExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -243,6 +245,10 @@ export interface TradingAccountCreateRequest {
   mode: TradingMode;
 }
 
+export interface TradingAccountUpdateRequest {
+  allow_netting?: boolean;
+}
+
 export interface TradingStrategyCreateRequest {
   account_id: string;
   name: string;
@@ -270,6 +276,7 @@ export function toTradingAccount(api: TradingAccountApi): TradingAccount {
     initialCapital: api.initial_capital,
     cashBalance: api.cash_balance,
     isActive: api.is_active,
+    allowNetting: api.allow_netting ?? false,
     tokenExpiresAt: api.token_expires_at,
     createdAt: api.created_at,
     updatedAt: api.updated_at,

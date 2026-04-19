@@ -35,6 +35,7 @@ from app.schemas.trading import (
     ScheduleStatusResponse,
     TradingAccountCreate,
     TradingAccountResponse,
+    TradingAccountUpdate,
     TradingDecisionResponse,
     TradingOrderResponse,
     TradingPerformanceResponse,
@@ -191,6 +192,35 @@ async def list_trading_accounts(
         logger.warning("TRADING_ACCOUNT_LIST access logging failed", exc_info=True)
 
     return response
+
+
+@router.patch("/accounts/{account_id}", response_model=TradingAccountResponse)
+@limiter.limit("100/minute")
+async def update_trading_account(
+    account_id: UUID,
+    body: TradingAccountUpdate,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """계좌 속성 수정 (Phase 4: allow_netting 토글 등)."""
+    account = await _get_user_account(db, account_id, user.id)
+
+    update_data = body.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(account, key, value)
+
+    await db.commit()
+    await db.refresh(account)
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_ACCOUNT_UPDATE, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_ACCOUNT_UPDATE access logging failed", exc_info=True)
+
+    return account_to_response(account)
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

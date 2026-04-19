@@ -48,6 +48,7 @@ from app.services.strategy_capital import (
     get_realized_pnl,
     get_strategy_available_capital,
 )
+from app.services.order_netting import find_opposite_open_order
 from app.services.order_polling import poll_open_orders
 from app.services.strategy_position import (
     apply_buy_fill,
@@ -425,6 +426,20 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                 if qty <= 0:
                     logger.warning("Stop-loss skipped: zero quantity for %s", pos.ticker)
                     continue
+
+                # Phase 4: 네팅 — 같은 계좌의 반대 방향 PENDING/SUBMITTED 주문이 있으면 스킵.
+                if account.allow_netting:
+                    opp = await find_opposite_open_order(
+                        db, account.id, pos.ticker, OrderSide.SELL,
+                    )
+                    if opp is not None:
+                        skip_msg = (
+                            f"손절 매도 스킵(네팅): 같은 종목 반대 방향 주문 존재 — "
+                            f"{pos.ticker} / opp_order={opp.id}"
+                        )
+                        logger.warning(skip_msg)
+                        skip_messages.append(skip_msg)
+                        continue
                 try:
                     # 폴링 롤백용 pre-state: 매도 직전 보유분
                     pre_qty_snap = decrypt_decimal(pos.quantity)
@@ -725,6 +740,20 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         skip_messages.append(skip_msg)
                         continue
 
+                    # Phase 4: 네팅 — 같은 종목 반대 방향(매도) 주문이 있으면 스킵.
+                    if account.allow_netting:
+                        opp = await find_opposite_open_order(
+                            db, account.id, ticker, OrderSide.BUY,
+                        )
+                        if opp is not None:
+                            skip_msg = (
+                                f"매수 스킵(네팅): 같은 종목 반대 방향 주문 존재 — "
+                                f"{ticker} / opp_order={opp.id}"
+                            )
+                            logger.warning(skip_msg)
+                            skip_messages.append(skip_msg)
+                            continue
+
                     # 매수 주문
                     try:
                         # 종목명 조회
@@ -805,6 +834,20 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     qty = int(decrypt_decimal(pos.quantity))
                     if qty <= 0:
                         continue
+
+                    # Phase 4: 네팅 — 같은 종목 반대 방향(매수) 주문이 있으면 스킵.
+                    if account.allow_netting:
+                        opp = await find_opposite_open_order(
+                            db, account.id, ticker, OrderSide.SELL,
+                        )
+                        if opp is not None:
+                            skip_msg = (
+                                f"매도 스킵(네팅): 같은 종목 반대 방향 주문 존재 — "
+                                f"{ticker} / opp_order={opp.id}"
+                            )
+                            logger.warning(skip_msg)
+                            skip_messages.append(skip_msg)
+                            continue
 
                     try:
                         # 폴링 롤백용 pre-state

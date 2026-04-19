@@ -113,6 +113,13 @@ class TradingAccount(Base):
         Boolean, default=True, server_default=expression.true(), nullable=False,
     )
 
+    # Phase 4: 주문 네팅 옵션 (opt-in).
+    # True면 같은 계좌·같은 종목의 반대 방향 PENDING/SUBMITTED 주문이 있을 때
+    # 신규 주문을 전량 스킵해 동시 매수/매도 충돌을 차단한다.
+    allow_netting: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=expression.false(), nullable=False,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )

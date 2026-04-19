@@ -48,9 +48,14 @@ class TradingAccountResponse(BaseModel):
     initial_capital: Decimal
     cash_balance: Decimal | None
     is_active: bool
+    allow_netting: bool
     token_expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class TradingAccountUpdate(BaseModel):
+    allow_netting: bool | None = None
 
 
 def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:
@@ -60,6 +65,7 @@ def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:
         initial_capital=decrypt_decimal(account.initial_capital),
         cash_balance=decrypt_decimal_optional(account.cash_balance),
         is_active=account.is_active,
+        allow_netting=account.allow_netting,
         token_expires_at=account.token_expires_at,
         created_at=account.created_at,
         updated_at=account.updated_at,
