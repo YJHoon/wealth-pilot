@@ -59,6 +59,7 @@ from app.services.crypto_service import (
     decrypt_decimal,
     decrypt_value,
     encrypt_decimal,
+    encrypt_value,
 )
 from app.services.account_lock import acquire_account_lock, clear_account_lock
 from app.services.kis_client import KISClient, KISClientError
@@ -82,6 +83,42 @@ from app.tasks.trading_scheduler import trading_scheduler
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/trading", tags=["자동매매"])
+
+
+# ──────────────────────────────────────────────
+# KIS 토큰 캐싱 헬퍼
+# ──────────────────────────────────────────────
+
+def _load_kis_token(account: TradingAccount) -> tuple[str | None, datetime | None]:
+    """계좌에 캐시된 KIS 토큰을 복호화하여 반환.
+
+    프로세스 재시작 후에도 DB에 저장된 유효 토큰을 재사용해 재발급을 피한다.
+    (KIS는 1분당 1회 발급 제한이 있어 불필요한 재발급은 장애 위험이 크다.)
+    """
+    if not account.access_token:
+        return None, None
+    return decrypt_value(account.access_token), account.token_expires_at
+
+
+async def _persist_kis_token(
+    db: AsyncSession,
+    account: TradingAccount,
+    kis: KISClient,
+) -> None:
+    """KIS 호출 후 갱신된 토큰을 DB에 저장.
+
+    토큰이 없거나 기존 DB 값과 동일하면 no-op. commit은 호출자 책임이 아니라
+    이 함수 내부에서 수행한다 (락 내부에서 호출되어야 직렬화 보장).
+    """
+    new_token = kis.access_token
+    if not new_token:
+        return
+    old_token = decrypt_value(account.access_token) if account.access_token else None
+    if new_token == old_token and account.token_expires_at == kis.token_expires_at:
+        return
+    account.access_token = encrypt_value(new_token)
+    account.token_expires_at = kis.token_expires_at
+    await db.commit()
 
 
 # ──────────────────────────────────────────────
@@ -131,11 +168,17 @@ async def create_trading_account(
     finally:
         await kis.close()
 
+    # KIS 호출 과정에서 발급된 토큰을 계좌에 즉시 저장해 재발급을 피한다.
+    new_token = kis.access_token
+    new_token_expires_at = kis.token_expires_at
     if existing is not None:
         # 비활성 계좌 재활성화 (잔액 갱신)
         existing.is_active = True
         existing.initial_capital = encrypt_decimal(initial_capital)
         existing.cash_balance = encrypt_decimal(balance["cash"])
+        if new_token:
+            existing.access_token = encrypt_value(new_token)
+            existing.token_expires_at = new_token_expires_at
         account = existing
     else:
         account = TradingAccount(
@@ -143,6 +186,8 @@ async def create_trading_account(
             mode=body.mode,
             initial_capital=encrypt_decimal(initial_capital),
             cash_balance=encrypt_decimal(balance["cash"]),
+            access_token=encrypt_value(new_token) if new_token else None,
+            token_expires_at=new_token_expires_at,
         )
         db.add(account)
     try:
@@ -534,15 +579,19 @@ async def get_account_balance(
     mode_value = account_mode.value
 
     creds = settings.kis_credentials(mode_value)
+    cached_token, cached_expires = _load_kis_token(account)
     kis = KISClient(
         app_key=creds["app_key"],
         app_secret=creds["app_secret"],
         account_number=creds["account_number"],
         account_product_code=creds["account_product_code"],
         mode=account_mode,
+        access_token=cached_token,
+        token_expires_at=cached_expires,
     )
     try:
         balance = await kis.get_balance()
+        await _persist_kis_token(db, account, kis)
         return balance
     except KISClientError as e:
         raise HTTPException(status_code=502, detail=str(e)) from None
@@ -830,12 +879,15 @@ async def liquidate_strategy(
         )
 
     creds = settings.kis_credentials(account.mode.value)
+    cached_token, cached_expires = _load_kis_token(account)
     kis = KISClient(
         app_key=creds["app_key"],
         app_secret=creds["app_secret"],
         account_number=creds["account_number"],
         account_product_code=creds["account_product_code"],
         mode=account.mode,
+        access_token=cached_token,
+        token_expires_at=cached_expires,
     )
 
     orders_created: list[UUID] = []
@@ -984,6 +1036,15 @@ async def liquidate_strategy(
                         "ticker": pos.ticker,
                         "reason": f"내부 오류: {e!s}",
                     })
+
+            # 청산 루프 중 갱신된 KIS 토큰을 락 내부에서 영속화
+            try:
+                await _persist_kis_token(db, account, kis)
+            except SQLAlchemyError:
+                logger.warning(
+                    "liquidate: KIS token persist failed", exc_info=True,
+                )
+                await db.rollback()
 
     finally:
         try:
@@ -1310,14 +1371,15 @@ async def approve_decision(
 
     # KIS 클라이언트 생성
     creds = settings.kis_credentials(account.mode.value)
+    cached_token, cached_expires = _load_kis_token(account)
     kis = KISClient(
         app_key=creds["app_key"],
         app_secret=creds["app_secret"],
         account_number=creds["account_number"],
         account_product_code=creds["account_product_code"],
         mode=account.mode,
-        access_token=decrypt_value(account.access_token) if account.access_token else None,
-        token_expires_at=account.token_expires_at,
+        access_token=cached_token,
+        token_expires_at=cached_expires,
     )
 
     order = None
@@ -1585,6 +1647,15 @@ async def approve_decision(
         await db.flush()
         decision.order_id = order.id
         await db.commit()
+
+        # 승인 과정에서 갱신된 KIS 토큰을 락 내부에서 영속화
+        try:
+            await _persist_kis_token(db, account, kis)
+        except SQLAlchemyError:
+            logger.warning(
+                "approve_decision: KIS token persist failed", exc_info=True,
+            )
+            await db.rollback()
 
     except KISClientError as e:
         if order is not None:

@@ -77,6 +77,8 @@ class TestAccountEndpoints:
         }
         with patch("app.routers.trading.KISClient") as MockKIS:
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.get_balance = AsyncMock(return_value=mock_balance)
             instance.close = AsyncMock()
             MockKIS.return_value = instance
@@ -94,6 +96,8 @@ class TestAccountEndpoints:
     async def test_create_account_kis_failure_returns_502(self, auth_client: AsyncClient):
         with patch("app.routers.trading.KISClient") as MockKIS:
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.get_balance = AsyncMock(side_effect=KISClientError("connection refused"))
             instance.close = AsyncMock()
             MockKIS.return_value = instance
@@ -116,6 +120,8 @@ class TestAccountEndpoints:
         }
         with patch("app.routers.trading.KISClient") as MockKIS:
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.get_balance = AsyncMock(return_value=mock_balance)
             instance.close = AsyncMock()
             MockKIS.return_value = instance
@@ -139,6 +145,122 @@ class TestAccountEndpoints:
     ):
         resp = await auth_client.delete(f"/api/trading/accounts/{trading_account.id}")
         assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+class TestKisTokenCaching:
+    """KIS 토큰 캐싱 — 재발급 최소화 검증."""
+
+    async def test_create_account_persists_new_token(
+        self, auth_client: AsyncClient, db_session: AsyncSession, mock_user: User,
+    ):
+        """신규 계좌 생성 시 KIS에서 받은 토큰이 DB에 암호화 저장된다."""
+        from app.services.crypto_service import decrypt_value
+        from sqlalchemy import select as sa_select
+
+        mock_balance = {
+            "cash": Decimal("5000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        expires = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.access_token = "tok-new"
+            instance.token_expires_at = expires
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.post(
+                "/api/trading/accounts",
+                json={"mode": "paper"},
+            )
+        assert resp.status_code == 201
+
+        result = await db_session.execute(
+            sa_select(TradingAccount).where(TradingAccount.user_id == mock_user.id),
+        )
+        account = result.scalar_one()
+        assert account.access_token is not None
+        assert decrypt_value(account.access_token) == "tok-new"
+        assert account.token_expires_at == expires
+
+    async def test_get_balance_reuses_cached_token(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        trading_account: TradingAccount,
+    ):
+        """DB에 캐시된 토큰이 KISClient 생성자에 주입된다 (재발급 방지)."""
+        from app.services.crypto_service import encrypt_value
+        from datetime import timedelta
+
+        # 기존 계좌에 유효 토큰 사전 저장
+        trading_account.access_token = encrypt_value("tok-cached")
+        trading_account.token_expires_at = datetime.now(timezone.utc) + timedelta(hours=10)
+        await db_session.commit()
+
+        mock_balance = {
+            "cash": Decimal("1000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            instance.access_token = "tok-cached"
+            instance.token_expires_at = trading_account.token_expires_at
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.get(
+                f"/api/trading/accounts/{trading_account.id}/balance",
+            )
+        assert resp.status_code == 200
+        # KISClient 생성자에 토큰이 주입되었는지 확인
+        _, kwargs = MockKIS.call_args
+        assert kwargs.get("access_token") == "tok-cached"
+        assert kwargs.get("token_expires_at") is not None
+
+    async def test_get_balance_persists_refreshed_token(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+        trading_account: TradingAccount,
+    ):
+        """KISClient가 토큰을 재발급하면 새 값이 DB에 저장된다."""
+        from app.services.crypto_service import decrypt_value, encrypt_value
+        from datetime import timedelta
+
+        # 기존 토큰은 만료 임박 (인스턴스 내부에서 재발급했다고 가정)
+        old_expires = datetime.now(timezone.utc) + timedelta(minutes=1)
+        trading_account.access_token = encrypt_value("tok-old")
+        trading_account.token_expires_at = old_expires
+        await db_session.commit()
+
+        new_expires = datetime.now(timezone.utc) + timedelta(hours=20)
+        mock_balance = {
+            "cash": Decimal("1000000"),
+            "total_eval": Decimal("0"),
+            "total_pnl": Decimal("0"),
+            "holdings": [],
+        }
+        with patch("app.routers.trading.KISClient") as MockKIS:
+            instance = AsyncMock()
+            # 호출 후 인스턴스가 새 토큰을 보유 (authenticate 호출 시뮬레이션)
+            instance.access_token = "tok-refreshed"
+            instance.token_expires_at = new_expires
+            instance.get_balance = AsyncMock(return_value=mock_balance)
+            instance.close = AsyncMock()
+            MockKIS.return_value = instance
+
+            resp = await auth_client.get(
+                f"/api/trading/accounts/{trading_account.id}/balance",
+            )
+        assert resp.status_code == 200
+
+        await db_session.refresh(trading_account)
+        assert decrypt_value(trading_account.access_token) == "tok-refreshed"
+        assert trading_account.token_expires_at == new_expires
 
 
 @pytest.mark.asyncio
@@ -814,6 +936,8 @@ class TestStrategyLiquidate:
                 "account_number": "1", "account_product_code": "01",
             }
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.close = AsyncMock()
             MockKIS.return_value = instance
 
@@ -855,6 +979,8 @@ class TestStrategyLiquidate:
                 "account_number": "1", "account_product_code": "01",
             }
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.close = AsyncMock()
             MockKIS.return_value = instance
 
@@ -885,6 +1011,8 @@ class TestStrategyLiquidate:
                 "account_number": "1", "account_product_code": "01",
             }
             instance = AsyncMock()
+            instance.access_token = None
+            instance.token_expires_at = None
             instance.get_current_price = AsyncMock(
                 return_value={"price": 65000, "name": "삼성전자"},
             )
