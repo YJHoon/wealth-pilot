@@ -8,7 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.trading import (
     OrderSide,
@@ -89,6 +89,20 @@ class AccountDepositRequest(BaseModel):
     mode: DepositAllocationMode
     # mode=manual일 때만 사용
     allocations: list[DepositAllocationItem] | None = None
+
+    @model_validator(mode="after")
+    def _check_mode_consistency(self) -> "AccountDepositRequest":
+        if self.mode == DepositAllocationMode.MANUAL:
+            if not self.allocations:
+                raise ValueError(
+                    "manual 모드에서는 allocations가 비어있을 수 없습니다.",
+                )
+        elif self.mode in (DepositAllocationMode.PRO_RATA, DepositAllocationMode.RESERVE):
+            if self.allocations:
+                raise ValueError(
+                    f"{self.mode.value} 모드에서는 allocations를 지정할 수 없습니다.",
+                )
+        return self
 
 
 def account_to_response(account: TradingAccountModel) -> TradingAccountResponse:

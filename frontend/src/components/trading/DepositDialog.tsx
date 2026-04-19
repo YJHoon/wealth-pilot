@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -58,15 +58,22 @@ export function DepositDialog({
   const [mode, setMode] = useState<DepositAllocationMode>("pro_rata");
   const [manualAlloc, setManualAlloc] = useState<Record<string, string>>({});
 
+  // 다이얼로그가 열려 있는 동안 부모가 strategies를 refetch해도 입력 상태가
+  // 초기화되지 않도록, 초기화는 open이 false → true로 바뀔 때만 수행한다.
+  // 초기화 시점의 전략 스냅샷을 읽기 위해 ref로 최신값을 추적한다.
+  const strategiesRef = useRef(strategies);
+  strategiesRef.current = strategies;
+
   useEffect(() => {
     if (open) {
+      const snapshot = strategiesRef.current;
       setAmountStr("");
-      setMode(strategies.length > 0 ? "pro_rata" : "reserve");
+      setMode(snapshot.length > 0 ? "pro_rata" : "reserve");
       const init: Record<string, string> = {};
-      for (const s of strategies) init[s.id] = "";
+      for (const s of snapshot) init[s.id] = "";
       setManualAlloc(init);
     }
-  }, [open, strategies]);
+  }, [open]);
 
   const amount = Number(amountStr) || 0;
 

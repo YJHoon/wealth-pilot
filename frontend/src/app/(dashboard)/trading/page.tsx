@@ -44,6 +44,7 @@ export default function TradingPage() {
   const [isRebalancing, setIsRebalancing] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [isDepositing, setIsDepositing] = useState(false);
+  const [nettingUpdating, setNettingUpdating] = useState(false);
 
   // ── Strategy handlers ──
 
@@ -130,6 +131,8 @@ export default function TradingPage() {
 
   const handleToggleNetting = useCallback(
     async (accountId: string, enabled: boolean) => {
+      if (nettingUpdating) return;
+      setNettingUpdating(true);
       try {
         await trading.updateAccount(accountId, { allow_netting: enabled });
         toast.success(
@@ -137,9 +140,11 @@ export default function TradingPage() {
         );
       } catch {
         toast.error("네팅 설정 변경에 실패했습니다.");
+      } finally {
+        setNettingUpdating(false);
       }
     },
-    [trading],
+    [trading, nettingUpdating],
   );
 
   const handleRebalance = useCallback(
@@ -269,6 +274,7 @@ export default function TradingPage() {
               type="checkbox"
               className="size-3.5 rounded border-border"
               checked={selectedAccount.allowNetting}
+              disabled={nettingUpdating}
               onChange={(e) =>
                 handleToggleNetting(selectedAccount.id, e.target.checked)
               }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -37,15 +37,22 @@ export function RebalanceDialog({
 }: RebalanceDialogProps) {
   const [allocations, setAllocations] = useState<Record<string, string>>({});
 
+  // 다이얼로그가 열려 있는 동안 부모가 strategies를 refetch해도 사용자가
+  // 편집 중인 입력값이 덮어쓰여지지 않도록, 초기화는 open이 false → true로
+  // 바뀔 때만 수행하고 그 시점의 최신 strategies 스냅샷만 읽는다.
+  const strategiesRef = useRef(strategies);
+  strategiesRef.current = strategies;
+
   useEffect(() => {
     if (open) {
+      const snapshot = strategiesRef.current;
       const init: Record<string, string> = {};
-      for (const s of strategies) {
+      for (const s of snapshot) {
         init[s.id] = String(Math.floor(s.initialCapital ?? 0));
       }
       setAllocations(init);
     }
-  }, [open, strategies]);
+  }, [open]);
 
   const accountTotal = account?.initialCapital ?? 0;
 
