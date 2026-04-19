@@ -101,6 +101,34 @@ def _is_market_hours() -> bool:
     return market_open <= now <= market_close
 
 
+def decide_buy_quantity(
+    risk_mgr: RiskManager,
+    available_cash: Decimal,
+    total_eval: Decimal,
+    current_price: Decimal,
+    is_llm_strategy: bool,
+    llm_suggested_quantity: int | None,
+) -> int:
+    """매수할 정수 주수 결정.
+
+    risk_mgr가 항상 상한(가용현금, max_position_pct)을 결정.
+    LLM 전략이고 suggested_quantity가 유효하면 그 값을 사용하되 상한으로 clamp.
+    그 외에는 상한 그대로 반환.
+
+    반환값이 0이면 소수점 매매 불가로 잘렸거나 비중 한도 초과.
+    """
+    risk_max_qty = risk_mgr.calculate_position_size(
+        available_cash, total_eval, current_price,
+    )
+    if (
+        is_llm_strategy
+        and llm_suggested_quantity is not None
+        and llm_suggested_quantity > 0
+    ):
+        return min(llm_suggested_quantity, risk_max_qty)
+    return risk_max_qty
+
+
 async def execute_trading_cycle(user_id_str: str, strategy_id_str: str):
     """단일 매매 사이클 실행.
 
@@ -694,11 +722,29 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                     if ticker in recently_sold_tickers:
                         logger.info("Buy skipped (sold earlier this cycle): %s", ticker)
                         continue
-                    # 매수 가능 수량 계산
-                    qty = risk_mgr.calculate_position_size(
-                        available_cash, total_eval, current_price,
+                    # 매수 수량 결정 — decide_buy_quantity 참고.
+                    qty = decide_buy_quantity(
+                        risk_mgr=risk_mgr,
+                        available_cash=available_cash,
+                        total_eval=total_eval,
+                        current_price=Decimal(str(current_price)),
+                        is_llm_strategy=is_llm_strategy,
+                        llm_suggested_quantity=(
+                            llm_decision.suggested_quantity
+                            if llm_decision is not None else None
+                        ),
                     )
                     if qty <= 0:
+                        # 1주 가격 > 가용현금이거나 max_position_pct로 0이 된 경우.
+                        # 국내주식은 소수점 매매 불가라 정수 0주로 잘린 것 — 사용자가
+                        # 원인을 모르면 "왜 안 사지?"라 의아해지니 명시적으로 알림.
+                        skip_msg = (
+                            f"매수 스킵: 1주 가격 {Decimal(str(current_price)):,.0f}원 > "
+                            f"가용현금 {available_cash:,.0f}원 또는 비중 한도 초과 "
+                            f"({ticker})"
+                        )
+                        logger.info(skip_msg)
+                        skip_messages.append(skip_msg)
                         continue
 
                     # 이후 산술은 모두 Decimal로 일관 처리
