@@ -32,6 +32,9 @@ cryptography==46.0.5
 # 시세 조회
 yfinance>=0.2.36
 
+# 한국 종목 마스터(KOSPI/KOSDAQ 이름↔코드 매핑, 종목 검색)
+finance-datareader>=0.9.96,<1.0
+
 # 캐시
 cachetools>=5.3,<6.0
 

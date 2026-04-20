@@ -22,6 +22,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { TickerCombobox } from "@/components/common/TickerCombobox";
 import { MARKETS, type MarketType, type WatchlistItem } from "@/types";
 import { toNumber } from "@/lib/form-utils";
 
@@ -113,12 +114,23 @@ export function WatchlistAddDialog({
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2 space-y-1.5">
               <Label htmlFor="ticker">종목코드</Label>
-              <Input
-                id="ticker"
-                placeholder="005930, AAPL"
-                disabled={!!editingItem}
-                {...register("ticker")}
-              />
+              {marketValue === "KRX" && !editingItem ? (
+                <TickerCombobox
+                  mode="single"
+                  value={watch("ticker") || null}
+                  onChange={(ticker) =>
+                    setValue("ticker", ticker ?? "", { shouldValidate: true })
+                  }
+                  placeholder="종목명 또는 코드 검색 (예: 삼성전자)"
+                />
+              ) : (
+                <Input
+                  id="ticker"
+                  placeholder={marketValue === "KRX" ? "005930" : "AAPL"}
+                  disabled={!!editingItem}
+                  {...register("ticker")}
+                />
+              )}
               {errors.ticker && (
                 <p className="text-xs text-destructive">{errors.ticker.message}</p>
               )}
@@ -127,7 +139,10 @@ export function WatchlistAddDialog({
               <Label>시장</Label>
               <Select
                 value={marketValue}
-                onValueChange={(v) => setValue("market", v as MarketType)}
+                onValueChange={(v) => {
+                  setValue("market", v as MarketType);
+                  if (!editingItem) setValue("ticker", "");
+                }}
                 disabled={!!editingItem}
               >
                 <SelectTrigger>

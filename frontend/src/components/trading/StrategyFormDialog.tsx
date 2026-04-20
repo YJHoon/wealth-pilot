@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm, Controller, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
@@ -21,6 +21,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { TickerCombobox } from "@/components/common/TickerCombobox";
 import { toNumber as toNum } from "@/lib/form-utils";
 import type {
   StrategyType,
@@ -29,6 +30,8 @@ import type {
   TradingStrategyUpdateRequest,
 } from "@/types/trading";
 import { strategyTypeLabels } from "@/types/trading";
+
+const MAX_TICKERS = 50;
 
 const DEFAULT_PARAMS: Record<StrategyType, Record<string, number>> = {
   ma_crossover: { fast_period: 5, slow_period: 20, rsi_period: 14, rsi_overbought: 70, rsi_oversold: 30 },
@@ -48,6 +51,10 @@ const schema = z.object({
     toNum,
     z.number({ message: "숫자를 입력해주세요" }).int().min(0).max(100),
   ),
+  // 콤보박스에서 선택된 6자리 종목코드 리스트. 빈 배열 허용(종목 없는 전략).
+  target_tickers: z
+    .array(z.string().regex(/^\d{6}$/, "6자리 종목코드만 허용됩니다"))
+    .max(MAX_TICKERS, `종목은 최대 ${MAX_TICKERS}개까지 선택할 수 있습니다`),
 });
 
 type StrategyFormValues = z.output<typeof schema>;
@@ -81,6 +88,7 @@ export function StrategyFormDialog({
       interval_minutes: 10,
       market_hours_only: true,
       priority: 0,
+      target_tickers: [],
     },
   });
 
@@ -92,6 +100,7 @@ export function StrategyFormDialog({
         interval_minutes: editingStrategy.intervalMinutes,
         market_hours_only: editingStrategy.marketHoursOnly,
         priority: editingStrategy.priority ?? 0,
+        target_tickers: editingStrategy.targetTickers,
       });
     } else {
       form.reset({
@@ -100,6 +109,7 @@ export function StrategyFormDialog({
         interval_minutes: 10,
         market_hours_only: true,
         priority: 0,
+        target_tickers: [],
       });
     }
   }, [editingStrategy, form, open]);
@@ -108,6 +118,7 @@ export function StrategyFormDialog({
     if (isEditing && editingStrategy) {
       await onSubmitUpdate(editingStrategy.id, {
         name: values.name,
+        target_tickers: values.target_tickers,
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
         priority: values.priority,
@@ -118,6 +129,7 @@ export function StrategyFormDialog({
         name: values.name,
         strategy_type: values.strategy_type,
         params_json: DEFAULT_PARAMS[values.strategy_type],
+        target_tickers: values.target_tickers,
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
         priority: values.priority,
@@ -133,7 +145,7 @@ export function StrategyFormDialog({
         <DialogHeader>
           <DialogTitle>{isEditing ? "전략 수정" : "전략 생성"}</DialogTitle>
           <DialogDescription>
-            자동매매 전략을 설정합니다. 종목은 전략이 자동으로 탐색합니다.
+            자동매매 전략을 설정합니다. 감시할 종목코드를 직접 지정하세요.
           </DialogDescription>
         </DialogHeader>
 
@@ -209,6 +221,31 @@ export function StrategyFormDialog({
             {form.formState.errors.priority && (
               <p className="text-xs text-destructive">
                 {form.formState.errors.priority.message}
+              </p>
+            )}
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label>감시 종목</Label>
+            <Controller
+              control={form.control}
+              name="target_tickers"
+              render={({ field }) => (
+                <TickerCombobox
+                  mode="multiple"
+                  value={field.value}
+                  onChange={field.onChange}
+                  max={MAX_TICKERS}
+                  placeholder="종목명 또는 코드 검색 (예: 삼성전자)"
+                />
+              )}
+            />
+            <p className="text-xs text-muted-foreground">
+              종목명으로 검색해 추가하세요. 비워두면 매매하지 않습니다. (최대 {MAX_TICKERS}개)
+            </p>
+            {form.formState.errors.target_tickers && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.target_tickers.message}
               </p>
             )}
           </div>

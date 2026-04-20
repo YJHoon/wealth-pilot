@@ -11,6 +11,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { TickerCombobox } from "@/components/common/TickerCombobox";
 import { Search, Loader2 } from "lucide-react";
 import { MARKETS, type MarketType } from "@/types";
 
@@ -68,19 +69,34 @@ export function TickerSearch({ onSearch }: TickerSearchProps) {
             ))}
           </SelectContent>
         </Select>
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void handleSubmit(); }}
-            placeholder="종목코드 또는 티커 입력 (예: 005930, AAPL)"
-            className="pl-9"
-          />
-        </div>
-        <Button onClick={() => void handleSubmit()} disabled={!query.trim() || searching}>
-          {searching ? <Loader2 className="size-4 animate-spin" /> : "검색"}
-        </Button>
+        {market === "KRX" ? (
+          <div className="flex-1">
+            <TickerCombobox
+              mode="single"
+              value={null}
+              onChange={(ticker) => {
+                if (ticker) void handleSubmit(ticker, market);
+              }}
+              placeholder="종목명 또는 코드 검색 (예: 삼성전자)"
+            />
+          </div>
+        ) : (
+          <>
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void handleSubmit(); }}
+                placeholder="티커 입력 (예: AAPL, TSLA)"
+                className="pl-9"
+              />
+            </div>
+            <Button onClick={() => void handleSubmit()} disabled={!query.trim() || searching}>
+              {searching ? <Loader2 className="size-4 animate-spin" /> : "검색"}
+            </Button>
+          </>
+        )}
       </div>
 
       {/* 인기 종목 */}

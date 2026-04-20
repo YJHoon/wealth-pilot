@@ -10,7 +10,7 @@ from app.config import settings
 from app.database import engine
 from app.middleware.rate_limit import limiter
 from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.routers import analysis, assets, auth, dashboard, groups, onboarding, prices, trading
+from app.routers import analysis, assets, auth, dashboard, groups, market, onboarding, prices, trading
 from app.tasks.trading_scheduler import trading_scheduler
 
 
@@ -77,6 +77,7 @@ app.include_router(dashboard.router)
 app.include_router(onboarding.router)
 app.include_router(trading.router)
 app.include_router(analysis.router)
+app.include_router(market.router)
 
 
 @app.get("/health")
