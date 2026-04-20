@@ -32,6 +32,7 @@ import type {
 import { strategyTypeLabels } from "@/types/trading";
 
 const TICKER_REGEX = /^\d{6}$/;
+const MAX_TICKERS = 50;
 
 /** "005930, 035720\n055550" → ["005930","035720","055550"] (trim, 빈값 제거, 중복 제거) */
 function parseTickerInput(raw: string): string[] {
@@ -64,12 +65,23 @@ const schema = z.object({
     z.number({ message: "숫자를 입력해주세요" }).int().min(0).max(100),
   ),
   // 문자열 그대로 저장하고 제출 시 배열로 파싱. 빈 값은 허용(종목 없는 전략).
-  target_tickers_raw: z
-    .string()
-    .refine(
-      (val) => parseTickerInput(val).every((t) => TICKER_REGEX.test(t)),
-      { message: "종목코드는 6자리 숫자여야 합니다 (예: 005930)" },
-    ),
+  target_tickers_raw: z.string().superRefine((val, ctx) => {
+    const tokens = parseTickerInput(val);
+    const invalid = tokens.filter((t) => !TICKER_REGEX.test(t));
+    if (invalid.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `유효하지 않은 종목코드: ${invalid.join(", ")} (6자리 숫자, 예: 005930)`,
+      });
+      return;
+    }
+    if (tokens.length > MAX_TICKERS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `종목은 최대 ${MAX_TICKERS}개까지 입력할 수 있습니다 (현재 ${tokens.length}개)`,
+      });
+    }
+  }),
 });
 
 type StrategyFormValues = z.output<typeof schema>;

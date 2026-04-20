@@ -735,12 +735,22 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
                         ),
                     )
                     if qty <= 0:
-                        # 1주 가격 > 가용현금이거나 max_position_pct로 0이 된 경우.
-                        # 국내주식은 소수점 매매 불가라 정수 0주로 잘린 것 — 사용자가
-                        # 원인을 모르면 "왜 안 사지?"라 의아해지니 명시적으로 알림.
+                        # qty=0 원인을 가용현금/비중 한도 중 어느 쪽이 binding인지 명시.
+                        # 국내주식 정수 0주로 잘린 것 — 사용자가 원인을 알 수 있어야 함.
+                        price_dec = Decimal(str(current_price))
+                        position_cap = total_eval * risk_mgr.max_position_pct
+                        binding = []
+                        if available_cash < price_dec:
+                            binding.append(f"가용현금 {available_cash:,.0f}원")
+                        if position_cap < price_dec:
+                            binding.append(
+                                f"비중 한도 {position_cap:,.0f}원 "
+                                f"(총평가 {total_eval:,.0f}원 × "
+                                f"{risk_mgr.max_position_pct:.0%})"
+                            )
+                        detail = " / ".join(binding) if binding else "제약 불명"
                         skip_msg = (
-                            f"매수 스킵: 1주 가격 {Decimal(str(current_price)):,.0f}원 > "
-                            f"가용현금 {available_cash:,.0f}원 또는 비중 한도 초과 "
+                            f"매수 스킵: 1주 가격 {price_dec:,.0f}원 > {detail} "
                             f"({ticker})"
                         )
                         logger.info(skip_msg)
