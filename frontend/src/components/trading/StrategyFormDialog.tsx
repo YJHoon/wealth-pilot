@@ -21,6 +21,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { toNumber as toNum } from "@/lib/form-utils";
 import type {
   StrategyType,
@@ -29,6 +30,20 @@ import type {
   TradingStrategyUpdateRequest,
 } from "@/types/trading";
 import { strategyTypeLabels } from "@/types/trading";
+
+const TICKER_REGEX = /^\d{6}$/;
+
+/** "005930, 035720\n055550" → ["005930","035720","055550"] (trim, 빈값 제거, 중복 제거) */
+function parseTickerInput(raw: string): string[] {
+  return Array.from(
+    new Set(
+      raw
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  );
+}
 
 const DEFAULT_PARAMS: Record<StrategyType, Record<string, number>> = {
   ma_crossover: { fast_period: 5, slow_period: 20, rsi_period: 14, rsi_overbought: 70, rsi_oversold: 30 },
@@ -48,6 +63,13 @@ const schema = z.object({
     toNum,
     z.number({ message: "숫자를 입력해주세요" }).int().min(0).max(100),
   ),
+  // 문자열 그대로 저장하고 제출 시 배열로 파싱. 빈 값은 허용(종목 없는 전략).
+  target_tickers_raw: z
+    .string()
+    .refine(
+      (val) => parseTickerInput(val).every((t) => TICKER_REGEX.test(t)),
+      { message: "종목코드는 6자리 숫자여야 합니다 (예: 005930)" },
+    ),
 });
 
 type StrategyFormValues = z.output<typeof schema>;
@@ -81,6 +103,7 @@ export function StrategyFormDialog({
       interval_minutes: 10,
       market_hours_only: true,
       priority: 0,
+      target_tickers_raw: "",
     },
   });
 
@@ -92,6 +115,7 @@ export function StrategyFormDialog({
         interval_minutes: editingStrategy.intervalMinutes,
         market_hours_only: editingStrategy.marketHoursOnly,
         priority: editingStrategy.priority ?? 0,
+        target_tickers_raw: editingStrategy.targetTickers.join(", "),
       });
     } else {
       form.reset({
@@ -100,14 +124,17 @@ export function StrategyFormDialog({
         interval_minutes: 10,
         market_hours_only: true,
         priority: 0,
+        target_tickers_raw: "",
       });
     }
   }, [editingStrategy, form, open]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
+    const tickers = parseTickerInput(values.target_tickers_raw);
     if (isEditing && editingStrategy) {
       await onSubmitUpdate(editingStrategy.id, {
         name: values.name,
+        target_tickers: tickers,
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
         priority: values.priority,
@@ -118,6 +145,7 @@ export function StrategyFormDialog({
         name: values.name,
         strategy_type: values.strategy_type,
         params_json: DEFAULT_PARAMS[values.strategy_type],
+        target_tickers: tickers,
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
         priority: values.priority,
@@ -133,7 +161,7 @@ export function StrategyFormDialog({
         <DialogHeader>
           <DialogTitle>{isEditing ? "전략 수정" : "전략 생성"}</DialogTitle>
           <DialogDescription>
-            자동매매 전략을 설정합니다. 종목은 전략이 자동으로 탐색합니다.
+            자동매매 전략을 설정합니다. 감시할 종목코드를 직접 지정하세요.
           </DialogDescription>
         </DialogHeader>
 
@@ -209,6 +237,24 @@ export function StrategyFormDialog({
             {form.formState.errors.priority && (
               <p className="text-xs text-destructive">
                 {form.formState.errors.priority.message}
+              </p>
+            )}
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="target_tickers_raw">감시 종목 (6자리 코드)</Label>
+            <Textarea
+              id="target_tickers_raw"
+              rows={3}
+              placeholder="005930, 035720, 055550"
+              {...form.register("target_tickers_raw")}
+            />
+            <p className="text-xs text-muted-foreground">
+              콤마, 공백, 줄바꿈으로 여러 종목 구분. 비워두면 매매하지 않음.
+            </p>
+            {form.formState.errors.target_tickers_raw && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.target_tickers_raw.message}
               </p>
             )}
           </div>
