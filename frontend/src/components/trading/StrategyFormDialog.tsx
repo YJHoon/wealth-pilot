@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm, Controller, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
@@ -21,7 +21,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
+import { TickerCombobox } from "@/components/common/TickerCombobox";
 import { toNumber as toNum } from "@/lib/form-utils";
 import type {
   StrategyType,
@@ -31,20 +31,7 @@ import type {
 } from "@/types/trading";
 import { strategyTypeLabels } from "@/types/trading";
 
-const TICKER_REGEX = /^\d{6}$/;
 const MAX_TICKERS = 50;
-
-/** "005930, 035720\n055550" → ["005930","035720","055550"] (trim, 빈값 제거, 중복 제거) */
-function parseTickerInput(raw: string): string[] {
-  return Array.from(
-    new Set(
-      raw
-        .split(/[\s,]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ),
-  );
-}
 
 const DEFAULT_PARAMS: Record<StrategyType, Record<string, number>> = {
   ma_crossover: { fast_period: 5, slow_period: 20, rsi_period: 14, rsi_overbought: 70, rsi_oversold: 30 },
@@ -64,24 +51,10 @@ const schema = z.object({
     toNum,
     z.number({ message: "숫자를 입력해주세요" }).int().min(0).max(100),
   ),
-  // 문자열 그대로 저장하고 제출 시 배열로 파싱. 빈 값은 허용(종목 없는 전략).
-  target_tickers_raw: z.string().superRefine((val, ctx) => {
-    const tokens = parseTickerInput(val);
-    const invalid = tokens.filter((t) => !TICKER_REGEX.test(t));
-    if (invalid.length > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `유효하지 않은 종목코드: ${invalid.join(", ")} (6자리 숫자, 예: 005930)`,
-      });
-      return;
-    }
-    if (tokens.length > MAX_TICKERS) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `종목은 최대 ${MAX_TICKERS}개까지 입력할 수 있습니다 (현재 ${tokens.length}개)`,
-      });
-    }
-  }),
+  // 콤보박스에서 선택된 6자리 종목코드 리스트. 빈 배열 허용(종목 없는 전략).
+  target_tickers: z
+    .array(z.string().regex(/^\d{6}$/, "6자리 종목코드만 허용됩니다"))
+    .max(MAX_TICKERS, `종목은 최대 ${MAX_TICKERS}개까지 선택할 수 있습니다`),
 });
 
 type StrategyFormValues = z.output<typeof schema>;
@@ -115,7 +88,7 @@ export function StrategyFormDialog({
       interval_minutes: 10,
       market_hours_only: true,
       priority: 0,
-      target_tickers_raw: "",
+      target_tickers: [],
     },
   });
 
@@ -127,7 +100,7 @@ export function StrategyFormDialog({
         interval_minutes: editingStrategy.intervalMinutes,
         market_hours_only: editingStrategy.marketHoursOnly,
         priority: editingStrategy.priority ?? 0,
-        target_tickers_raw: editingStrategy.targetTickers.join(", "),
+        target_tickers: editingStrategy.targetTickers,
       });
     } else {
       form.reset({
@@ -136,17 +109,16 @@ export function StrategyFormDialog({
         interval_minutes: 10,
         market_hours_only: true,
         priority: 0,
-        target_tickers_raw: "",
+        target_tickers: [],
       });
     }
   }, [editingStrategy, form, open]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
-    const tickers = parseTickerInput(values.target_tickers_raw);
     if (isEditing && editingStrategy) {
       await onSubmitUpdate(editingStrategy.id, {
         name: values.name,
-        target_tickers: tickers,
+        target_tickers: values.target_tickers,
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
         priority: values.priority,
@@ -157,7 +129,7 @@ export function StrategyFormDialog({
         name: values.name,
         strategy_type: values.strategy_type,
         params_json: DEFAULT_PARAMS[values.strategy_type],
-        target_tickers: tickers,
+        target_tickers: values.target_tickers,
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
         priority: values.priority,
@@ -254,19 +226,26 @@ export function StrategyFormDialog({
           </div>
 
           <div className="grid gap-1.5">
-            <Label htmlFor="target_tickers_raw">감시 종목 (6자리 코드)</Label>
-            <Textarea
-              id="target_tickers_raw"
-              rows={3}
-              placeholder="005930, 035720, 055550"
-              {...form.register("target_tickers_raw")}
+            <Label>감시 종목</Label>
+            <Controller
+              control={form.control}
+              name="target_tickers"
+              render={({ field }) => (
+                <TickerCombobox
+                  mode="multiple"
+                  value={field.value}
+                  onChange={field.onChange}
+                  max={MAX_TICKERS}
+                  placeholder="종목명 또는 코드 검색 (예: 삼성전자)"
+                />
+              )}
             />
             <p className="text-xs text-muted-foreground">
-              콤마, 공백, 줄바꿈으로 여러 종목 구분. 비워두면 매매하지 않음.
+              종목명으로 검색해 추가하세요. 비워두면 매매하지 않습니다. (최대 {MAX_TICKERS}개)
             </p>
-            {form.formState.errors.target_tickers_raw && (
+            {form.formState.errors.target_tickers && (
               <p className="text-xs text-destructive">
-                {form.formState.errors.target_tickers_raw.message}
+                {form.formState.errors.target_tickers.message}
               </p>
             )}
           </div>
