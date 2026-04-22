@@ -168,12 +168,17 @@ class TestSelectAndPersist:
         )
         await db_session.commit()
 
-    async def test_empty_result_keeps_previous_but_logs_history(
+    async def test_empty_result_keeps_previous_and_bumps_generated_at(
         self, db_session, mock_user
     ):
+        """빈 결과: 기존 tickers 유지 + generated_at 갱신(stale 재진입 차단).
+
+        schedule/manual 트리거는 audit 이력 유지, lazy는 이력 스킵.
+        """
+        old_generated = datetime.now(timezone.utc) - timedelta(hours=48)
         prev = {
             "tickers": ["005930"],
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": old_generated.isoformat(),
             "rule_version": "v1-volume-rank",
         }
         strategy = await _make_strategy(
@@ -184,24 +189,28 @@ class TestSelectAndPersist:
         )
 
         async def loader(_m):
-            # 시드 너무 작음 → 전부 제외 예정이지만 여기서는 universe 자체가 비어있어도 동일 효과
             return []
 
+        # schedule 트리거 — 이력 기록 유지
         await select_and_persist(
             db_session,
             strategy,
             available_cash=Decimal("10000000"),
             total_eval=Decimal("10000000"),
-            triggered_by="lazy",
+            triggered_by="schedule",
             loader=loader,
         )
         await db_session.commit()
         await db_session.refresh(strategy)
 
-        # 기존 리스트 유지
+        # 기존 tickers 유지
         assert strategy.auto_selected_tickers["tickers"] == ["005930"]
+        # generated_at 은 최신으로 갱신 (is_stale 재진입 차단)
+        new_generated = datetime.fromisoformat(
+            strategy.auto_selected_tickers["generated_at"]
+        )
+        assert new_generated > old_generated
 
-        # 이력은 기록됨 (selected 빈 상태로)
         rows = (
             await db_session.execute(
                 select(AutoTickerSelection).where(
@@ -217,6 +226,47 @@ class TestSelectAndPersist:
             {"sid": str(strategy.id)},
         )
         await db_session.commit()
+
+    async def test_empty_lazy_result_skips_history(self, db_session, mock_user):
+        """lazy 트리거의 빈 결과는 이력 스팸 방지를 위해 기록하지 않는다."""
+        prev = {
+            "tickers": ["005930"],
+            "generated_at": (
+                datetime.now(timezone.utc) - timedelta(hours=48)
+            ).isoformat(),
+            "rule_version": "v1-volume-rank",
+        }
+        strategy = await _make_strategy(
+            db_session,
+            mock_user,
+            auto_select_config={"enabled": True, "top_n": 3, "min_volume_value": 0},
+            auto_selected_tickers=prev,
+        )
+
+        async def loader(_m):
+            return []
+
+        await select_and_persist(
+            db_session,
+            strategy,
+            available_cash=Decimal("10000000"),
+            total_eval=Decimal("10000000"),
+            triggered_by="lazy",
+            loader=loader,
+        )
+        await db_session.commit()
+        await db_session.refresh(strategy)
+
+        assert strategy.auto_selected_tickers["tickers"] == ["005930"]
+
+        rows = (
+            await db_session.execute(
+                select(AutoTickerSelection).where(
+                    AutoTickerSelection.strategy_id == strategy.id
+                )
+            )
+        ).scalars().all()
+        assert rows == []
 
 
 class TestGetAutoTickers:

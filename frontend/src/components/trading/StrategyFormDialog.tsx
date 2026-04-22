@@ -471,9 +471,21 @@ function AutoTickerPanel({
   const [preview, setPreview] = useState<AutoTickerPreviewResponse | null>(null);
   const [history, setHistory] = useState<AutoTickerSelectionHistory[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 갱신 직후 부모의 strategy prop 업데이트 지연 대비 로컬 override.
+  const [refreshedLast, setRefreshedLast] = useState<
+    TradingStrategy["autoSelectedTickers"] | null
+  >(null);
 
   const enabled = strategy.autoSelectConfig.enabled;
-  const last = strategy.autoSelectedTickers;
+  const last = refreshedLast ?? strategy.autoSelectedTickers;
+
+  // 전략이 바뀌면 로컬 override 초기화.
+  useEffect(() => {
+    setRefreshedLast(null);
+    setPreview(null);
+    setHistory(null);
+    setError(null);
+  }, [strategy.id]);
 
   const handlePreview = useCallback(async () => {
     if (!onPreview) return;
@@ -494,7 +506,9 @@ function AutoTickerPanel({
     setBusy("refresh");
     setError(null);
     try {
-      await onRefresh(strategy.id);
+      const updated = await onRefresh(strategy.id);
+      setRefreshedLast(updated.autoSelectedTickers);
+      setPreview(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "갱신 실패");
     } finally {

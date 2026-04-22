@@ -44,17 +44,21 @@ async def execute_daily_ticker_refresh(
                 continue
             total += 1
             try:
-                seed = get_initial_capital(strategy)
-                if seed <= 0:
-                    seed = Decimal("1000000")  # 안전 기본값 — 시드 0인 전략 방지
-                await select_and_persist(
-                    db,
-                    strategy,
-                    available_cash=seed,
-                    total_eval=seed,
-                    triggered_by="schedule",
-                    loader=loader,
-                )
+                # 전략별 SAVEPOINT: 한 전략의 SQL 오류가 세션을 오염시키거나
+                # 다른 전략의 변경분을 날리지 않도록 격리. flush 로 오류를 조기 검출.
+                async with db.begin_nested():
+                    seed = get_initial_capital(strategy)
+                    if seed <= 0:
+                        seed = Decimal("1000000")  # 안전 기본값 — 시드 0인 전략 방지
+                    await select_and_persist(
+                        db,
+                        strategy,
+                        available_cash=seed,
+                        total_eval=seed,
+                        triggered_by="schedule",
+                        loader=loader,
+                    )
+                    await db.flush()
                 refreshed += 1
             except Exception:
                 errors += 1

@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Awaitable, Callable, Literal, Sequence
 
 import FinanceDataReader as fdr
@@ -99,11 +99,13 @@ def _load_universe_sync(market: MarketFilter) -> list[StockCandidate]:
                 continue
             try:
                 close = Decimal(str(row.get("Close", 0) or 0))
+                if not close.is_finite() or close <= 0:
+                    continue
                 amount = int(row.get("Amount", 0) or 0)
                 marcap = int(row.get("Marcap", 0) or 0)
-            except (ValueError, TypeError, ArithmeticError):
-                continue
-            if close <= 0 or amount <= 0:
+                if amount <= 0:
+                    continue
+            except (ValueError, TypeError, InvalidOperation, ArithmeticError):
                 continue
             out.append(
                 StockCandidate(

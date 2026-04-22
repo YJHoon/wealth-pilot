@@ -114,11 +114,22 @@ async def select_and_persist(
     if result.selected:
         strategy.auto_selected_tickers = _serialize_selection(result, now=now)
     else:
-        # 결과 0개 — 기존 리스트 유지, 경고 로그. 이력은 남겨 audit 가능하게.
+        # 결과 0개 — 기존 tickers 유지하되 generated_at만 현재로 갱신해 is_stale
+        # 재진입 루프와 lazy 이력 폭주를 막는다. 다음 lazy 재시도는 24h 이후.
+        old = strategy.auto_selected_tickers or {}
+        strategy.auto_selected_tickers = {
+            "tickers": list(old.get("tickers") or []),
+            "generated_at": now.isoformat(),
+            "rule_version": old.get("rule_version") or result.rule_version,
+            **({"details": old["details"]} if old.get("details") else {}),
+        }
         logger.warning(
             "Auto ticker selection returned 0 tickers: strategy=%s, trigger=%s",
             strategy.id, triggered_by,
         )
+        # lazy 트리거의 빈 결과는 이력 스팸이 되므로 스킵. manual/schedule는 audit 목적상 유지.
+        if triggered_by == "lazy":
+            return result
 
     history = AutoTickerSelection(
         strategy_id=strategy.id,

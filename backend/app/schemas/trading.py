@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.models.trading import (
     OrderSide,
@@ -135,13 +135,16 @@ _DEFAULT_MA_PARAMS = {
 }
 
 
+TickerCode = Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
+
+
 class AutoSelectConfig(BaseModel):
     """자동 종목 선정 설정 — 전략에 내장."""
     enabled: bool = False
     top_n: int = Field(default=10, ge=3, le=30)
     market: str = Field(default="ALL", pattern="^(KOSPI|KOSDAQ|ALL)$")
     min_volume_value: int = Field(default=10_000_000_000, ge=0)
-    blacklist: list[str] = Field(default_factory=list)
+    blacklist: list[TickerCode] = Field(default_factory=list, max_length=50)
 
 
 class AutoSelectedTickersInfo(BaseModel):
