@@ -393,6 +393,9 @@ export default function TradingPage() {
           onSubmitCreate={handleCreateStrategy}
           onSubmitUpdate={handleUpdateStrategy}
           isSubmitting={isSubmitting}
+          onPreviewAuto={trading.previewAutoTickers}
+          onRefreshAuto={trading.refreshAutoTickers}
+          onLoadAutoHistory={trading.fetchAutoTickerHistory}
         />
       )}
 

@@ -64,6 +64,28 @@ class TradingScheduler:
             coalesce=True,
         )
 
+        # 자동 종목 선정 일일 갱신 (평일 08:30 KST, 장 시작 30분 전)
+        from app.tasks.daily_ticker_refresh import execute_daily_ticker_refresh
+        self._scheduler.add_job(
+            execute_daily_ticker_refresh,
+            trigger=CronTrigger(day_of_week="mon-fri", hour=8, minute=30),
+            id="daily_ticker_refresh",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
+        # 자동 종목 선정 이력 정리 (매일 03:00 KST, 전략당 최신 30건 유지)
+        from app.tasks.auto_ticker_cleanup import cleanup_auto_ticker_history
+        self._scheduler.add_job(
+            cleanup_auto_ticker_history,
+            trigger=CronTrigger(hour=3, minute=0),
+            id="auto_ticker_history_cleanup",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
     async def shutdown(self):
         """스케줄러 종료."""
         if self._scheduler and self._scheduler.running:

@@ -26,6 +26,10 @@ import {
   type AccountDepositRequest,
   type OrderSide,
   type OrderStatus,
+  type AutoTickerPreviewResponse,
+  type AutoTickerPreviewResponseApi,
+  type AutoTickerSelectionHistory,
+  type AutoTickerSelectionHistoryApi,
   toTradingAccount,
   toTradingStrategy,
   toTradingOrder,
@@ -33,6 +37,8 @@ import {
   toTradingPerformance,
   toScheduleStatus,
   toKisBalance,
+  toAutoTickerHistory,
+  toAutoTickerPreview,
 } from "@/types/trading";
 
 const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
@@ -86,6 +92,13 @@ export interface UseTradingReturn {
   // Strategy mutations
   createStrategy: (data: TradingStrategyCreateRequest) => Promise<TradingStrategy>;
   updateStrategy: (id: string, data: TradingStrategyUpdateRequest) => Promise<TradingStrategy>;
+  // Auto ticker selection
+  previewAutoTickers: (strategyId: string) => Promise<AutoTickerPreviewResponse>;
+  refreshAutoTickers: (strategyId: string) => Promise<TradingStrategy>;
+  fetchAutoTickerHistory: (
+    strategyId: string,
+    limit?: number,
+  ) => Promise<AutoTickerSelectionHistory[]>;
   // Schedule mutations
   startSchedule: (strategyId: string) => Promise<void>;
   stopSchedule: (strategyId: string) => Promise<void>;
@@ -283,6 +296,48 @@ export function useTrading(): UseTradingReturn {
       return toTradingStrategy(res);
     },
     [canFetch, fetchOpts, fetchStrategies],
+  );
+
+  // ── Auto ticker selection ──
+
+  const previewAutoTickers = useCallback(
+    async (strategyId: string): Promise<AutoTickerPreviewResponse> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      const res = await apiFetch<AutoTickerPreviewResponseApi>(
+        `/api/trading/strategies/${strategyId}/auto-tickers/preview`,
+        fetchOpts,
+      );
+      return toAutoTickerPreview(res);
+    },
+    [canFetch, fetchOpts],
+  );
+
+  const refreshAutoTickers = useCallback(
+    async (strategyId: string): Promise<TradingStrategy> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      const res = await apiFetch<TradingStrategyApi>(
+        `/api/trading/strategies/${strategyId}/auto-tickers/refresh`,
+        { method: "POST", ...fetchOpts },
+      );
+      await fetchStrategies();
+      return toTradingStrategy(res);
+    },
+    [canFetch, fetchOpts, fetchStrategies],
+  );
+
+  const fetchAutoTickerHistory = useCallback(
+    async (
+      strategyId: string,
+      limit: number = 20,
+    ): Promise<AutoTickerSelectionHistory[]> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      const res = await apiFetch<AutoTickerSelectionHistoryApi[]>(
+        `/api/trading/strategies/${strategyId}/auto-tickers/history?limit=${limit}`,
+        fetchOpts,
+      );
+      return res.map(toAutoTickerHistory);
+    },
+    [canFetch, fetchOpts],
   );
 
   const rebalanceAccount = useCallback(
@@ -512,6 +567,9 @@ export function useTrading(): UseTradingReturn {
     deactivateAccount,
     createStrategy,
     updateStrategy,
+    previewAutoTickers,
+    refreshAutoTickers,
+    fetchAutoTickerHistory,
     startSchedule,
     stopSchedule,
     runNow,

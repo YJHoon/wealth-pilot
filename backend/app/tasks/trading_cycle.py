@@ -28,6 +28,7 @@ from app.models.trading import (
     TradingStrategy,
 )
 from app.services.adaptive_rules import get_active_rules
+from app.services.auto_ticker_service import resolve_strategy_tickers
 from app.services.decision_backfill import backfill_sell_results
 from app.services.decision_embedding import (
     build_context_text,
@@ -277,7 +278,15 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
             pre_portfolio_ctx = PortfolioContext(
                 cash=pre_cash, total_eval=pre_total_eval, holdings=pre_holdings,
             )
-            for ticker in strategy.target_tickers:
+            # 자동 선정 포함 평가 대상 해석 (수동 ∪ 자동 ∪ 보유).
+            # held_tickers=None → 내부에서 strategy 포지션 조회.
+            pre_tickers = await resolve_strategy_tickers(
+                db, strategy,
+                available_cash=pre_cash,
+                total_eval=pre_total_eval,
+                held_tickers=None,
+            )
+            for ticker in pre_tickers:
                 try:
                     ph = await kis.get_price_history(ticker, period="D", count=60)
                     if not ph:
@@ -599,8 +608,16 @@ async def _run_cycle(db: AsyncSession, user_id: UUID, strategy_id: UUID):
         # today_trade_count를 직접 사용 (손절 루프에서 이미 증가분 반영됨).
 
         # 7. 대상 종목별 전략 평가
+        #   자동 선정 포함 합집합: 수동 target_tickers ∪ auto 선정 ∪ 보유중 종목.
+        #   auto_select.enabled + stale이면 lazy 갱신도 수행.
+        evaluate_tickers = await resolve_strategy_tickers(
+            db, strategy,
+            available_cash=available_cash,
+            total_eval=total_eval,
+            held_tickers=held_tickers,
+        )
         _kill_switch_tripped = False
-        for ticker in strategy.target_tickers:
+        for ticker in evaluate_tickers:
             tickers_evaluated += 1
             try:
                 # 전략 평가 — 룰베이스 vs LLM 분기

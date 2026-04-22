@@ -16,6 +16,7 @@ from app.middleware.rate_limit import limiter
 from app.dependencies.auth import get_current_active_user
 from app.models.trading import (
     AdaptiveRule,
+    AutoTickerSelection,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -33,6 +34,8 @@ from app.schemas.trading import (
     AccountRebalanceRequest,
     AdaptiveRuleResponse,
     AdaptiveRuleUpdate,
+    AutoTickerPreviewResponse,
+    AutoTickerSelectionHistory,
     DepositAllocationMode,
     ScheduleStartRequest,
     ScheduleStatusResponse,
@@ -62,6 +65,7 @@ from app.services.crypto_service import (
     encrypt_value,
 )
 from app.services.account_lock import acquire_account_lock, clear_account_lock
+from app.services.auto_ticker_service import select_and_persist
 from app.services.kis_client import KISClient, KISClientError
 from app.services.risk_manager import RiskManager
 from app.services.strategy_capital import (
@@ -77,6 +81,7 @@ from app.services.strategy_position import (
     get_strategy_position,
     list_strategy_positions,
 )
+from app.services.ticker_selector import SelectorConfig, select_tickers
 from app.services.security_service import AccessAction, log_access
 from app.tasks.trading_scheduler import trading_scheduler
 
@@ -719,6 +724,7 @@ async def create_strategy(
         initial_capital=encrypt_decimal(body.initial_capital),
         realized_pnl=encrypt_decimal(Decimal("0")),
         priority=body.priority,
+        auto_select_config=body.auto_select_config.model_dump(),
     )
     db.add(strategy)
     await db.commit()
@@ -823,6 +829,185 @@ async def update_strategy(
         logger.warning("TRADING_STRATEGY_UPDATE access logging failed", exc_info=True)
 
     return strategy_to_response(strategy)
+
+
+# ──────────────────────────────────────────────
+# 자동 종목 선정 — preview / refresh / history
+# ──────────────────────────────────────────────
+
+def _auto_select_inputs(strategy: TradingStrategy, available_cash: Decimal) -> tuple[Decimal, Decimal]:
+    """선정에 쓸 (total_eval, max_position_pct) 산출."""
+    total_eval = get_initial_capital(strategy)
+    if total_eval <= 0:
+        total_eval = Decimal("1000000")
+    try:
+        raw = (strategy.params_json or {}).get("max_position_pct", "0.20")
+        max_pct = Decimal(str(raw))
+    except (ValueError, ArithmeticError):
+        max_pct = Decimal("0.20")
+    return total_eval, max_pct
+
+
+@router.get(
+    "/strategies/{strategy_id}/auto-tickers/preview",
+    response_model=AutoTickerPreviewResponse,
+)
+@limiter.limit("30/minute")
+async def preview_auto_tickers(
+    strategy_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """현재 설정으로 시뮬레이션 — 저장 없이 결과만 반환."""
+    strategy = await _get_user_strategy(db, strategy_id, user.id, include_inactive=True)
+    config = SelectorConfig.from_dict(strategy.auto_select_config or {})
+    available_cash = await get_strategy_available_capital(db, strategy)
+    if available_cash < 0:
+        available_cash = Decimal("0")
+    total_eval, max_pct = _auto_select_inputs(strategy, available_cash)
+
+    result = await select_tickers(
+        config,
+        available_cash=available_cash,
+        total_eval=total_eval,
+        max_position_pct=max_pct,
+    )
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_AUTO_TICKER_PREVIEW, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_AUTO_TICKER_PREVIEW access logging failed", exc_info=True)
+
+    return AutoTickerPreviewResponse(
+        rule_version=result.rule_version,
+        selected=[
+            {
+                "ticker": s.ticker,
+                "name": s.name,
+                "market": s.market,
+                "price": str(s.price),
+                "volume_value": s.volume_value,
+                "score": round(s.score, 4),
+                "reason": s.reason,
+            }
+            for s in result.selected
+        ],
+        excluded_sample=[
+            {"ticker": e.ticker, "name": e.name, "reason": e.reason}
+            for e in result.excluded_sample
+        ],
+        config_snapshot={
+            "top_n": config.top_n,
+            "market": config.market,
+            "min_volume_value": config.min_volume_value,
+            "blacklist": list(config.blacklist),
+        },
+        available_cash=available_cash,
+        total_eval=total_eval,
+        max_position_pct=max_pct,
+    )
+
+
+@router.post(
+    "/strategies/{strategy_id}/auto-tickers/refresh",
+    response_model=TradingStrategyResponse,
+)
+@limiter.limit("10/minute")
+async def refresh_auto_tickers(
+    strategy_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """수동 트리거 — select_and_persist 실행 후 갱신된 전략 반환.
+
+    `auto_select_config.enabled`가 False면 거부 (의도하지 않은 갱신 방지).
+    """
+    strategy = await _get_user_strategy(db, strategy_id, user.id)
+    cfg = strategy.auto_select_config or {}
+    if not cfg.get("enabled"):
+        raise HTTPException(
+            status_code=400,
+            detail="자동 종목 선정이 비활성화되어 있습니다. 먼저 enabled=True로 설정하세요.",
+        )
+
+    available_cash = await get_strategy_available_capital(db, strategy)
+    if available_cash < 0:
+        available_cash = Decimal("0")
+    total_eval, _max_pct = _auto_select_inputs(strategy, available_cash)
+
+    try:
+        await select_and_persist(
+            db,
+            strategy,
+            available_cash=available_cash,
+            total_eval=total_eval,
+            triggered_by="manual",
+        )
+        await db.commit()
+        await db.refresh(strategy)
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("Manual auto-ticker refresh failed: strategy=%s", strategy.id)
+        raise HTTPException(
+            status_code=502,
+            detail="종목 갱신에 실패했습니다. 잠시 후 다시 시도하세요.",
+        ) from exc
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_AUTO_TICKER_REFRESH, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_AUTO_TICKER_REFRESH access logging failed", exc_info=True)
+
+    return strategy_to_response(strategy)
+
+
+@router.get(
+    "/strategies/{strategy_id}/auto-tickers/history",
+    response_model=list[AutoTickerSelectionHistory],
+)
+@limiter.limit("60/minute")
+async def list_auto_ticker_history(
+    strategy_id: UUID,
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """자동 선정 이력 — generated_at desc, 최대 100건."""
+    strategy = await _get_user_strategy(db, strategy_id, user.id, include_inactive=True)
+    rows = await db.execute(
+        select(AutoTickerSelection)
+        .where(AutoTickerSelection.strategy_id == strategy.id)
+        .order_by(AutoTickerSelection.generated_at.desc())
+        .limit(limit)
+    )
+    history = rows.scalars().all()
+
+    try:
+        await log_access(db, user.id, AccessAction.TRADING_AUTO_TICKER_HISTORY, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.warning("TRADING_AUTO_TICKER_HISTORY access logging failed", exc_info=True)
+
+    return [
+        AutoTickerSelectionHistory(
+            id=h.id,
+            generated_at=h.generated_at,
+            rule_version=h.rule_version,
+            triggered_by=h.triggered_by,
+            selected_tickers=h.selected_tickers or [],
+            excluded_sample=h.excluded_sample,
+            config_snapshot=h.config_snapshot or {},
+        )
+        for h in history
+    ]
 
 
 @router.delete("/strategies/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT)
