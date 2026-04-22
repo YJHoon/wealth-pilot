@@ -169,13 +169,14 @@ def get_auto_tickers(strategy: TradingStrategy) -> list[str]:
 
 async def _fetch_strategy_held_tickers(
     db: AsyncSession, strategy: TradingStrategy,
-) -> set[str]:
+) -> list[str]:
+    """보유 종목 ticker 를 정렬된 리스트로 반환 (iteration 결정성 보장)."""
     rows = await db.execute(
-        select(TradingPosition.ticker).where(
-            TradingPosition.strategy_id == strategy.id,
-        )
+        select(TradingPosition.ticker)
+        .where(TradingPosition.strategy_id == strategy.id)
+        .order_by(TradingPosition.ticker)
     )
-    return {row[0] for row in rows.all()}
+    return [row[0] for row in rows.all()]
 
 
 async def resolve_strategy_tickers(
@@ -213,9 +214,10 @@ async def resolve_strategy_tickers(
             )
 
     if held_tickers is None:
-        held_set = await _fetch_strategy_held_tickers(db, strategy)
+        held_list: list[str] = await _fetch_strategy_held_tickers(db, strategy)
     else:
-        held_set = {t for t in held_tickers if t}
+        # 외부에서 set 등 비결정적 컬렉션이 들어와도 정렬로 순서를 고정.
+        held_list = sorted({t for t in held_tickers if t})
 
     seen: set[str] = set()
     out: list[str] = []
@@ -232,7 +234,7 @@ async def resolve_strategy_tickers(
                 seen.add(t)
                 out.append(t)
 
-    for t in held_set:
+    for t in held_list:
         if t and t not in seen:
             seen.add(t)
             out.append(t)
