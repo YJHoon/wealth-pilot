@@ -21,6 +21,41 @@ export interface TradingAccountApi {
   updated_at: string;
 }
 
+export interface AutoSelectConfigApi {
+  enabled: boolean;
+  top_n: number;
+  market: "KOSPI" | "KOSDAQ" | "ALL";
+  min_volume_value: number;
+  blacklist: string[];
+}
+
+export interface AutoSelectedTickersInfoApi {
+  tickers: string[];
+  generated_at: string;
+  rule_version: string;
+  details?: Array<Record<string, unknown>> | null;
+}
+
+export interface AutoTickerSelectionHistoryApi {
+  id: string;
+  generated_at: string;
+  rule_version: string;
+  triggered_by: string;
+  selected_tickers: Array<Record<string, unknown>>;
+  excluded_sample: Array<Record<string, unknown>> | null;
+  config_snapshot: Record<string, unknown>;
+}
+
+export interface AutoTickerPreviewResponseApi {
+  rule_version: string;
+  selected: Array<Record<string, unknown>>;
+  excluded_sample: Array<Record<string, unknown>>;
+  config_snapshot: Record<string, unknown>;
+  available_cash: number;
+  total_eval: number;
+  max_position_pct: number;
+}
+
 export interface TradingStrategyApi {
   id: string;
   account_id: string;
@@ -35,6 +70,8 @@ export interface TradingStrategyApi {
   initial_capital: number;
   realized_pnl: number;
   priority: number;
+  auto_select_config: AutoSelectConfigApi;
+  auto_selected_tickers: AutoSelectedTickersInfoApi | null;
   created_at: string;
   updated_at: string;
 }
@@ -118,6 +155,41 @@ export interface TradingAccount {
   updatedAt: string;
 }
 
+export interface AutoSelectConfig {
+  enabled: boolean;
+  topN: number;
+  market: "KOSPI" | "KOSDAQ" | "ALL";
+  minVolumeValue: number;
+  blacklist: string[];
+}
+
+export interface AutoSelectedTickersInfo {
+  tickers: string[];
+  generatedAt: string;
+  ruleVersion: string;
+  details?: Array<Record<string, unknown>> | null;
+}
+
+export interface AutoTickerSelectionHistory {
+  id: string;
+  generatedAt: string;
+  ruleVersion: string;
+  triggeredBy: string;
+  selectedTickers: Array<Record<string, unknown>>;
+  excludedSample: Array<Record<string, unknown>> | null;
+  configSnapshot: Record<string, unknown>;
+}
+
+export interface AutoTickerPreviewResponse {
+  ruleVersion: string;
+  selected: Array<Record<string, unknown>>;
+  excludedSample: Array<Record<string, unknown>>;
+  configSnapshot: Record<string, unknown>;
+  availableCash: number;
+  totalEval: number;
+  maxPositionPct: number;
+}
+
 export interface TradingStrategy {
   id: string;
   accountId: string;
@@ -132,6 +204,8 @@ export interface TradingStrategy {
   initialCapital: number;
   realizedPnl: number;
   priority: number;
+  autoSelectConfig: AutoSelectConfig;
+  autoSelectedTickers: AutoSelectedTickersInfo | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -253,6 +327,14 @@ export interface TradingAccountUpdateRequest {
   allow_netting?: boolean;
 }
 
+export interface AutoSelectConfigRequest {
+  enabled: boolean;
+  top_n: number;
+  market: "KOSPI" | "KOSDAQ" | "ALL";
+  min_volume_value: number;
+  blacklist: string[];
+}
+
 export interface TradingStrategyCreateRequest {
   account_id: string;
   name: string;
@@ -262,6 +344,7 @@ export interface TradingStrategyCreateRequest {
   interval_minutes: number;
   market_hours_only: boolean;
   priority?: number;
+  auto_select_config?: AutoSelectConfigRequest;
 }
 
 export interface TradingStrategyUpdateRequest {
@@ -271,6 +354,7 @@ export interface TradingStrategyUpdateRequest {
   interval_minutes?: number;
   market_hours_only?: boolean;
   priority?: number;
+  auto_select_config?: AutoSelectConfigRequest;
 }
 
 export interface RebalanceAllocationItem {
@@ -311,6 +395,52 @@ export function toTradingAccount(api: TradingAccountApi): TradingAccount {
   };
 }
 
+export function toAutoSelectConfig(api: AutoSelectConfigApi | null | undefined): AutoSelectConfig {
+  return {
+    enabled: api?.enabled ?? false,
+    topN: api?.top_n ?? 10,
+    market: api?.market ?? "ALL",
+    minVolumeValue: api?.min_volume_value ?? 10_000_000_000,
+    blacklist: api?.blacklist ?? [],
+  };
+}
+
+export function toAutoSelectedTickersInfo(
+  api: AutoSelectedTickersInfoApi | null | undefined,
+): AutoSelectedTickersInfo | null {
+  if (!api) return null;
+  return {
+    tickers: api.tickers,
+    generatedAt: api.generated_at,
+    ruleVersion: api.rule_version,
+    details: api.details ?? null,
+  };
+}
+
+export function toAutoTickerHistory(api: AutoTickerSelectionHistoryApi): AutoTickerSelectionHistory {
+  return {
+    id: api.id,
+    generatedAt: api.generated_at,
+    ruleVersion: api.rule_version,
+    triggeredBy: api.triggered_by,
+    selectedTickers: api.selected_tickers ?? [],
+    excludedSample: api.excluded_sample ?? null,
+    configSnapshot: api.config_snapshot ?? {},
+  };
+}
+
+export function toAutoTickerPreview(api: AutoTickerPreviewResponseApi): AutoTickerPreviewResponse {
+  return {
+    ruleVersion: api.rule_version,
+    selected: api.selected ?? [],
+    excludedSample: api.excluded_sample ?? [],
+    configSnapshot: api.config_snapshot ?? {},
+    availableCash: api.available_cash,
+    totalEval: api.total_eval,
+    maxPositionPct: api.max_position_pct,
+  };
+}
+
 export function toTradingStrategy(api: TradingStrategyApi): TradingStrategy {
   return {
     id: api.id,
@@ -326,6 +456,8 @@ export function toTradingStrategy(api: TradingStrategyApi): TradingStrategy {
     initialCapital: api.initial_capital ?? 0,
     realizedPnl: api.realized_pnl ?? 0,
     priority: api.priority ?? 0,
+    autoSelectConfig: toAutoSelectConfig(api.auto_select_config),
+    autoSelectedTickers: toAutoSelectedTickersInfo(api.auto_selected_tickers),
     createdAt: api.created_at,
     updatedAt: api.updated_at,
   };

@@ -192,6 +192,16 @@ class TradingStrategy(Base):
         Integer, default=0, server_default="0", nullable=False,
     )
 
+    # 자동 종목 선정 설정.
+    # {enabled, top_n, market, min_volume_value, blacklist, include_holdings}
+    auto_select_config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=sa.text("'{}'::jsonb"),
+    )
+    # 마지막 자동 선정 결과. {tickers: [...], generated_at: iso, rule_version}
+    auto_selected_tickers: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
@@ -206,6 +216,9 @@ class TradingStrategy(Base):
     orders = relationship("TradingOrder", back_populates="strategy")
     positions = relationship("TradingPosition", back_populates="strategy")
     schedule_logs = relationship("TradingScheduleLog", back_populates="strategy", cascade="all, delete-orphan")
+    auto_ticker_selections = relationship(
+        "AutoTickerSelection", back_populates="strategy", cascade="all, delete-orphan",
+    )
 
 
 class TradingOrder(Base):
@@ -551,4 +564,47 @@ class DecisionEmbedding(Base):
     decision = relationship(
         "TradingDecision",
         backref=sa.orm.backref("embedding_row", uselist=False),
+    )
+
+
+class AutoTickerSelection(Base):
+    """자동 종목 선정 이력 (audit + UI 표시용).
+
+    전략당 최신 30건 유지 cron으로 정리한다.
+    """
+
+    __tablename__ = "auto_ticker_selections"
+    __table_args__ = (
+        Index(
+            "ix_auto_ticker_selections_strategy_generated",
+            "strategy_id", sa.text("generated_at DESC"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+        default=uuid.uuid4,
+    )
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trading_strategies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    # 'v1-volume-rank' 등 룰 버전 태그
+    rule_version: Mapped[str] = mapped_column(Text, nullable=False)
+    # [{ticker, name, score, reason}]
+    selected_tickers: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # 디버깅용 — 제외된 후보 상위 N개와 사유
+    excluded_sample: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    config_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # 'schedule' | 'lazy' | 'manual'
+    triggered_by: Mapped[str] = mapped_column(Text, nullable=False)
+
+    strategy = relationship(
+        "TradingStrategy", back_populates="auto_ticker_selections",
     )

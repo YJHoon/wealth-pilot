@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.models.trading import (
     OrderSide,
@@ -135,6 +135,47 @@ _DEFAULT_MA_PARAMS = {
 }
 
 
+TickerCode = Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
+
+
+class AutoSelectConfig(BaseModel):
+    """자동 종목 선정 설정 — 전략에 내장."""
+    enabled: bool = False
+    top_n: int = Field(default=10, ge=3, le=30)
+    market: str = Field(default="ALL", pattern="^(KOSPI|KOSDAQ|ALL)$")
+    min_volume_value: int = Field(default=10_000_000_000, ge=0)
+    blacklist: list[TickerCode] = Field(default_factory=list, max_length=50)
+
+
+class AutoSelectedTickersInfo(BaseModel):
+    """전략에 저장된 마지막 자동 선정 결과."""
+    tickers: list[str]
+    generated_at: datetime
+    rule_version: str
+    details: list[dict] | None = None
+
+
+class AutoTickerSelectionHistory(BaseModel):
+    id: UUID
+    generated_at: datetime
+    rule_version: str
+    triggered_by: str
+    selected_tickers: list[dict]
+    excluded_sample: list[dict] | None = None
+    config_snapshot: dict
+
+
+class AutoTickerPreviewResponse(BaseModel):
+    """미저장 미리보기 — 현재 설정대로 돌렸을 때의 결과."""
+    rule_version: str
+    selected: list[dict]
+    excluded_sample: list[dict]
+    config_snapshot: dict
+    available_cash: Decimal
+    total_eval: Decimal
+    max_position_pct: Decimal
+
+
 class TradingStrategyCreate(BaseModel):
     account_id: UUID
     name: str = Field(max_length=100)
@@ -147,6 +188,7 @@ class TradingStrategyCreate(BaseModel):
     initial_capital: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     # Phase 4: 처리 우선순위 (높을수록 우선). 0~100.
     priority: int = Field(default=0, ge=0, le=100)
+    auto_select_config: AutoSelectConfig = Field(default_factory=AutoSelectConfig)
 
 
 class TradingStrategyUpdate(BaseModel):
@@ -157,6 +199,7 @@ class TradingStrategyUpdate(BaseModel):
     market_hours_only: bool | None = None
     initial_capital: Decimal | None = Field(default=None, ge=Decimal("0"))
     priority: int | None = Field(default=None, ge=0, le=100)
+    auto_select_config: AutoSelectConfig | None = None
 
 
 class TradingStrategyResponse(BaseModel):
@@ -173,12 +216,22 @@ class TradingStrategyResponse(BaseModel):
     initial_capital: Decimal
     realized_pnl: Decimal
     priority: int
+    auto_select_config: AutoSelectConfig
+    auto_selected_tickers: AutoSelectedTickersInfo | None = None
     created_at: datetime
     updated_at: datetime
 
 
 def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyResponse:
     from app.services.strategy_capital import get_initial_capital, get_realized_pnl
+    cfg_raw = strategy.auto_select_config or {}
+    info: AutoSelectedTickersInfo | None = None
+    stored = strategy.auto_selected_tickers or None
+    if stored and stored.get("generated_at"):
+        try:
+            info = AutoSelectedTickersInfo.model_validate(stored)
+        except Exception:  # noqa: BLE001 — 스키마 불일치 레코드 방어
+            info = None
     return TradingStrategyResponse(
         id=strategy.id,
         account_id=strategy.account_id,
@@ -193,6 +246,16 @@ def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyRespo
         initial_capital=get_initial_capital(strategy),
         realized_pnl=get_realized_pnl(strategy),
         priority=strategy.priority,
+        auto_select_config=AutoSelectConfig.model_validate(
+            {
+                "enabled": cfg_raw.get("enabled", False),
+                "top_n": cfg_raw.get("top_n", 10),
+                "market": cfg_raw.get("market", "ALL"),
+                "min_volume_value": cfg_raw.get("min_volume_value", 10_000_000_000),
+                "blacklist": cfg_raw.get("blacklist", []),
+            }
+        ),
+        auto_selected_tickers=info,
         created_at=strategy.created_at,
         updated_at=strategy.updated_at,
     )
