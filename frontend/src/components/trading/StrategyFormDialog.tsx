@@ -461,6 +461,11 @@ interface AutoTickerPanelProps {
   onLoadHistory?: (id: string) => Promise<AutoTickerSelectionHistory[]>;
 }
 
+function formatTimestamp(value: string): string {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString("ko-KR");
+}
+
 function AutoTickerPanel({
   strategy,
   onPreview,
@@ -570,7 +575,7 @@ function AutoTickerPanel({
       {last ? (
         <div className="text-xs">
           <p className="text-muted-foreground">
-            마지막 갱신: {new Date(last.generatedAt).toLocaleString("ko-KR")} (
+            마지막 갱신: {formatTimestamp(last.generatedAt)} (
             {last.ruleVersion})
           </p>
           <p className="mt-1">
@@ -613,7 +618,7 @@ function AutoTickerPanel({
             {history.map((h) => (
               <li key={h.id} className="border-b border-border/50 pb-1">
                 <span className="text-muted-foreground">
-                  {new Date(h.generatedAt).toLocaleString("ko-KR")}
+                  {formatTimestamp(h.generatedAt)}
                 </span>{" "}
                 <span className="font-mono">[{h.triggeredBy}]</span> ({h.selectedTickers.length}개)
               </li>

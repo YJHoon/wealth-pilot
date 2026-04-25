@@ -154,9 +154,16 @@ export function useTrading(): UseTradingReturn {
     try {
       const res = await apiFetch<TradingAccountApi[]>("/api/trading/accounts", fetchOpts);
       const mapped = res.map(toTradingAccount);
+      // 실전(live) → 모의(paper) 순으로 정렬해, 사용자가 실전 계좌를 먼저 보게 한다.
+      mapped.sort((a, b) => {
+        if (a.mode === b.mode) return 0;
+        return a.mode === "live" ? -1 : 1;
+      });
       setAccounts(mapped);
       if (mapped.length > 0 && !selectedAccountId) {
-        setSelectedAccountId(mapped[0].id);
+        const liveActive = mapped.find((a) => a.mode === "live" && a.isActive);
+        const live = liveActive ?? mapped.find((a) => a.mode === "live");
+        setSelectedAccountId((live ?? mapped[0]).id);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "계좌 목록을 불러오는데 실패했습니다.");
