@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.trading import AutoTickerSelection, TradingPosition, TradingStrategy
 from app.services.ticker_selector import (
+    SelectedTicker,
     SelectionResult,
     SelectorConfig,
     UniverseLoader,
@@ -64,23 +65,24 @@ def is_stale(strategy: TradingStrategy, *, now: datetime | None = None) -> bool:
     return (now - generated_at) >= STALE_AFTER
 
 
+def _serialize_selected_item(s: SelectedTicker) -> dict:
+    return {
+        "ticker": s.ticker,
+        "name": s.name,
+        "market": s.market,
+        "price": str(s.price),
+        "volume_value": s.volume_value,
+        "score": round(s.score, 4),
+        "reason": s.reason,
+    }
+
+
 def _serialize_selection(result: SelectionResult, *, now: datetime) -> dict:
     return {
         "tickers": [s.ticker for s in result.selected],
         "generated_at": now.isoformat(),
         "rule_version": result.rule_version,
-        "details": [
-            {
-                "ticker": s.ticker,
-                "name": s.name,
-                "market": s.market,
-                "price": str(s.price),
-                "volume_value": s.volume_value,
-                "score": round(s.score, 4),
-                "reason": s.reason,
-            }
-            for s in result.selected
-        ],
+        "details": [_serialize_selected_item(s) for s in result.selected],
     }
 
 
@@ -135,18 +137,7 @@ async def select_and_persist(
         strategy_id=strategy.id,
         generated_at=now,
         rule_version=result.rule_version,
-        selected_tickers=[
-            {
-                "ticker": s.ticker,
-                "name": s.name,
-                "market": s.market,
-                "price": str(s.price),
-                "volume_value": s.volume_value,
-                "score": round(s.score, 4),
-                "reason": s.reason,
-            }
-            for s in result.selected
-        ],
+        selected_tickers=[_serialize_selected_item(s) for s in result.selected],
         excluded_sample=[asdict(e) for e in result.excluded_sample] or None,
         config_snapshot={
             "top_n": config.top_n,
@@ -191,7 +182,7 @@ async def resolve_strategy_tickers(
     """사이클 평가 대상 ticker 해석.
 
     - `auto_select_config.enabled` True + stale 이면 lazy 갱신 시도.
-    - 최종 리스트 = `target_tickers`(수동) ∪ auto 선정 ∪ 보유중 종목.
+    - 최종 리스트 = `target_tickers`(수동) union auto 선정 union 보유중 종목.
       순서 보존, 중복 제거.
 
     Lazy 갱신 실패는 기존 리스트로 폴백(fail-open).
