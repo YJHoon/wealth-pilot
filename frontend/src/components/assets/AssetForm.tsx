@@ -46,7 +46,7 @@ const assetFormSchema = z.object({
   type: z.enum(["cash", "domestic_stock", "foreign_stock", "crypto", "real_estate"]),
   name: z.string().min(1, "자산명을 입력해주세요").max(200),
   ticker: z.string().max(20).optional(),
-  currency: z.enum(["KRW", "USD", "EUR", "JPY", "BTC", "ETH"]),
+  currency: z.enum(["KRW", "USD", "EUR", "JPY"]),
   quantity: z.preprocess(toNum, z.number({ message: "숫자를 입력해주세요" }).positive("수량은 0보다 커야 합니다")),
   purchase_price: z.preprocess(toNum, z.number({ message: "숫자를 입력해주세요" }).min(0, "매입가는 0 이상이어야 합니다").optional()),
   current_price: z.preprocess(toNum, z.number().min(0).optional()),
@@ -73,13 +73,11 @@ const defaultCurrencyByType: Record<AssetType, Currency> = {
   real_estate: "KRW",
 };
 
-const currencyDisplayLabels: Record<string, string> = {
+const currencyDisplayLabels: Record<Currency, string> = {
   KRW: "KRW (₩)",
   USD: "USD ($)",
   EUR: "EUR (€)",
   JPY: "JPY (¥)",
-  BTC: "BTC",
-  ETH: "ETH",
 };
 
 // ── Props ──
@@ -164,7 +162,8 @@ export function AssetForm({
   });
 
   const showTicker = ["domestic_stock", "foreign_stock", "crypto"].includes(watchType);
-  const showCurrencySelect = ["foreign_stock", "crypto"].includes(watchType);
+  // 외화 현금/예금 등록 지원: cash 타입도 통화 선택 가능
+  const showCurrencySelect = ["cash", "foreign_stock", "crypto"].includes(watchType);
   const showCashFields = watchType === "cash";
 
   return (
@@ -246,12 +245,10 @@ export function AssetForm({
                   <span>{currencyDisplayLabels[form.watch("currency")] ?? form.watch("currency")}</span>
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="KRW">KRW (₩)</SelectItem>
                   <SelectItem value="USD">USD ($)</SelectItem>
                   <SelectItem value="EUR">EUR (€)</SelectItem>
                   <SelectItem value="JPY">JPY (¥)</SelectItem>
-                  <SelectItem value="KRW">KRW (₩)</SelectItem>
-                  <SelectItem value="BTC">BTC</SelectItem>
-                  <SelectItem value="ETH">ETH</SelectItem>
                 </SelectContent>
               </Select>
             </div>

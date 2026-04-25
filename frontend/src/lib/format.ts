@@ -7,8 +7,6 @@ const currencyConfig: Record<Currency, { symbol: string; locale: string }> = {
   USD: { symbol: "$", locale: "en-US" },
   EUR: { symbol: "€", locale: "de-DE" },
   JPY: { symbol: "¥", locale: "ja-JP" },
-  BTC: { symbol: "BTC", locale: "en-US" },
-  ETH: { symbol: "ETH", locale: "en-US" },
 };
 
 /** 금액 포맷 (예: 195,000원, $150.00) */
@@ -24,9 +22,6 @@ export function formatAmount(
 
   if (currency === "KRW") {
     return `${value.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원`;
-  }
-  if (currency === "BTC" || currency === "ETH") {
-    return `${value.toLocaleString(config.locale, { minimumFractionDigits: 2, maximumFractionDigits: 8 })} ${config.symbol}`;
   }
   return `${config.symbol}${value.toLocaleString(config.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }

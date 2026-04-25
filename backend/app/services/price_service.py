@@ -24,26 +24,75 @@ logger = logging.getLogger(__name__)
 # 외부 API 소스명
 EXCHANGE_RATE_SOURCE = "exchangerate-api"
 
-# 암호화폐 ticker → CoinGecko ID 매핑
-_CRYPTO_ID_MAP: dict[str, str] = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "XRP": "ripple",
-    "SOL": "solana",
-    "ADA": "cardano",
-    "DOGE": "dogecoin",
-    "DOT": "polkadot",
-    "MATIC": "matic-network",
-    "AVAX": "avalanche-2",
-    "LINK": "chainlink",
-    "ATOM": "cosmos",
-    "UNI": "uniswap",
-    "NEAR": "near",
-    "APT": "aptos",
-    "ARB": "arbitrum",
-    "OP": "optimism",
-    "SUI": "sui",
-}
+# CoinGecko 코인 매핑 — 시총 상위 250개를 24h 주기로 캐싱.
+# 17종 하드코딩에서 동적 조회로 전환. 호출 실패 시 lowercase fallback 유지.
+_COINGECKO_TOP_PER_PAGE = 250
+_COINGECKO_MAP_TTL_SEC = 86400
+_coin_symbol_to_id: dict[str, str] = {}
+_coin_map_fetched_at: float | None = None
+_coin_map_lock = asyncio.Lock()
+
+
+async def _refresh_coingecko_symbol_map() -> dict[str, str]:
+    """CoinGecko /coins/markets 시총 상위에서 symbol→coin_id 매핑 추출."""
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        "vs_currency": "usd",
+        "order": "market_cap_desc",
+        "per_page": _COINGECKO_TOP_PER_PAGE,
+        "page": 1,
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+    new_map: dict[str, str] = {}
+    for coin in data:
+        sym = (coin.get("symbol") or "").upper()
+        coin_id = coin.get("id")
+        # 같은 심볼이 여러 코인에 매핑되면 시총 상위(앞쪽)를 우선 채택
+        if sym and coin_id and sym not in new_map:
+            new_map[sym] = coin_id
+    return new_map
+
+
+async def _resolve_coingecko_id(symbol: str) -> str:
+    """심볼(예: 'BTC') → CoinGecko coin_id(예: 'bitcoin').
+
+    프로세스 레벨 캐시(24h)에서 조회. miss 또는 만료 시 시총 상위 250개를 갱신.
+    매핑에 없으면 소문자 fallback(과거 동작 유지).
+    """
+    upper = symbol.upper()
+    global _coin_map_fetched_at
+    loop = asyncio.get_event_loop()
+    now_ts = loop.time()
+
+    def _is_stale() -> bool:
+        return (
+            not _coin_symbol_to_id
+            or _coin_map_fetched_at is None
+            or (now_ts - _coin_map_fetched_at) > _COINGECKO_MAP_TTL_SEC
+        )
+
+    if _is_stale():
+        async with _coin_map_lock:
+            now_ts = loop.time()
+            if _is_stale():
+                try:
+                    new_map = await _refresh_coingecko_symbol_map()
+                    _coin_symbol_to_id.clear()
+                    _coin_symbol_to_id.update(new_map)
+                    _coin_map_fetched_at = now_ts
+                except Exception as e:
+                    logger.warning(
+                        "Failed to refresh CoinGecko symbol map: %s — falling back to lowercase",
+                        e,
+                    )
+
+    if upper in _coin_symbol_to_id:
+        return _coin_symbol_to_id[upper]
+    return symbol.lower()
+
 
 # 모드별 TTL (초)
 _TTL_MAP: dict[PriceMode, int] = {
@@ -166,15 +215,6 @@ class PriceService:
             return [f"{ticker}.KS", f"{ticker}.KQ"]
         return [ticker]
 
-    @staticmethod
-    def _to_coingecko_id(symbol: str) -> str:
-        """DB ticker(대문자 심볼) → CoinGecko coin ID 변환."""
-        upper = symbol.upper()
-        if upper in _CRYPTO_ID_MAP:
-            return _CRYPTO_ID_MAP[upper]
-        # 매핑에 없으면 소문자로 시도 (CoinGecko는 소문자 slug)
-        return symbol.lower()
-
     # ------------------------------------------------------------------
     # 주식 시세 (yfinance)
     # ------------------------------------------------------------------
@@ -249,7 +289,7 @@ class PriceService:
         if self._is_cache_valid(cache_key, user_id=user_id):
             return self._cache[cache_key]
 
-        coin_id = self._to_coingecko_id(symbol)
+        coin_id = await _resolve_coingecko_id(symbol)
         url = "https://api.coingecko.com/api/v3/simple/price"
         params = {"ids": coin_id, "vs_currencies": "krw"}
 

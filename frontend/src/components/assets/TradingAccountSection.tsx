@@ -4,14 +4,6 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { useAppStore } from "@/stores/appStore";
 import { formatMaskedKrw } from "@/lib/format";
 import { AccountFormDialog } from "@/components/trading/AccountFormDialog";
@@ -32,6 +24,13 @@ interface TradingAccountSectionProps {
   onRefreshBalances: () => Promise<void>;
 }
 
+/**
+ * KIS 계좌 액션바 + 잔고 요약 카드.
+ *
+ * 보유 종목 테이블은 통합 AssetList(소스 'kis' 행)에서 표시한다.
+ * 이 섹션은 KIS 계좌 연결/비활성화/잔고 새로고침 액션과
+ * 계좌별 총평가/예수금 요약만 담당한다.
+ */
 export function TradingAccountSection({
   accounts,
   accountBalances,
@@ -67,7 +66,12 @@ export function TradingAccountSection({
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-semibold">내 자산</h2>
+        <div>
+          <h2 className="text-lg font-semibold">한국투자증권 계좌</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            연결된 계좌의 보유 종목과 예수금은 아래 자산 목록에 자동 동기화됩니다.
+          </p>
+        </div>
         <div className="flex items-center gap-2">
           {accounts.length > 0 && (
             <Button
@@ -93,21 +97,20 @@ export function TradingAccountSection({
           계좌 정보를 불러오는 중...
         </div>
       ) : accounts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 rounded-lg border border-dashed border-border text-muted-foreground">
-          <Wallet className="size-10 mb-3 opacity-40" />
+        <div className="flex flex-col items-center justify-center py-10 rounded-lg border border-dashed border-border text-muted-foreground">
+          <Wallet className="size-8 mb-2 opacity-40" />
           <p className="text-sm font-medium mb-1">연결된 계좌가 없습니다</p>
-          <p className="text-xs mb-4">한국투자증권 계좌를 연결하면 잔고와 보유종목을 자동으로 가져옵니다.</p>
+          <p className="text-xs mb-3">한국투자증권 계좌를 연결하면 잔고와 보유 종목이 자동으로 자산에 추가됩니다.</p>
           <Button size="sm" onClick={() => setAccountFormOpen(true)}>
             <Plus className="size-3.5 mr-1" />
             계좌 연결하기
           </Button>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
           {accounts.map((account) => {
             const balance = accountBalances[account.id];
             const hasBalance = !!balance;
-            const holdings = balance?.holdings ?? [];
             const cash = balance?.cash ?? 0;
             const totalEval = balance?.totalEval ?? 0;
             const totalPnl = balance?.totalPnl ?? 0;
@@ -115,10 +118,9 @@ export function TradingAccountSection({
 
             return (
               <Card key={account.id}>
-                <CardContent className="pt-4 pb-4">
-                  {/* 계좌 헤더 */}
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
+                <CardContent className="pt-3 pb-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
                       <Badge
                         variant={account.mode === "live" ? "destructive" : "secondary"}
                       >
@@ -136,7 +138,7 @@ export function TradingAccountSection({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="size-7 text-muted-foreground hover:text-destructive"
+                      className="size-6 text-muted-foreground hover:text-destructive"
                       onClick={() => onDeactivateAccount(account.id)}
                       aria-label="계좌 비활성화"
                     >
@@ -144,115 +146,30 @@ export function TradingAccountSection({
                     </Button>
                   </div>
 
-                  {/* 잔고 요약 */}
-                  <div className="space-y-1 mb-3">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">총 평가금액</span>
-                      <span className="font-bold text-base">
-                        {formatMaskedKrw(totalValue, isMasked)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">예수금</span>
-                      <span className="font-medium">
-                        {formatMaskedKrw(cash, isMasked)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">주식 평가</span>
-                      <span className="font-medium">
-                        {formatMaskedKrw(totalEval, isMasked)}
-                      </span>
-                    </div>
-                    {hasBalance && (
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">평가손익</span>
-                        <span className={`font-medium ${totalPnl > 0 ? "text-emerald-500" : totalPnl < 0 ? "text-red-500" : ""}`}>
-                          {isMasked
-                            ? "●●●●●●원"
-                            : `${totalPnl >= 0 ? "+" : ""}${totalPnl.toLocaleString()}원`}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>한국투자증권</span>
-                      <span>
-                        {hasBalance ? "KIS 실시간 조회" : `등록일 ${new Date(account.createdAt).toLocaleDateString("ko-KR")}`}
-                      </span>
-                    </div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xs text-muted-foreground">총 평가금액</span>
+                    <span className="font-bold text-base">
+                      {formatMaskedKrw(totalValue, isMasked)}
+                    </span>
                   </div>
-
-                  {/* 보유 종목 (KIS 실시간) */}
-                  {holdings.length > 0 && (
-                    <div className="border-t pt-3">
-                      <h4 className="text-xs font-medium text-muted-foreground mb-2">
-                        보유 종목 ({holdings.length})
-                      </h4>
-                      <div className="overflow-x-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow className="text-xs">
-                              <TableHead className="h-8">종목</TableHead>
-                              <TableHead className="h-8 text-right">수량</TableHead>
-                              <TableHead className="h-8 text-right">평균매입</TableHead>
-                              <TableHead className="h-8 text-right">현재가</TableHead>
-                              <TableHead className="h-8 text-right">평가금액</TableHead>
-                              <TableHead className="h-8 text-right">평가손익</TableHead>
-                              <TableHead className="h-8 text-right">수익률</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {holdings.map((h) => {
-                              const pnlColor =
-                                h.pnl > 0
-                                  ? "text-emerald-500"
-                                  : h.pnl < 0
-                                    ? "text-red-500"
-                                    : "";
-                              return (
-                                <TableRow key={h.ticker} className="text-xs">
-                                  <TableCell className="py-1.5">
-                                    <div>
-                                      <span className="font-medium">{h.name}</span>
-                                      <span className="ml-1 text-muted-foreground font-mono">
-                                        {h.ticker}
-                                      </span>
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="py-1.5 text-right font-mono">
-                                    {isMasked ? "●●●" : h.quantity.toLocaleString()}
-                                  </TableCell>
-                                  <TableCell className="py-1.5 text-right">
-                                    {formatMaskedKrw(h.avgPrice, isMasked)}
-                                  </TableCell>
-                                  <TableCell className="py-1.5 text-right">
-                                    {formatMaskedKrw(h.currentPrice, isMasked)}
-                                  </TableCell>
-                                  <TableCell className="py-1.5 text-right">
-                                    {formatMaskedKrw(h.evalAmount, isMasked)}
-                                  </TableCell>
-                                  <TableCell className={`py-1.5 text-right font-medium ${pnlColor}`}>
-                                    {isMasked
-                                      ? "●●●●●●원"
-                                      : `${h.pnl >= 0 ? "+" : ""}${h.pnl.toLocaleString()}원`}
-                                  </TableCell>
-                                  <TableCell className={`py-1.5 text-right font-medium ${pnlColor}`}>
-                                    {isMasked
-                                      ? "●●%"
-                                      : `${h.pnlRate >= 0 ? "+" : ""}${h.pnlRate.toFixed(2)}%`}
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </div>
-                  )}
-
-                  {hasBalance && holdings.length === 0 && (
-                    <div className="border-t pt-3 text-center text-xs text-muted-foreground py-4">
-                      보유 종목이 없습니다
+                  <div className="flex items-baseline justify-between text-xs mt-0.5">
+                    <span className="text-muted-foreground">예수금</span>
+                    <span className="font-medium">{formatMaskedKrw(cash, isMasked)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between text-xs mt-0.5">
+                    <span className="text-muted-foreground">주식 평가</span>
+                    <span className="font-medium">{formatMaskedKrw(totalEval, isMasked)}</span>
+                  </div>
+                  {hasBalance && (
+                    <div className="flex items-baseline justify-between text-xs mt-0.5">
+                      <span className="text-muted-foreground">평가손익</span>
+                      <span
+                        className={`font-medium ${totalPnl > 0 ? "text-emerald-500" : totalPnl < 0 ? "text-red-500" : ""}`}
+                      >
+                        {isMasked
+                          ? "●●●●●●원"
+                          : `${totalPnl >= 0 ? "+" : ""}${totalPnl.toLocaleString()}원`}
+                      </span>
                     </div>
                   )}
                 </CardContent>

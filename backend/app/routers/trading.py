@@ -65,6 +65,7 @@ from app.services.crypto_service import (
     encrypt_value,
 )
 from app.services.account_lock import acquire_account_lock, clear_account_lock
+from app.services.asset_sync_service import close_kis_assets_for_account, sync_kis_balance
 from app.services.auto_ticker_service import select_and_persist
 from app.services.kis_client import KISClient, KISClientError
 from app.services.risk_manager import RiskManager
@@ -596,6 +597,9 @@ async def deactivate_trading_account(
             strategy.is_scheduled = False
             trading_scheduler.remove_schedule(user.id, strategy.id)
 
+        # KIS 동기화 자산 정리 (계좌 비활성화 → 보유 자산 SOLD 처리)
+        await close_kis_assets_for_account(db, account_id)
+
         await db.commit()
 
     # 락 해제 후 레지스트리에서 제거 (refcount=0이고 unlocked일 때만)
@@ -660,6 +664,17 @@ async def get_account_balance(
             except KISClientError as e:
                 raise HTTPException(status_code=502, detail=str(e)) from None
             await _persist_kis_token(db, account, kis)
+            # KIS 잔고 → Asset 동기화 (단일 트랜잭션)
+            try:
+                await sync_kis_balance(db, account, balance)
+            except Exception:
+                logger.exception(
+                    "asset sync failed during balance inquiry: account=%s",
+                    account_id,
+                )
+                # sync 실패는 잔고 응답을 막지 않음 — 다음 호출에서 재시도
+                await db.rollback()
+                await _persist_kis_token(db, account, kis)
             await db.commit()
             return balance
     finally:

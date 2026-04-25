@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies.auth import get_current_active_user
-from app.models.asset import Asset, AssetStatus, AssetType
+from app.models.asset import Asset, AssetSource, AssetStatus, AssetType
 from app.models.user import User
 from app.schemas.asset import (
     AssetCreate,
@@ -134,6 +134,12 @@ async def update_asset(
             status_code=403, detail="매도된 자산은 수정할 수 없습니다."
         )
 
+    if asset.source != AssetSource.MANUAL:
+        raise HTTPException(
+            status_code=403,
+            detail="KIS 동기화 자산은 수정할 수 없습니다. 잔고 새로고침으로만 갱신됩니다.",
+        )
+
     update_data = body.model_dump(exclude_unset=True)
 
     # group_id 소유권 검증
@@ -180,6 +186,12 @@ async def delete_asset(
     if asset.status == AssetStatus.SOLD:
         raise HTTPException(
             status_code=403, detail="매도된 자산은 삭제할 수 없습니다."
+        )
+
+    if asset.source != AssetSource.MANUAL:
+        raise HTTPException(
+            status_code=403,
+            detail="KIS 동기화 자산은 삭제할 수 없습니다. 계좌 비활성화 시 자동 정리됩니다.",
         )
 
     await log_access(db, user.id, AccessAction.ASSET_DELETE, request)

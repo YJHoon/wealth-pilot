@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.asset import Asset, AssetStatus, AssetType
+from app.models.asset import Asset, AssetSource, AssetStatus, AssetType
 from app.models.user import User
 from app.services.crypto_service import decrypt_decimal, encrypt_decimal
 from app.services.security_service import AccessAction, log_access
@@ -60,6 +60,9 @@ async def process_asset_sale(
     if asset.status == AssetStatus.SOLD:
         raise AssetForbiddenError("이미 매도된 자산입니다.")
 
+    if asset.source != AssetSource.MANUAL:
+        raise AssetForbiddenError("KIS 동기화 자산은 매도 처리할 수 없습니다.")
+
     # 기존 값 복호화
     quantity = decrypt_decimal(asset.quantity)
     purchase_price = decrypt_decimal(asset.purchase_price)
@@ -77,7 +80,8 @@ async def process_asset_sale(
     # 총 매도 대금
     total_proceeds = sold_price * quantity
 
-    # 같은 통화의 활성 현금 자산 검색 (행 잠금으로 동시성 보호)
+    # 같은 통화의 활성 manual 현금 자산 검색 (행 잠금으로 동시성 보호)
+    # KIS 동기화 cash는 잔고 sync로만 갱신되므로 매도 대금 합산 대상에서 제외.
     cash_result = await db.execute(
         select(Asset)
         .where(
@@ -85,6 +89,7 @@ async def process_asset_sale(
             Asset.type == AssetType.CASH,
             Asset.status == AssetStatus.ACTIVE,
             Asset.currency == currency,
+            Asset.source == AssetSource.MANUAL,
         )
         .with_for_update()
     )
@@ -95,7 +100,7 @@ async def process_asset_sale(
         existing_quantity = decrypt_decimal(cash_asset.quantity)
         cash_asset.quantity = encrypt_decimal(existing_quantity + total_proceeds)
     else:
-        # 새 현금 자산 생성
+        # 새 현금 자산 생성 (manual source)
         cash_asset = Asset(
             user_id=user_id,
             type=AssetType.CASH,
@@ -103,6 +108,7 @@ async def process_asset_sale(
             currency=currency,
             quantity=encrypt_decimal(total_proceeds),
             purchase_price=encrypt_decimal(total_proceeds),
+            source=AssetSource.MANUAL,
         )
         db.add(cash_asset)
 
@@ -129,6 +135,7 @@ async def process_asset_sale(
                 Asset.type == AssetType.CASH,
                 Asset.status == AssetStatus.ACTIVE,
                 Asset.currency == currency,
+                Asset.source == AssetSource.MANUAL,
             )
             .with_for_update()
         )

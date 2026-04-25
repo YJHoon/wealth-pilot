@@ -19,10 +19,10 @@ describe("formatAmount", () => {
     expect(formatAmount(undefined, "KRW", false)).toBe("-");
   });
 
-  it("BTC 포맷", () => {
-    const result = formatAmount(0.5, "BTC", false);
-    expect(result).toContain("BTC");
-    expect(result).toContain("0.5");
+  it("USD 포맷", () => {
+    const result = formatAmount(150.25, "USD", false);
+    expect(result).toContain("$");
+    expect(result).toContain("150.25");
   });
 });
 

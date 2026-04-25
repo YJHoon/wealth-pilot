@@ -23,6 +23,10 @@ const mockAsset: Asset = {
   soldAt: null,
   soldPrice: null,
   realizedPnl: null,
+  source: "manual",
+  tradingAccountId: null,
+  externalTicker: null,
+  lastSyncedAt: null,
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
 };

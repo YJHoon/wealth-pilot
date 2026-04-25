@@ -295,6 +295,7 @@ export function AssetList({
               const rate = computePnlRate(asset);
               const isSold = asset.status === "sold";
 
+              const isKis = asset.source === "kis";
               return (
                 <div
                   key={asset.id}
@@ -311,13 +312,18 @@ export function AssetList({
                             ({asset.ticker})
                           </span>
                         )}
+                        {isKis && (
+                          <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 h-4">
+                            KIS
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Badge variant={isSold ? "outline" : "default"}>
                         {assetStatusLabels[asset.status]}
                       </Badge>
-                      {!isSold && (
+                      {!isSold && !isKis && (
                         <AssetActionMenu
                           asset={asset}
                           onEditClick={onEditClick}
@@ -401,6 +407,7 @@ export function AssetList({
                   const pnl = computePnl(asset);
                   const rate = computePnlRate(asset);
                   const isSold = asset.status === "sold";
+                  const isKis = asset.source === "kis";
 
                   return (
                     <TableRow key={asset.id} className={isSold ? "opacity-60" : ""}>
@@ -413,12 +420,17 @@ export function AssetList({
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div>
+                        <div className="flex items-center gap-1.5">
                           <span className="font-medium">{asset.name}</span>
                           {asset.ticker && (
-                            <span className="ml-1 text-xs text-muted-foreground">
+                            <span className="text-xs text-muted-foreground">
                               ({asset.ticker})
                             </span>
+                          )}
+                          {isKis && (
+                            <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">
+                              KIS
+                            </Badge>
                           )}
                         </div>
                       </TableCell>
@@ -486,7 +498,7 @@ export function AssetList({
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {!isSold && (
+                        {!isSold && !isKis && (
                           <AssetActionMenu
                             asset={asset}
                             onEditClick={onEditClick}
