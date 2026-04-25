@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle, CardAction } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAppStore } from "@/stores/appStore";
 import { formatAmount, assetTypeLabels } from "@/lib/format";
 import type { DashboardSummary, AssetType } from "@/types";
@@ -13,8 +12,6 @@ interface AssetDonutChartProps {
   summary: DashboardSummary;
 }
 
-type ViewBy = "type" | "group";
-
 interface ChartEntry {
   name: string;
   value: number;
@@ -22,57 +19,26 @@ interface ChartEntry {
   color: string;
 }
 
-const GROUP_COLORS = ["#06b6d4", "#a855f7", "#ec4899", "#84cc16", "#f97316", "#6366f1"];
-
 export function AssetDonutChart({ summary }: AssetDonutChartProps) {
   const isMasked = useAppStore((s) => s.isMasked);
-  const [viewBy, setViewBy] = useState<ViewBy>("type");
 
   const data = useMemo<ChartEntry[]>(() => {
-    if (viewBy === "type") {
-      return (Object.entries(summary.byType) as [AssetType, { valueKrw: number; ratio: number }][])
-        .filter(([, v]) => v.valueKrw > 0)
-        .map(([key, v]) => ({
-          name: assetTypeLabels[key],
-          value: v.valueKrw,
-          ratio: v.ratio,
-          color: ASSET_TYPE_COLORS[key],
-        }));
-    }
-    return Object.entries(summary.byGroup)
+    return (Object.entries(summary.byType) as [AssetType, { valueKrw: number; ratio: number }][])
       .filter(([, v]) => v.valueKrw > 0)
-      .map(([, v], i) => ({
-        name: v.name,
+      .map(([key, v]) => ({
+        name: assetTypeLabels[key],
         value: v.valueKrw,
         ratio: v.ratio,
-        color: GROUP_COLORS[i % GROUP_COLORS.length],
+        color: ASSET_TYPE_COLORS[key],
       }));
-  }, [summary, viewBy]);
+  }, [summary]);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-sm font-medium text-muted-foreground">
-          자산 구성
+          유형별 자산 구성
         </CardTitle>
-        <CardAction>
-          <div className="flex gap-1">
-            <Button
-              variant={viewBy === "type" ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setViewBy("type")}
-            >
-              유형별
-            </Button>
-            <Button
-              variant={viewBy === "group" ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setViewBy("group")}
-            >
-              그룹별
-            </Button>
-          </div>
-        </CardAction>
       </CardHeader>
       <CardContent>
         {data.length === 0 ? (

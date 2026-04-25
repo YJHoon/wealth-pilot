@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AssetList } from "@/components/assets/AssetList";
-import type { Asset, PortfolioGroup } from "@/types";
+import type { Asset } from "@/types";
 
 // Zustand appStore mock
 jest.mock("@/stores/appStore", () => ({
@@ -56,17 +56,6 @@ const mockAssets: Asset[] = [
   },
 ];
 
-const mockGroups: PortfolioGroup[] = [
-  {
-    id: "g1",
-    userId: "u1",
-    name: "장기투자",
-    description: null,
-    sortOrder: 0,
-    createdAt: "2026-01-01",
-  },
-];
-
 const mockHandlers = {
   onAddClick: jest.fn(),
   onEditClick: jest.fn(),
@@ -79,7 +68,6 @@ function renderList(props: Partial<React.ComponentProps<typeof AssetList>> = {})
   return render(
     <AssetList
       assets={mockAssets}
-      groups={mockGroups}
       loading={false}
       {...mockHandlers}
       {...props}
@@ -101,11 +89,6 @@ describe("AssetList", () => {
     renderList();
     expect(screen.getByText("삼성전자")).toBeInTheDocument();
     expect(screen.getByText("카카오뱅크 예금")).toBeInTheDocument();
-  });
-
-  it("그룹명이 표시된다", () => {
-    renderList();
-    expect(screen.getByText("장기투자")).toBeInTheDocument();
   });
 
   it("로딩 상태일 때 로딩 메시지가 표시된다", () => {

@@ -1,5 +1,4 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { AssetDonutChart } from "@/components/dashboard/AssetDonutChart";
 import type { DashboardSummary } from "@/types";
 
@@ -25,10 +24,7 @@ const baseSummary: DashboardSummary = {
     crypto: { valueKrw: 0, ratio: 0 },
     real_estate: { valueKrw: 0, ratio: 0 },
   },
-  byGroup: {
-    g1: { name: "장기투자", valueKrw: 60_000_000, ratio: 60 },
-    g2: { name: "단기투자", valueKrw: 40_000_000, ratio: 40 },
-  },
+  byGroup: {},
   pnl: { total: 0, realized: 0, unrealized: 0, totalRatio: 0 },
   previousDayChange: { amount: 0, ratio: 0 },
   updatedAt: "2026-03-19T12:00:00Z",
@@ -42,15 +38,6 @@ describe("AssetDonutChart", () => {
     expect(screen.getByText("해외주식/ETF")).toBeInTheDocument();
     // 0인 유형은 제외
     expect(screen.queryByText("암호화폐")).not.toBeInTheDocument();
-  });
-
-  it("그룹별 토글이 동작한다", async () => {
-    const user = userEvent.setup();
-    render(<AssetDonutChart summary={baseSummary} />);
-
-    await user.click(screen.getByText("그룹별"));
-    expect(screen.getByText("장기투자")).toBeInTheDocument();
-    expect(screen.getByText("단기투자")).toBeInTheDocument();
   });
 
   it("데이터가 없으면 빈 메시지를 표시한다", () => {

@@ -4,7 +4,6 @@ import { useDashboardSummary } from "@/hooks/useDashboardSummary";
 import { TotalAssetCard } from "./TotalAssetCard";
 import { AssetDonutChart } from "./AssetDonutChart";
 import { AssetTrendChart } from "./AssetTrendChart";
-import { GroupSummaryCards } from "./GroupSummaryCards";
 import { DataFreshnessIndicator } from "./DataFreshnessIndicator";
 import { DisclaimerFooter } from "./DisclaimerFooter";
 import { DashboardSkeleton } from "./DashboardSkeleton";
@@ -37,9 +36,6 @@ export function MinimalDashboard() {
         <AssetDonutChart summary={summary} />
         <AssetTrendChart />
       </div>
-
-      {/* 그룹별 요약 */}
-      <GroupSummaryCards summary={summary} />
 
       {/* 면책 문구 */}
       <DisclaimerFooter />

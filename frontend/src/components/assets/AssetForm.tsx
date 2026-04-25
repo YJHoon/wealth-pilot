@@ -21,7 +21,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import type { Asset, AssetType, Currency, PortfolioGroup } from "@/types";
+import type { Asset, AssetType, Currency } from "@/types";
 import { assetTypeLabels } from "@/lib/format";
 import { toNumber as toNum } from "@/lib/form-utils";
 
@@ -35,7 +35,6 @@ interface AssetFormValues {
   quantity: number | undefined;
   purchase_price: number | undefined;
   current_price?: number;
-  group_id?: string;
   bank_name?: string;
   interest_rate?: number;
 }
@@ -50,7 +49,6 @@ const assetFormSchema = z.object({
   quantity: z.preprocess(toNum, z.number({ message: "숫자를 입력해주세요" }).positive("수량은 0보다 커야 합니다")),
   purchase_price: z.preprocess(toNum, z.number({ message: "숫자를 입력해주세요" }).min(0, "매입가는 0 이상이어야 합니다").optional()),
   current_price: z.preprocess(toNum, z.number().min(0).optional()),
-  group_id: z.string().optional(),
   bank_name: z.string().optional(),
   interest_rate: z.preprocess(toNum, z.number().min(0).optional()),
 }).superRefine((data, ctx) => {
@@ -86,7 +84,6 @@ interface AssetFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editingAsset?: Asset | null;
-  groups: PortfolioGroup[];
   onSubmit: (data: AssetFormValues) => Promise<void>;
   isSubmitting: boolean;
 }
@@ -95,7 +92,6 @@ export function AssetForm({
   open,
   onOpenChange,
   editingAsset,
-  groups,
   onSubmit,
   isSubmitting,
 }: AssetFormProps) {
@@ -111,7 +107,6 @@ export function AssetForm({
       quantity: undefined,
       purchase_price: undefined,
       current_price: undefined,
-      group_id: "",
       bank_name: "",
       interest_rate: undefined,
     },
@@ -130,7 +125,6 @@ export function AssetForm({
         quantity: editingAsset.quantity,
         purchase_price: editingAsset.purchasePrice,
         current_price: editingAsset.currentPrice ?? undefined,
-        group_id: editingAsset.groupId ?? undefined,
         bank_name: (editingAsset.metadata?.bank_name as string) ?? "",
         interest_rate: (editingAsset.metadata?.interest_rate as number) ?? undefined,
       });
@@ -143,7 +137,6 @@ export function AssetForm({
         quantity: undefined,
         purchase_price: undefined,
         current_price: undefined,
-        group_id: "",
         bank_name: "",
         interest_rate: undefined,
       });
@@ -328,27 +321,6 @@ export function AssetForm({
               />
             </div>
           )}
-
-          {/* 그룹 선택 */}
-          <div className="grid gap-1.5">
-            <Label>포트폴리오 그룹 (선택)</Label>
-            <Select
-              value={form.watch("group_id") || "__none__"}
-              onValueChange={(val) => form.setValue("group_id", !val || val === "__none__" ? "" : val)}
-            >
-              <SelectTrigger className="w-full">
-                <span>{groups.find((g) => g.id === form.watch("group_id"))?.name ?? "그룹 없음"}</span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">그룹 없음</SelectItem>
-                {groups.map((g) => (
-                  <SelectItem key={g.id} value={g.id}>
-                    {g.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
 
           <DialogFooter>
             <Button

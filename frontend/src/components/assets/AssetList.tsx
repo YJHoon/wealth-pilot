@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Asset, AssetType, AssetStatus, DataFreshness, PortfolioGroup } from "@/types";
+import type { Asset, AssetType, AssetStatus, DataFreshness } from "@/types";
 import { useAppStore } from "@/stores/appStore";
 import {
   formatAmount,
@@ -76,7 +76,6 @@ const freshnessConfig: Record<DataFreshness, { icon: string; label: string }> = 
 
 interface AssetListProps {
   assets: Asset[];
-  groups: PortfolioGroup[];
   loading: boolean;
   onAddClick: () => void;
   onEditClick: (asset: Asset) => void;
@@ -137,7 +136,6 @@ function AssetActionMenu({
 
 export function AssetList({
   assets,
-  groups,
   loading,
   onAddClick,
   onEditClick,
@@ -152,24 +150,14 @@ export function AssetList({
   const isMasked = useAppStore((s) => s.isMasked);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [groupFilter, setGroupFilter] = useState<string>("all");
-
-  const groupMap = useMemo(
-    () => new Map(groups.map((g) => [g.id, g.name])),
-    [groups],
-  );
 
   const filtered = useMemo(() => {
     return assets.filter((a) => {
       if (typeFilter !== "all" && a.type !== typeFilter) return false;
       if (statusFilter !== "all" && a.status !== statusFilter) return false;
-      if (groupFilter !== "all") {
-        if (groupFilter === "__none__" && a.groupId !== null) return false;
-        if (groupFilter !== "__none__" && a.groupId !== groupFilter) return false;
-      }
       return true;
     });
-  }, [assets, typeFilter, statusFilter, groupFilter]);
+  }, [assets, typeFilter, statusFilter]);
 
   const computePnl = useCallback((asset: Asset) => {
     if (asset.status === "sold" && asset.realizedPnl != null) {
@@ -239,22 +227,6 @@ export function AssetList({
             ))}
           </TabsList>
         </Tabs>
-
-        {/* 그룹 필터 */}
-        <Select value={groupFilter} onValueChange={(val) => setGroupFilter(val ?? "all")}>
-          <SelectTrigger size="sm" className="w-auto min-w-[120px]">
-            <SelectValue placeholder="그룹 필터" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">모든 그룹</SelectItem>
-            <SelectItem value="__none__">그룹 없음</SelectItem>
-            {groups.map((g) => (
-              <SelectItem key={g.id} value={g.id}>
-                {g.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
 
         {/* 상태 필터 */}
         <Select value={statusFilter} onValueChange={(val) => setStatusFilter((val ?? "all") as StatusFilter)}>
@@ -392,7 +364,6 @@ export function AssetList({
                 <TableRow>
                   <TableHead>유형</TableHead>
                   <TableHead>자산명</TableHead>
-                  <TableHead>그룹</TableHead>
                   <TableHead className="text-right">수량</TableHead>
                   <TableHead className="text-right">매입가</TableHead>
                   <TableHead className="text-right">현재가</TableHead>
@@ -433,15 +404,6 @@ export function AssetList({
                             </Badge>
                           )}
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        {asset.groupId ? (
-                          <Badge variant="secondary">
-                            {groupMap.get(asset.groupId) ?? "알 수 없음"}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
                       </TableCell>
                       <TableCell className="text-right font-mono">
                         {formatQuantity(asset.quantity, isMasked)}

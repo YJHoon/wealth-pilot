@@ -25,9 +25,7 @@ const mockSummary: DashboardSummary = {
     crypto: { valueKrw: 0, ratio: 0 },
     real_estate: { valueKrw: 0, ratio: 0 },
   },
-  byGroup: {
-    g1: { name: "장기투자", valueKrw: 60_000_000, ratio: 60 },
-  },
+  byGroup: {},
   pnl: { total: 5_000_000, realized: 2_000_000, unrealized: 3_000_000, totalRatio: 5.26 },
   previousDayChange: { amount: 300_000, ratio: 0.3 },
   updatedAt: "2026-03-19T12:00:00Z",
@@ -88,8 +86,6 @@ describe("MinimalDashboard", () => {
     expect(screen.getByTestId("daily-change")).toBeInTheDocument();
     // 도넛 차트 범례
     expect(screen.getByText("현금/예적금")).toBeInTheDocument();
-    // 그룹 요약
-    expect(screen.getByText("장기투자")).toBeInTheDocument();
     // 면책 문구
     expect(screen.getByText(/투자 판단의 근거로 사용할 수 없습니다/)).toBeInTheDocument();
     // 신뢰도 인디케이터

@@ -8,7 +8,6 @@ import { AssetForm, type AssetFormValues } from "@/components/assets/AssetForm";
 import { SellDialog } from "@/components/assets/SellDialog";
 import { useTrading } from "@/hooks/useTrading";
 import { useAssets } from "@/hooks/useAssets";
-import { useGroups } from "@/hooks/useGroups";
 import { usePrices } from "@/hooks/usePrices";
 import type { TradingAccountCreateRequest } from "@/types/trading";
 import type { Asset, AssetCreateRequest, AssetUpdateRequest } from "@/types";
@@ -17,7 +16,6 @@ import { ApiError } from "@/lib/api";
 export default function AssetsPage() {
   const trading = useTrading();
   const assetsHook = useAssets();
-  const { groups } = useGroups();
   const { lastRefreshedAt, priceMode, toKrw, refreshPrices } = usePrices();
 
   const [formOpen, setFormOpen] = useState(false);
@@ -128,7 +126,6 @@ export default function AssetsPage() {
           quantity: values.quantity!,
           purchase_price: values.purchase_price ?? values.quantity!,
           current_price: values.current_price ?? null,
-          group_id: values.group_id || null,
           metadata_json: Object.keys(metadata).length > 0 ? metadata : null,
         };
 
@@ -140,7 +137,6 @@ export default function AssetsPage() {
             quantity: payload.quantity,
             purchase_price: payload.purchase_price,
             current_price: payload.current_price,
-            group_id: payload.group_id,
             metadata_json: payload.metadata_json,
           };
           await assetsHook.updateAsset(editingAsset.id, updatePayload);
@@ -206,7 +202,6 @@ export default function AssetsPage() {
 
       <AssetList
         assets={assetsHook.assets}
-        groups={groups}
         loading={assetsHook.loading}
         onAddClick={handleAddClick}
         onEditClick={handleEditClick}
@@ -223,7 +218,6 @@ export default function AssetsPage() {
         open={formOpen}
         onOpenChange={setFormOpen}
         editingAsset={editingAsset}
-        groups={groups}
         onSubmit={handleFormSubmit}
         isSubmitting={isSubmittingForm}
       />

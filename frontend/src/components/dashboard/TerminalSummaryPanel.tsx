@@ -21,8 +21,6 @@ import {
 
 const PIE_COLORS = ["#3b82f6", "#8b5cf6", "#f97316", "#eab308", "#14b8a6"];
 
-type ViewMode = "type" | "group";
-
 interface Props {
   summary: DashboardSummary;
 }
@@ -33,20 +31,11 @@ interface PieEntry {
   ratio: number;
 }
 
-function buildPieData(summary: DashboardSummary, mode: ViewMode): PieEntry[] {
-  if (mode === "type") {
-    return (Object.entries(summary.byType) as [AssetType, { valueKrw: number; ratio: number }][])
-      .filter(([, v]) => v.valueKrw > 0)
-      .map(([type, v]) => ({
-        name: assetTypeLabels[type],
-        value: v.valueKrw,
-        ratio: v.ratio,
-      }));
-  }
-  return Object.values(summary.byGroup)
-    .filter((v) => v.valueKrw > 0)
-    .map((v) => ({
-      name: v.name,
+function buildPieData(summary: DashboardSummary): PieEntry[] {
+  return (Object.entries(summary.byType) as [AssetType, { valueKrw: number; ratio: number }][])
+    .filter(([, v]) => v.valueKrw > 0)
+    .map(([type, v]) => ({
+      name: assetTypeLabels[type],
       value: v.valueKrw,
       ratio: v.ratio,
     }));
@@ -73,8 +62,7 @@ function PieTooltipContent({ active, payload, isMasked }: PieTooltipProps) {
 
 export function TerminalSummaryPanel({ summary }: Props) {
   const { isMasked } = useAppStore();
-  const [pieMode, setPieMode] = useState<ViewMode>("type");
-  const pieData = buildPieData(summary, pieMode);
+  const pieData = buildPieData(summary);
 
   const pnlTabs = [
     { key: "total", label: "합산", value: summary.pnl.total },
@@ -128,26 +116,8 @@ export function TerminalSummaryPanel({ summary }: Props) {
       <div className="px-3 py-2 border-b border-border flex-1 min-h-0">
         <div className="flex items-center justify-between mb-1">
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            자산 비중
+            유형별 자산 비중
           </span>
-          <div className="flex gap-0.5">
-            <Button
-              variant={pieMode === "type" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-5 px-1.5 text-[10px]"
-              onClick={() => setPieMode("type")}
-            >
-              유형
-            </Button>
-            <Button
-              variant={pieMode === "group" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-5 px-1.5 text-[10px]"
-              onClick={() => setPieMode("group")}
-            >
-              그룹
-            </Button>
-          </div>
         </div>
 
         <div className="h-[140px]">
@@ -191,22 +161,6 @@ export function TerminalSummaryPanel({ summary }: Props) {
         </div>
       </div>
 
-      {/* 그룹별 소계 */}
-      <div className="px-3 py-2">
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-          그룹별 소계
-        </div>
-        <div className="space-y-1.5">
-          {Object.values(summary.byGroup).map((group) => (
-            <div key={group.name} className="flex justify-between text-xs">
-              <span className="text-muted-foreground">{group.name}</span>
-              <span className="font-[family-name:var(--font-geist-mono)]">
-                {formatMaskedKrw(group.valueKrw, isMasked)}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
