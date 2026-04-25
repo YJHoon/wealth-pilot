@@ -44,6 +44,11 @@ function toastError(fallback: string, err: unknown) {
   toast.error(detail ? `${fallback}: ${detail}` : fallback);
 }
 
+function formatTimestamp(value: string): string {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString("ko-KR");
+}
+
 export default function TradingPage() {
   const trading = useTrading();
   const [strategyFormOpen, setStrategyFormOpen] = useState(false);
@@ -54,7 +59,9 @@ export default function TradingPage() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [isDepositing, setIsDepositing] = useState(false);
   const [nettingUpdating, setNettingUpdating] = useState(false);
-  const [refreshingAutoId, setRefreshingAutoId] = useState<string | null>(null);
+  const [refreshingAutoIds, setRefreshingAutoIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // ── Strategy handlers ──
 
@@ -129,18 +136,30 @@ export default function TradingPage() {
 
   const handleRefreshAuto = useCallback(
     async (strategyId: string) => {
-      if (refreshingAutoId) return;
-      setRefreshingAutoId(strategyId);
+      let started = false;
+      setRefreshingAutoIds((prev) => {
+        if (prev.has(strategyId)) return prev;
+        started = true;
+        const next = new Set(prev);
+        next.add(strategyId);
+        return next;
+      });
+      if (!started) return;
       try {
         await trading.refreshAutoTickers(strategyId);
         toast.success("자동 선정 종목을 갱신했습니다.");
       } catch (e) {
         toastError("자동 선정 갱신에 실패했습니다.", e);
       } finally {
-        setRefreshingAutoId(null);
+        setRefreshingAutoIds((prev) => {
+          if (!prev.has(strategyId)) return prev;
+          const next = new Set(prev);
+          next.delete(strategyId);
+          return next;
+        });
       }
     },
-    [trading, refreshingAutoId],
+    [trading],
   );
 
   const handleRunNow = useCallback(
@@ -342,7 +361,7 @@ export default function TradingPage() {
               {accountStrategies.map((strategy) => {
                 const auto = strategy.autoSelectConfig;
                 const autoSelected = strategy.autoSelectedTickers;
-                const isRefreshingAuto = refreshingAutoId === strategy.id;
+                const isRefreshingAuto = refreshingAutoIds.has(strategy.id);
                 return (
                   <Card key={strategy.id}>
                     <CardContent className="pt-4 pb-4">
@@ -459,8 +478,7 @@ export default function TradingPage() {
                                 ))}
                               </div>
                               <p className="mt-1.5 text-[10px] text-muted-foreground">
-                                마지막 갱신{" "}
-                                {new Date(autoSelected.generatedAt).toLocaleString("ko-KR")} ·{" "}
+                                마지막 갱신 {formatTimestamp(autoSelected.generatedAt)} ·{" "}
                                 {autoSelected.ruleVersion}
                               </p>
                             </>
