@@ -14,7 +14,7 @@ import { useAppStore } from "@/stores/appStore";
 import {
   formatMaskedKrw,
   formatPercent,
-  formatChangeKrw,
+  formatMaskedKrwSigned,
   pnlColorClass,
   assetTypeLabels,
 } from "@/lib/format";
@@ -84,7 +84,7 @@ export function TerminalSummaryPanel({ summary }: Props) {
         </div>
         <div className={`text-xs ${pnlColorClass(summary.previousDayChange.amount)}`}>
           전일 대비{" "}
-          {formatChangeKrw(summary.previousDayChange.amount, isMasked)}{" "}
+          {formatMaskedKrwSigned(summary.previousDayChange.amount, isMasked)}{" "}
           ({formatPercent(summary.previousDayChange.ratio)})
         </div>
       </div>
@@ -105,7 +105,7 @@ export function TerminalSummaryPanel({ summary }: Props) {
           ))}
         </div>
         <div className={`text-lg font-bold font-[family-name:var(--font-geist-mono)] ${pnlColorClass(currentPnl.value)}`}>
-          {formatChangeKrw(currentPnl.value, isMasked)}
+          {formatMaskedKrwSigned(currentPnl.value, isMasked)}
         </div>
         <div className={`text-xs ${pnlColorClass(summary.pnl.totalRatio)}`}>
           총 수익률 {formatPercent(summary.pnl.totalRatio)}

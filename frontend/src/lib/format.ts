@@ -107,13 +107,6 @@ export function formatPercent(value: number): string {
   return `${sign}${value.toFixed(2)}%`;
 }
 
-/** 변동 금액 포맷 (예: "+1,234,567원") */
-export function formatChangeKrw(value: number, isMasked: boolean): string {
-  if (isMasked) return `${MASK}원`;
-  const sign = value >= 0 ? "+" : "";
-  return `${sign}${Math.round(value).toLocaleString("ko-KR")}원`;
-}
-
 /** 수익률 색상 CSS 클래스 */
 export function pnlColorClass(value: number): string {
   if (value > 0) return "text-emerald-400";
@@ -127,7 +120,7 @@ export function formatMaskedKrw(value: number, isMasked: boolean): string {
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
 }
 
-/** 마스킹 처리된 부호 포함 금액 (KRW) — 손익 등 부호 표기가 필요한 곳에 사용 */
+/** 마스킹 처리된 부호 포함 금액 (KRW) — 손익·변동 등 부호 표기가 필요한 곳에 사용 */
 export function formatMaskedKrwSigned(value: number, isMasked: boolean): string {
   if (isMasked) return `${MASK}원`;
   const sign = value >= 0 ? "+" : "";

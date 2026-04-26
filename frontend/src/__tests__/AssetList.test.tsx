@@ -147,6 +147,14 @@ describe("AssetList", () => {
     expect(maskedElements.length).toBeGreaterThan(0);
   });
 
+  it("수동 입력 자산은 액션 메뉴 트리거가 표시된다", () => {
+    renderList();
+    // 모바일 + 데스크톱 둘 다 렌더되므로 getAllByRole
+    expect(
+      screen.getAllByRole("button", { name: /삼성전자 액션 메뉴/ }).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("KIS 동기화 자산은 KIS 배지가 표시되고 액션 메뉴가 숨겨진다", async () => {
     const kisAsset: Asset = {
       ...mockAssets[0],
