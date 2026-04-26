@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 # TradingAccount
 # ──────────────────────────────────────────────
 
+
 class TradingAccountCreate(BaseModel):
     mode: TradingMode = TradingMode.PAPER
 
@@ -59,32 +60,45 @@ class TradingAccountUpdate(BaseModel):
     allow_netting: bool | None = None
 
 
+class AccountCapitalSummary(BaseModel):
+    """전략 자본 할당 가시화용 — 계좌 총자본, 이미 배정된 합, 잔여 가용 자본."""
+
+    account_total: Decimal
+    allocated: Decimal
+    available: Decimal
+
+
 class RebalanceAllocationItem(BaseModel):
     """리밸런싱: 전략별 신규 initial_capital."""
+
     strategy_id: UUID
     initial_capital: Decimal = Field(ge=Decimal("0"))
 
 
 class AccountRebalanceRequest(BaseModel):
     """계좌 내 활성 전략들의 initial_capital 일괄 재배분."""
+
     allocations: list[RebalanceAllocationItem]
 
 
 class DepositAllocationMode(str, Enum):
     """입금 할당 방식."""
-    MANUAL = "manual"       # 사용자가 전략별 금액을 직접 지정
-    PRO_RATA = "pro_rata"   # 기존 전략 initial_capital 비율대로 자동 분배
-    RESERVE = "reserve"     # 계좌 총액만 증액, 전략에는 배분하지 않음
+
+    MANUAL = "manual"  # 사용자가 전략별 금액을 직접 지정
+    PRO_RATA = "pro_rata"  # 기존 전략 initial_capital 비율대로 자동 분배
+    RESERVE = "reserve"  # 계좌 총액만 증액, 전략에는 배분하지 않음
 
 
 class DepositAllocationItem(BaseModel):
     """수동 입금 분배: 전략별 추가 금액."""
+
     strategy_id: UUID
     amount: Decimal = Field(ge=Decimal("0"))
 
 
 class AccountDepositRequest(BaseModel):
     """계좌 신규 입금 반영 + 전략 할당."""
+
     amount: Decimal = Field(gt=Decimal("0"))
     mode: DepositAllocationMode
     # mode=manual일 때만 사용
@@ -98,7 +112,10 @@ class AccountDepositRequest(BaseModel):
                 raise ValueError(
                     "manual 모드에서는 allocations가 비어있을 수 없습니다.",
                 )
-        elif self.mode in (DepositAllocationMode.PRO_RATA, DepositAllocationMode.RESERVE):
+        elif self.mode in (
+            DepositAllocationMode.PRO_RATA,
+            DepositAllocationMode.RESERVE,
+        ):
             # PRO_RATA/RESERVE는 allocations 필드 자체를 지정해서는 안 됨
             # (빈 리스트 []도 부적절한 입력으로 취급)
             if self.allocations is not None:
@@ -140,15 +157,17 @@ TickerCode = Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
 
 class AutoSelectConfig(BaseModel):
     """자동 종목 선정 설정 — 전략에 내장."""
+
     enabled: bool = False
     top_n: int = Field(default=10, ge=3, le=30)
     market: str = Field(default="ALL", pattern="^(KOSPI|KOSDAQ|ALL)$")
-    min_volume_value: int = Field(default=10_000_000_000, ge=0)
+    min_volume_value: int = Field(default=100, ge=0)
     blacklist: list[TickerCode] = Field(default_factory=list, max_length=50)
 
 
 class AutoSelectedTickersInfo(BaseModel):
     """전략에 저장된 마지막 자동 선정 결과."""
+
     tickers: list[str]
     generated_at: datetime
     rule_version: str
@@ -167,6 +186,7 @@ class AutoTickerSelectionHistory(BaseModel):
 
 class AutoTickerPreviewResponse(BaseModel):
     """미저장 미리보기 — 현재 설정대로 돌렸을 때의 결과."""
+
     rule_version: str
     selected: list[dict]
     excluded_sample: list[dict]
@@ -224,6 +244,7 @@ class TradingStrategyResponse(BaseModel):
 
 def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyResponse:
     from app.services.strategy_capital import get_initial_capital, get_realized_pnl
+
     cfg_raw = strategy.auto_select_config or {}
     info: AutoSelectedTickersInfo | None = None
     stored = strategy.auto_selected_tickers or None
@@ -251,7 +272,7 @@ def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyRespo
                 "enabled": cfg_raw.get("enabled", False),
                 "top_n": cfg_raw.get("top_n", 10),
                 "market": cfg_raw.get("market", "ALL"),
-                "min_volume_value": cfg_raw.get("min_volume_value", 10_000_000_000),
+                "min_volume_value": cfg_raw.get("min_volume_value", 100),
                 "blacklist": cfg_raw.get("blacklist", []),
             }
         ),
@@ -264,6 +285,7 @@ def strategy_to_response(strategy: TradingStrategyModel) -> TradingStrategyRespo
 # ──────────────────────────────────────────────
 # TradingOrder
 # ──────────────────────────────────────────────
+
 
 class TradingOrderResponse(BaseModel):
     id: UUID
@@ -311,6 +333,7 @@ def order_to_response(order: TradingOrderModel) -> TradingOrderResponse:
 # TradingPosition
 # ──────────────────────────────────────────────
 
+
 class TradingPositionResponse(BaseModel):
     id: UUID
     account_id: UUID
@@ -334,7 +357,9 @@ def position_to_response(position: TradingPositionModel) -> TradingPositionRespo
         ticker_name=position.ticker_name,
         quantity=decrypt_decimal(position.quantity),
         avg_buy_price=decrypt_decimal(position.avg_buy_price),
-        current_price=Decimal(str(position.current_price)) if position.current_price else None,
+        current_price=(
+            Decimal(str(position.current_price)) if position.current_price else None
+        ),
         unrealized_pnl=decrypt_decimal_optional(position.unrealized_pnl),
         created_at=position.created_at,
         updated_at=position.updated_at,
@@ -344,6 +369,7 @@ def position_to_response(position: TradingPositionModel) -> TradingPositionRespo
 # ──────────────────────────────────────────────
 # Schedule
 # ──────────────────────────────────────────────
+
 
 class ScheduleStartRequest(BaseModel):
     strategy_id: UUID
@@ -391,6 +417,7 @@ def schedule_log_to_summary(log: TradingScheduleLogModel) -> ScheduleLogSummary:
 # TradingDecision (Step 3: 승인 모드)
 # ──────────────────────────────────────────────
 
+
 class TradingDecisionResponse(BaseModel):
     id: UUID
     strategy_id: UUID
@@ -429,6 +456,7 @@ def decision_to_response(decision: TradingDecisionModel) -> TradingDecisionRespo
 # Performance
 # ──────────────────────────────────────────────
 
+
 class TradingPerformanceResponse(BaseModel):
     total_trades: int
     winning_trades: int
@@ -444,6 +472,7 @@ class TradingPerformanceResponse(BaseModel):
 # ──────────────────────────────────────────────
 # AdaptiveRule (Step 4: 모듈 C)
 # ──────────────────────────────────────────────
+
 
 class AdaptiveRuleResponse(BaseModel):
     id: UUID

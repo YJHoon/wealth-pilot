@@ -6,6 +6,16 @@ import { TradingAccountSection } from "@/components/assets/TradingAccountSection
 import { AssetList } from "@/components/assets/AssetList";
 import { AssetForm, type AssetFormValues } from "@/components/assets/AssetForm";
 import { SellDialog } from "@/components/assets/SellDialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useTrading } from "@/hooks/useTrading";
 import { useAssets } from "@/hooks/useAssets";
 import { usePrices } from "@/hooks/usePrices";
@@ -24,6 +34,9 @@ export default function AssetsPage() {
 
   const [sellOpen, setSellOpen] = useState(false);
   const [sellingAsset, setSellingAsset] = useState<Asset | null>(null);
+
+  const [pendingDelete, setPendingDelete] = useState<Asset | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [refreshingPrices, setRefreshingPrices] = useState(false);
 
@@ -95,20 +108,25 @@ export default function AssetsPage() {
     setSellOpen(true);
   }, []);
 
-  const handleDeleteClick = useCallback(
-    async (asset: Asset) => {
-      if (!confirm(`'${asset.name}'을(를) 삭제하시겠습니까?`)) return;
-      try {
-        await assetsHook.deleteAsset(asset.id);
-        toast.success("자산이 삭제되었습니다.");
-      } catch (err) {
-        toast.error(
-          err instanceof ApiError ? err.message : "자산 삭제에 실패했습니다.",
-        );
-      }
-    },
-    [assetsHook],
-  );
+  const handleDeleteClick = useCallback((asset: Asset) => {
+    setPendingDelete(asset);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!pendingDelete || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await assetsHook.deleteAsset(pendingDelete.id);
+      toast.success("자산이 삭제되었습니다.");
+      setPendingDelete(null);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : "자산 삭제에 실패했습니다.",
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [assetsHook, pendingDelete, isDeleting]);
 
   const handleFormSubmit = useCallback(
     async (values: AssetFormValues) => {
@@ -228,6 +246,34 @@ export default function AssetsPage() {
         asset={sellingAsset}
         onSubmit={handleSellSubmit}
       />
+
+      <AlertDialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>자산 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete
+                ? `'${pendingDelete.name}'을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleDeleteConfirm()}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "삭제 중..." : "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

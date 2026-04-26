@@ -344,6 +344,7 @@ export interface TradingStrategyCreateRequest {
   interval_minutes: number;
   market_hours_only: boolean;
   priority?: number;
+  initial_capital: number;
   auto_select_config?: AutoSelectConfigRequest;
 }
 
@@ -354,6 +355,7 @@ export interface TradingStrategyUpdateRequest {
   interval_minutes?: number;
   market_hours_only?: boolean;
   priority?: number;
+  initial_capital?: number;
   auto_select_config?: AutoSelectConfigRequest;
 }
 
@@ -364,6 +366,28 @@ export interface RebalanceAllocationItem {
 
 export interface AccountRebalanceRequest {
   allocations: RebalanceAllocationItem[];
+}
+
+export interface AccountCapitalSummary {
+  accountTotal: number;
+  allocated: number;
+  available: number;
+}
+
+export interface AccountCapitalSummaryApi {
+  account_total: number;
+  allocated: number;
+  available: number;
+}
+
+export function toAccountCapitalSummary(
+  api: AccountCapitalSummaryApi,
+): AccountCapitalSummary {
+  return {
+    accountTotal: Number(api.account_total),
+    allocated: Number(api.allocated),
+    available: Number(api.available),
+  };
 }
 
 export type DepositAllocationMode = "manual" | "pro_rata" | "reserve";

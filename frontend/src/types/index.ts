@@ -169,7 +169,6 @@ export function toGroup(api: GroupApiResponse): PortfolioGroup {
 export interface DashboardSummary {
   totalValueKrw: number;
   byType: Record<AssetType, { valueKrw: number; ratio: number }>;
-  byGroup: Record<string, { name: string; valueKrw: number; ratio: number }>;
   pnl: {
     total: number;
     realized: number;
@@ -239,12 +238,6 @@ export interface TypeBreakdownApi {
   ratio: number;
 }
 
-export interface GroupBreakdownApi {
-  name: string;
-  value_krw: number;
-  ratio: number;
-}
-
 export interface PnlSummaryApi {
   total: number;
   realized: number;
@@ -260,7 +253,6 @@ export interface DailyChangeApi {
 export interface DashboardSummaryApi {
   total_value_krw: number;
   by_type: Record<string, TypeBreakdownApi>;
-  by_group: Record<string, GroupBreakdownApi>;
   pnl: PnlSummaryApi;
   previous_day_change: DailyChangeApi;
   updated_at: string;
@@ -903,15 +895,9 @@ export function toDashboardSummary(api: DashboardSummaryApi): DashboardSummary {
     byType[key] = { valueKrw: Number(val.value_krw), ratio: Number(val.ratio) };
   }
 
-  const byGroup: DashboardSummary["byGroup"] = {};
-  for (const [key, val] of Object.entries(api.by_group)) {
-    byGroup[key] = { name: val.name, valueKrw: Number(val.value_krw), ratio: Number(val.ratio) };
-  }
-
   return {
     totalValueKrw: Number(api.total_value_krw),
     byType,
-    byGroup,
     pnl: {
       total: Number(api.pnl.total),
       realized: Number(api.pnl.realized),

@@ -515,6 +515,7 @@ export default function TradingPage() {
           onPreviewAuto={trading.previewAutoTickers}
           onRefreshAuto={trading.refreshAutoTickers}
           onLoadAutoHistory={trading.fetchAutoTickerHistory}
+          onLoadCapitalSummary={trading.fetchAccountCapitalSummary}
         />
       )}
 

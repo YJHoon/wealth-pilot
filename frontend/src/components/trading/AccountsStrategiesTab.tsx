@@ -160,6 +160,9 @@ export function AccountsStrategiesTab({
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
                         <span>{strategy.intervalMinutes}분 간격</span>
                         {strategy.marketHoursOnly && <span>장중전용</span>}
+                        <span>
+                          할당 {formatMaskedKrw(strategy.initialCapital ?? 0, isMasked)}
+                        </span>
                       </div>
                     </div>
 

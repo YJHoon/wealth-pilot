@@ -30,6 +30,9 @@ import {
   type AutoTickerPreviewResponseApi,
   type AutoTickerSelectionHistory,
   type AutoTickerSelectionHistoryApi,
+  type AccountCapitalSummary,
+  type AccountCapitalSummaryApi,
+  toAccountCapitalSummary,
   toTradingAccount,
   toTradingStrategy,
   toTradingOrder,
@@ -99,6 +102,10 @@ export interface UseTradingReturn {
     strategyId: string,
     limit?: number,
   ) => Promise<AutoTickerSelectionHistory[]>;
+  fetchAccountCapitalSummary: (
+    accountId: string,
+    excludeStrategyId?: string,
+  ) => Promise<AccountCapitalSummary>;
   // Schedule mutations
   startSchedule: (strategyId: string) => Promise<void>;
   stopSchedule: (strategyId: string) => Promise<void>;
@@ -347,6 +354,24 @@ export function useTrading(): UseTradingReturn {
     [canFetch, fetchOpts],
   );
 
+  const fetchAccountCapitalSummary = useCallback(
+    async (
+      accountId: string,
+      excludeStrategyId?: string,
+    ): Promise<AccountCapitalSummary> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      const qs = excludeStrategyId
+        ? `?exclude_strategy_id=${encodeURIComponent(excludeStrategyId)}`
+        : "";
+      const res = await apiFetch<AccountCapitalSummaryApi>(
+        `/api/trading/accounts/${accountId}/capital-summary${qs}`,
+        fetchOpts,
+      );
+      return toAccountCapitalSummary(res);
+    },
+    [canFetch, fetchOpts],
+  );
+
   const rebalanceAccount = useCallback(
     async (
       id: string,
@@ -577,6 +602,7 @@ export function useTrading(): UseTradingReturn {
     previewAutoTickers,
     refreshAutoTickers,
     fetchAutoTickerHistory,
+    fetchAccountCapitalSummary,
     startSchedule,
     stopSchedule,
     runNow,

@@ -24,6 +24,7 @@ import {
 import { TickerCombobox } from "@/components/common/TickerCombobox";
 import { toNumber as toNum } from "@/lib/form-utils";
 import type {
+  AccountCapitalSummary,
   AutoTickerPreviewResponse,
   AutoTickerSelectionHistory,
   StrategyType,
@@ -32,12 +33,20 @@ import type {
   TradingStrategyUpdateRequest,
 } from "@/types/trading";
 import { strategyTypeLabels } from "@/types/trading";
+import { formatMaskedKrw } from "@/lib/format";
+import { useAppStore } from "@/stores/appStore";
 
 const MAX_TICKERS = 50;
 const MAX_BLACKLIST = 50;
 
 const DEFAULT_PARAMS: Record<StrategyType, Record<string, number>> = {
-  ma_crossover: { fast_period: 5, slow_period: 20, rsi_period: 14, rsi_overbought: 70, rsi_oversold: 30 },
+  ma_crossover: {
+    fast_period: 5,
+    slow_period: 20,
+    rsi_period: 14,
+    rsi_overbought: 70,
+    rsi_oversold: 30,
+  },
   mean_reversion: { lookback: 20, std_multiplier: 2, rsi_period: 14 },
   custom: {},
 };
@@ -46,7 +55,7 @@ const DEFAULT_AUTO_SELECT = {
   enabled: false,
   top_n: 10,
   market: "ALL" as const,
-  min_volume_value: 10_000_000_000,
+  min_volume_value: 100,
   blacklist: [] as string[],
 };
 
@@ -55,12 +64,16 @@ const schema = z.object({
   strategy_type: z.enum(["ma_crossover", "mean_reversion", "custom"]),
   interval_minutes: z.preprocess(
     toNum,
-    z.number({ message: "숫자를 입력해주세요" }).int().min(1).max(60),
+    z.number({ message: "숫자를 입력해주세요" }).int().min(1).max(60)
   ),
   market_hours_only: z.boolean(),
   priority: z.preprocess(
     toNum,
-    z.number({ message: "숫자를 입력해주세요" }).int().min(0).max(100),
+    z.number({ message: "숫자를 입력해주세요" }).int().min(0).max(100)
+  ),
+  initial_capital: z.preprocess(
+    toNum,
+    z.number({ message: "숫자를 입력해주세요" }).min(0, "0 이상이어야 합니다")
   ),
   target_tickers: z
     .array(z.string().regex(/^\d{6}$/, "6자리 종목코드만 허용됩니다"))
@@ -68,16 +81,19 @@ const schema = z.object({
   auto_enabled: z.boolean(),
   auto_top_n: z.preprocess(
     toNum,
-    z.number({ message: "숫자를 입력해주세요" }).int().min(3).max(30),
+    z.number({ message: "숫자를 입력해주세요" }).int().min(3).max(30)
   ),
   auto_market: z.enum(["KOSPI", "KOSDAQ", "ALL"]),
   auto_min_volume_value: z.preprocess(
     toNum,
-    z.number({ message: "숫자를 입력해주세요" }).int().min(0),
+    z.number({ message: "숫자를 입력해주세요" }).int().min(0)
   ),
   auto_blacklist: z
     .array(z.string().regex(/^\d{6}$/, "6자리 종목코드만 허용됩니다"))
-    .max(MAX_BLACKLIST, `제외 종목은 최대 ${MAX_BLACKLIST}개까지 선택할 수 있습니다`),
+    .max(
+      MAX_BLACKLIST,
+      `제외 종목은 최대 ${MAX_BLACKLIST}개까지 선택할 수 있습니다`
+    ),
 });
 
 type StrategyFormValues = z.output<typeof schema>;
@@ -88,12 +104,21 @@ interface StrategyFormDialogProps {
   accountId: string;
   editingStrategy?: TradingStrategy | null;
   onSubmitCreate: (data: TradingStrategyCreateRequest) => Promise<void>;
-  onSubmitUpdate: (id: string, data: TradingStrategyUpdateRequest) => Promise<void>;
+  onSubmitUpdate: (
+    id: string,
+    data: TradingStrategyUpdateRequest
+  ) => Promise<void>;
   isSubmitting: boolean;
   // 자동 선정 (편집 모드 전용 — 저장된 전략에서만 호출 가능)
   onPreviewAuto?: (strategyId: string) => Promise<AutoTickerPreviewResponse>;
   onRefreshAuto?: (strategyId: string) => Promise<TradingStrategy>;
-  onLoadAutoHistory?: (strategyId: string) => Promise<AutoTickerSelectionHistory[]>;
+  onLoadAutoHistory?: (
+    strategyId: string
+  ) => Promise<AutoTickerSelectionHistory[]>;
+  onLoadCapitalSummary?: (
+    accountId: string,
+    excludeStrategyId?: string,
+  ) => Promise<AccountCapitalSummary>;
 }
 
 const MARKET_LABELS: Record<"KOSPI" | "KOSDAQ" | "ALL", string> = {
@@ -113,8 +138,12 @@ export function StrategyFormDialog({
   onPreviewAuto,
   onRefreshAuto,
   onLoadAutoHistory,
+  onLoadCapitalSummary,
 }: StrategyFormDialogProps) {
   const isEditing = !!editingStrategy;
+  const isMasked = useAppStore((s) => s.isMasked);
+  const [capitalSummary, setCapitalSummary] =
+    useState<AccountCapitalSummary | null>(null);
 
   const form = useForm<StrategyFormValues>({
     resolver: zodResolver(schema) as Resolver<StrategyFormValues>,
@@ -124,6 +153,7 @@ export function StrategyFormDialog({
       interval_minutes: 10,
       market_hours_only: true,
       priority: 0,
+      initial_capital: 0,
       target_tickers: [],
       auto_enabled: DEFAULT_AUTO_SELECT.enabled,
       auto_top_n: DEFAULT_AUTO_SELECT.top_n,
@@ -142,6 +172,7 @@ export function StrategyFormDialog({
         interval_minutes: editingStrategy.intervalMinutes,
         market_hours_only: editingStrategy.marketHoursOnly,
         priority: editingStrategy.priority ?? 0,
+        initial_capital: editingStrategy.initialCapital ?? 0,
         target_tickers: editingStrategy.targetTickers,
         auto_enabled: auto.enabled,
         auto_top_n: auto.topN,
@@ -156,6 +187,7 @@ export function StrategyFormDialog({
         interval_minutes: 10,
         market_hours_only: true,
         priority: 0,
+        initial_capital: 0,
         target_tickers: [],
         auto_enabled: DEFAULT_AUTO_SELECT.enabled,
         auto_top_n: DEFAULT_AUTO_SELECT.top_n,
@@ -165,6 +197,29 @@ export function StrategyFormDialog({
       });
     }
   }, [editingStrategy, form, open]);
+
+  // 다이얼로그 오픈 시 잔여 가용 자본 조회 (편집 모드면 자기 자신 제외)
+  useEffect(() => {
+    if (!open || !onLoadCapitalSummary || !accountId) {
+      setCapitalSummary(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const summary = await onLoadCapitalSummary(
+          accountId,
+          editingStrategy?.id,
+        );
+        if (!cancelled) setCapitalSummary(summary);
+      } catch {
+        if (!cancelled) setCapitalSummary(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, accountId, editingStrategy?.id, onLoadCapitalSummary]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
     const autoSelect = {
@@ -181,6 +236,7 @@ export function StrategyFormDialog({
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
         priority: values.priority,
+        initial_capital: values.initial_capital,
         auto_select_config: autoSelect,
       });
     } else {
@@ -193,6 +249,7 @@ export function StrategyFormDialog({
         interval_minutes: values.interval_minutes,
         market_hours_only: values.market_hours_only,
         priority: values.priority,
+        initial_capital: values.initial_capital,
         auto_select_config: autoSelect,
       });
     }
@@ -207,16 +264,23 @@ export function StrategyFormDialog({
         <DialogHeader>
           <DialogTitle>{isEditing ? "전략 수정" : "전략 생성"}</DialogTitle>
           <DialogDescription>
-            자동매매 전략을 설정합니다. 감시할 종목을 직접 선택하거나 자동 선정을 켜주세요.
+            자동매매 전략을 설정합니다. 감시할 종목을 직접 선택하거나 자동
+            선정을 켜주세요.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="grid gap-3">
           <div className="grid gap-1.5">
             <Label htmlFor="name">전략명</Label>
-            <Input id="name" placeholder="예: 골든크로스 자동매매" {...form.register("name")} />
+            <Input
+              id="name"
+              placeholder="예: 골든크로스 자동매매"
+              {...form.register("name")}
+            />
             {form.formState.errors.name && (
-              <p className="text-xs text-destructive">{form.formState.errors.name.message}</p>
+              <p className="text-xs text-destructive">
+                {form.formState.errors.name.message}
+              </p>
             )}
           </div>
 
@@ -288,6 +352,48 @@ export function StrategyFormDialog({
           </div>
 
           <div className="grid gap-1.5">
+            <Label htmlFor="initial_capital">할당 자본 (원)</Label>
+            <Input
+              id="initial_capital"
+              type="number"
+              min={0}
+              max={capitalSummary?.available}
+              step={1}
+              {...form.register("initial_capital")}
+            />
+            {capitalSummary ? (
+              <p className="text-xs text-muted-foreground">
+                계좌 총 {formatMaskedKrw(capitalSummary.accountTotal, isMasked)}
+                {" / 다른 전략 배정 "}
+                {formatMaskedKrw(capitalSummary.allocated, isMasked)}
+                {" / 잔여 "}
+                <span className="font-medium text-foreground">
+                  {formatMaskedKrw(capitalSummary.available, isMasked)}
+                </span>
+                . 잔여 범위 안에서 설정하세요. 여러 전략을 한 번에 조정하려면
+                리밸런스 다이얼로그를 사용하세요.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                이 전략에 배정할 금액. 계좌 총 자본에서 다른 전략에 이미 배정된
+                금액을 제외한 잔여 안에서만 설정할 수 있습니다.
+              </p>
+            )}
+            {capitalSummary &&
+              Number(form.watch("initial_capital")) >
+                capitalSummary.available && (
+                <p className="text-xs text-destructive">
+                  잔여 가용 자본을 초과했습니다.
+                </p>
+              )}
+            {form.formState.errors.initial_capital && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.initial_capital.message}
+              </p>
+            )}
+          </div>
+
+          <div className="grid gap-1.5">
             <Label>감시 종목 (수동)</Label>
             <Controller
               control={form.control}
@@ -303,7 +409,8 @@ export function StrategyFormDialog({
               )}
             />
             <p className="text-xs text-muted-foreground">
-              종목명으로 검색해 추가하세요. 자동 선정과 함께 사용 가능합니다. (최대 {MAX_TICKERS}개)
+              종목명으로 검색해 추가하세요. 자동 선정과 함께 사용 가능합니다.
+              (최대 {MAX_TICKERS}개)
             </p>
             {form.formState.errors.target_tickers && (
               <p className="text-xs text-destructive">
@@ -352,30 +459,35 @@ export function StrategyFormDialog({
                         <Select
                           value={field.value}
                           onValueChange={(val) =>
-                            val && field.onChange(val as "KOSPI" | "KOSDAQ" | "ALL")
+                            val &&
+                            field.onChange(val as "KOSPI" | "KOSDAQ" | "ALL")
                           }
                         >
                           <SelectTrigger className="w-full">
                             <span>{MARKET_LABELS[field.value]}</span>
                           </SelectTrigger>
                           <SelectContent>
-                            {Object.entries(MARKET_LABELS).map(([value, label]) => (
-                              <SelectItem key={value} value={value}>
-                                {label}
-                              </SelectItem>
-                            ))}
+                            {Object.entries(MARKET_LABELS).map(
+                              ([value, label]) => (
+                                <SelectItem key={value} value={value}>
+                                  {label}
+                                </SelectItem>
+                              )
+                            )}
                           </SelectContent>
                         </Select>
                       )}
                     />
                   </div>
                   <div className="grid gap-1.5">
-                    <Label htmlFor="auto_min_volume_value">최소 거래대금 (원)</Label>
+                    <Label htmlFor="auto_min_volume_value">
+                      최소 거래대금 (원)
+                    </Label>
                     <Input
                       id="auto_min_volume_value"
                       type="number"
                       min={0}
-                      step={1_000_000_000}
+                      step={100}
                       {...form.register("auto_min_volume_value")}
                     />
                     {form.formState.errors.auto_min_volume_value && (
@@ -409,14 +521,16 @@ export function StrategyFormDialog({
               </>
             )}
             <p className="text-xs text-muted-foreground">
-              매일 08:30에 거래대금 상위 종목을 자동 선정합니다. 수동 종목 + 자동 선정 + 보유
-              포지션을 모두 평가합니다.
+              매일 08:30에 거래대금 상위 종목을 자동 선정합니다. 수동 종목 +
+              자동 선정 + 보유 포지션을 모두 평가합니다.
             </p>
           </div>
 
           {!isEditing && (
             <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-              <p className="font-medium mb-1">기본 파라미터 ({strategyTypeLabels[watchType]})</p>
+              <p className="font-medium mb-1">
+                기본 파라미터 ({strategyTypeLabels[watchType]})
+              </p>
               {Object.entries(DEFAULT_PARAMS[watchType]).map(([key, val]) => (
                 <span key={key} className="mr-3">
                   {key}: {val}
@@ -472,9 +586,15 @@ function AutoTickerPanel({
   onRefresh,
   onLoadHistory,
 }: AutoTickerPanelProps) {
-  const [busy, setBusy] = useState<"preview" | "refresh" | "history" | null>(null);
-  const [preview, setPreview] = useState<AutoTickerPreviewResponse | null>(null);
-  const [history, setHistory] = useState<AutoTickerSelectionHistory[] | null>(null);
+  const [busy, setBusy] = useState<"preview" | "refresh" | "history" | null>(
+    null
+  );
+  const [preview, setPreview] = useState<AutoTickerPreviewResponse | null>(
+    null
+  );
+  const [history, setHistory] = useState<AutoTickerSelectionHistory[] | null>(
+    null
+  );
   const [error, setError] = useState<string | null>(null);
   // 갱신 직후 부모의 strategy prop 업데이트 지연 대비 로컬 override.
   const [refreshedLast, setRefreshedLast] = useState<
@@ -575,17 +695,20 @@ function AutoTickerPanel({
       {last ? (
         <div className="text-xs">
           <p className="text-muted-foreground">
-            마지막 갱신: {formatTimestamp(last.generatedAt)} (
-            {last.ruleVersion})
+            마지막 갱신: {formatTimestamp(last.generatedAt)} ({last.ruleVersion}
+            )
           </p>
           <p className="mt-1">
             현재 자동 선정 종목 ({last.tickers.length}개):{" "}
-            <span className="font-mono">{last.tickers.join(", ") || "없음"}</span>
+            <span className="font-mono">
+              {last.tickers.join(", ") || "없음"}
+            </span>
           </p>
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">
-          아직 자동 선정 결과가 없습니다. 활성화한 뒤 미리보기 또는 지금 갱신을 눌러보세요.
+          아직 자동 선정 결과가 없습니다. 활성화한 뒤 미리보기 또는 지금 갱신을
+          눌러보세요.
         </p>
       )}
 
@@ -593,19 +716,21 @@ function AutoTickerPanel({
         <div className="text-xs grid gap-1">
           <p className="font-medium">미리보기 ({preview.ruleVersion})</p>
           <p className="text-muted-foreground">
-            가용 현금 {Math.round(preview.availableCash).toLocaleString()}원 / 평가액{" "}
-            {Math.round(preview.totalEval).toLocaleString()}원 / 비중한도{" "}
+            가용 현금 {Math.round(preview.availableCash).toLocaleString()}원 /
+            평가액 {Math.round(preview.totalEval).toLocaleString()}원 / 비중한도{" "}
             {(preview.maxPositionPct * 100).toFixed(0)}%
           </p>
           <ul className="list-disc pl-4 space-y-0.5">
             {preview.selected.map((s, i) => (
               <li key={i}>
-                <span className="font-mono">{String(s.ticker)}</span> {String(s.name)} —{" "}
-                {String(s.reason)}
+                <span className="font-mono">{String(s.ticker)}</span>{" "}
+                {String(s.name)} — {String(s.reason)}
               </li>
             ))}
             {preview.selected.length === 0 && (
-              <li className="text-muted-foreground">선정된 종목이 없습니다 (필터를 완화해보세요)</li>
+              <li className="text-muted-foreground">
+                선정된 종목이 없습니다 (필터를 완화해보세요)
+              </li>
             )}
           </ul>
         </div>
@@ -620,10 +745,13 @@ function AutoTickerPanel({
                 <span className="text-muted-foreground">
                   {formatTimestamp(h.generatedAt)}
                 </span>{" "}
-                <span className="font-mono">[{h.triggeredBy}]</span> ({h.selectedTickers.length}개)
+                <span className="font-mono">[{h.triggeredBy}]</span> (
+                {h.selectedTickers.length}개)
               </li>
             ))}
-            {history.length === 0 && <li className="text-muted-foreground">이력 없음</li>}
+            {history.length === 0 && (
+              <li className="text-muted-foreground">이력 없음</li>
+            )}
           </ul>
         </div>
       )}
