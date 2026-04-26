@@ -297,11 +297,19 @@ export function StrategyFormDialog({
                 <span>{strategyTypeLabels[watchType]}</span>
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(strategyTypeLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
+                {Object.entries(strategyTypeLabels).map(([value, label]) => {
+                  const isDisabled = value === "custom";
+                  return (
+                    <SelectItem
+                      key={value}
+                      value={value}
+                      disabled={isDisabled}
+                    >
+                      {label}
+                      {isDisabled ? " (준비 중)" : ""}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>
