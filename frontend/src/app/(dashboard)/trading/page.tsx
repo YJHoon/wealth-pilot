@@ -7,6 +7,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectTrigger,
   SelectContent,
@@ -24,6 +34,7 @@ import type {
   TradingStrategy,
 } from "@/types/trading";
 import { tradingModeLabels, strategyTypeLabels } from "@/types/trading";
+import { findTickerName } from "@/lib/format";
 import Link from "next/link";
 import {
   Banknote,
@@ -35,6 +46,7 @@ import {
   Scale,
   Sparkles,
   Square,
+  Trash2,
   Zap,
 } from "lucide-react";
 
@@ -62,6 +74,8 @@ export default function TradingPage() {
   const [refreshingAutoIds, setRefreshingAutoIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [pendingDelete, setPendingDelete] = useState<TradingStrategy | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // ── Strategy handlers ──
 
@@ -107,6 +121,20 @@ export default function TradingPage() {
     setEditingStrategy(null);
     setStrategyFormOpen(true);
   }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!pendingDelete || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await trading.deleteStrategy(pendingDelete.id);
+      toast.success("전략이 삭제되었습니다.");
+      setPendingDelete(null);
+    } catch (e) {
+      toastError("전략 삭제에 실패했습니다.", e);
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [pendingDelete, isDeleting, trading]);
 
   // ── Schedule handlers ──
 
@@ -440,6 +468,15 @@ export default function TradingPage() {
                           >
                             <Pencil className="size-3.5" />
                           </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-muted-foreground hover:text-destructive"
+                            onClick={() => setPendingDelete(strategy)}
+                            title="삭제"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
                         </div>
                       </div>
 
@@ -468,14 +505,18 @@ export default function TradingPage() {
                           {autoSelected && autoSelected.tickers.length > 0 ? (
                             <>
                               <div className="flex flex-wrap gap-1">
-                                {autoSelected.tickers.map((t) => (
-                                  <span
-                                    key={t}
-                                    className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-background border border-border/50"
-                                  >
-                                    {t}
-                                  </span>
-                                ))}
+                                {autoSelected.tickers.map((t) => {
+                                  const name = findTickerName(t, autoSelected.details);
+                                  return (
+                                    <span
+                                      key={t}
+                                      title={name ? `${name} (${t})` : t}
+                                      className={`text-[11px] px-1.5 py-0.5 rounded bg-background border border-border/50 ${name ? "" : "font-mono"}`}
+                                    >
+                                      {name ?? t}
+                                    </span>
+                                  );
+                                })}
                               </div>
                               <p className="mt-1.5 text-[10px] text-muted-foreground">
                                 마지막 갱신 {formatTimestamp(autoSelected.generatedAt)} ·{" "}
@@ -542,6 +583,35 @@ export default function TradingPage() {
           isSubmitting={isDepositing}
         />
       )}
+
+      {/* 전략 삭제 확인 */}
+      <AlertDialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>전략 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete
+                ? `'${pendingDelete.name}' 전략을 삭제하시겠습니까? 보유 포지션이나 미체결 주문이 있으면 삭제할 수 없으며, 먼저 청산 후 체결이 완료되어야 합니다. 스케줄 이력과 의사결정 로그는 함께 삭제됩니다.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleConfirmDelete()}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "삭제 중..." : "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

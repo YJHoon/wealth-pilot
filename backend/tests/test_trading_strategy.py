@@ -6,9 +6,11 @@ import pytest
 
 from app.services.trading_strategy import (
     MACrossoverStrategy,
+    MeanReversionStrategy,
     Signal,
     _ema,
     _rsi,
+    _stdev,
     create_strategy,
 )
 
@@ -153,10 +155,126 @@ class TestMACrossoverStrategy:
         assert strategy.rsi_period == 14
 
 
+class TestStdev:
+    def test_empty_returns_zero(self):
+        assert _stdev([]) == Decimal(0)
+
+    def test_constant_returns_zero(self):
+        prices = [Decimal("1000")] * 10
+        assert _stdev(prices) == Decimal(0)
+
+    def test_known_values(self):
+        # 모집단 표준편차: [2, 4, 4, 4, 5, 5, 7, 9] → 평균 5, σ = 2
+        prices = [Decimal(v) for v in (2, 4, 4, 4, 5, 5, 7, 9)]
+        result = _stdev(prices)
+        assert result == Decimal(2)
+
+
+class TestMeanReversionStrategy:
+    def test_hold_on_insufficient_data(self):
+        strategy = MeanReversionStrategy(lookback=20, rsi_period=14)
+        history = _make_price_history([1000] * 10)
+        signal = strategy.evaluate("005930", history)
+        assert signal.action == "hold"
+        assert "데이터 부족" in signal.reason
+
+    def test_lower_band_breakout_buy(self):
+        """가격이 하단 밴드를 이탈하면 매수 신호"""
+        # 변동 있는 시세로 σ를 만든 뒤, 마지막에 급락시켜 하단 이탈
+        prices = []
+        for i in range(40):
+            prices.append(1000 + (i % 5) * 20)  # 1000~1080 흔들림
+        prices.append(700)  # 마지막에 급락 → 하단 이탈
+
+        strategy = MeanReversionStrategy(
+            lookback=20, std_multiplier=2, rsi_period=14
+        )
+        history = _make_price_history(prices)
+        signal = strategy.evaluate("005930", history)
+
+        assert signal.action == "buy"
+        assert signal.confidence >= Decimal("0.6")
+        assert "하단 밴드" in signal.reason
+
+    def test_upper_band_breakout_sell(self):
+        """가격이 상단 밴드를 이탈하면 매도 신호"""
+        prices = []
+        for i in range(40):
+            prices.append(1000 + (i % 5) * 20)
+        prices.append(1500)  # 마지막에 급등 → 상단 이탈
+
+        strategy = MeanReversionStrategy(
+            lookback=20, std_multiplier=2, rsi_period=14
+        )
+        history = _make_price_history(prices)
+        signal = strategy.evaluate("005930", history)
+
+        assert signal.action == "sell"
+        assert signal.confidence >= Decimal("0.6")
+        assert "상단 밴드" in signal.reason
+
+    def test_inside_band_holds(self):
+        """밴드 내부면 hold"""
+        prices = [1000 + (i % 5) * 20 for i in range(40)]
+        strategy = MeanReversionStrategy(lookback=20, std_multiplier=2)
+        history = _make_price_history(prices)
+        signal = strategy.evaluate("005930", history)
+        assert signal.action == "hold"
+
+    def test_lower_breakout_with_rsi_overbought_holds(self):
+        """하단 이탈인데 RSI가 과매수면 매수 보류 (모순 케이스).
+
+        결정론적 시나리오: 짧은 lookback(=5)로 좁은 밴드를 만들고, 긴 RSI 기간(=30)
+        으로 RSI가 마지막 작은 하락에도 천천히 반응하게 해 모순을 만든다.
+        - 38일 강한 상승(+20씩) → RSI가 90+ 까지 치솟음
+        - 마지막 2일 작은 하락 → 짧은 lookback에서는 하단 밴드 이탈
+        """
+        prices = [1000 + i * 20 for i in range(39)]  # 1000, 1020, ..., 1760
+        prices.append(1740)  # 작은 하락
+        prices.append(1700)  # 좀 더 하락
+
+        strategy = MeanReversionStrategy(
+            lookback=5,
+            std_multiplier=Decimal("0.5"),
+            rsi_period=30,
+            rsi_overbought=70,
+        )
+        history = _make_price_history(prices)
+        signal = strategy.evaluate("005930", history)
+
+        assert signal.action == "hold"
+        assert "RSI 과매수" in signal.reason
+
+    def test_from_params(self):
+        params = {
+            "lookback": 10,
+            "std_multiplier": 1.5,
+            "rsi_period": 7,
+            "rsi_overbought": 75,
+            "rsi_oversold": 25,
+        }
+        strategy = MeanReversionStrategy.from_params(params)
+        assert strategy.lookback == 10
+        assert strategy.std_multiplier == Decimal("1.5")
+        assert strategy.rsi_period == 7
+        assert strategy.rsi_overbought == Decimal(75)
+        assert strategy.rsi_oversold == Decimal(25)
+
+    def test_default_params(self):
+        strategy = MeanReversionStrategy.from_params({})
+        assert strategy.lookback == 20
+        assert strategy.std_multiplier == Decimal(2)
+        assert strategy.rsi_period == 14
+
+
 class TestCreateStrategy:
     def test_ma_crossover_type(self):
         strategy = create_strategy("ma_crossover", {})
         assert isinstance(strategy, MACrossoverStrategy)
+
+    def test_mean_reversion_type(self):
+        strategy = create_strategy("mean_reversion", {})
+        assert isinstance(strategy, MeanReversionStrategy)
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValueError, match="Unknown strategy type"):

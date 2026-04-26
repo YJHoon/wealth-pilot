@@ -93,6 +93,16 @@ def _ema(prices: list[Decimal], period: int) -> list[Decimal]:
     return result
 
 
+def _stdev(prices: list[Decimal]) -> Decimal:
+    """모집단 표준편차 — 볼린저 밴드용."""
+    n = len(prices)
+    if n == 0:
+        return Decimal(0)
+    mean = sum(prices) / Decimal(n)
+    variance = sum((p - mean) ** 2 for p in prices) / Decimal(n)
+    return variance.sqrt()
+
+
 def _rsi(prices: list[Decimal], period: int = 14) -> Decimal:
     """RSI(상대강도지수) 계산 — 최신 값 하나만 반환.
 
@@ -240,8 +250,128 @@ class MACrossoverStrategy(BaseStrategy):
         )
 
 
+class MeanReversionStrategy(BaseStrategy):
+    """볼린저 밴드 + RSI 필터 평균회귀 전략.
+
+    - 종가가 하단 밴드(SMA - n·σ) 이탈 → 매수 (RSI 과매수 시 보류)
+    - 종가가 상단 밴드(SMA + n·σ) 이탈 → 매도 (RSI 과매도 시 보류)
+    - 밴드 내부면 hold
+    """
+
+    def __init__(
+        self,
+        lookback: int = 20,
+        std_multiplier: float | int | str | Decimal = 2,
+        rsi_period: int = 14,
+        rsi_overbought: int = 70,
+        rsi_oversold: int = 30,
+    ):
+        self.lookback = lookback
+        self.std_multiplier = Decimal(str(std_multiplier))
+        self.rsi_period = rsi_period
+        self.rsi_overbought = Decimal(rsi_overbought)
+        self.rsi_oversold = Decimal(rsi_oversold)
+
+    @classmethod
+    def from_params(cls, params: dict) -> MeanReversionStrategy:
+        return cls(
+            lookback=params.get("lookback", 20),
+            std_multiplier=params.get("std_multiplier", 2),
+            rsi_period=params.get("rsi_period", 14),
+            rsi_overbought=params.get("rsi_overbought", 70),
+            rsi_oversold=params.get("rsi_oversold", 30),
+        )
+
+    def evaluate(self, ticker: str, price_history: list[dict]) -> Signal:
+        closes = [item["close"] for item in price_history]
+
+        min_required = max(self.lookback + 1, self.rsi_period + 2)
+        if len(closes) < min_required:
+            return Signal(
+                action="hold",
+                confidence=Decimal(0),
+                reason=f"데이터 부족 ({len(closes)}/{min_required}일)",
+            )
+
+        window = closes[-self.lookback :]
+        sma = sum(window) / Decimal(self.lookback)
+        std = _stdev(window)
+        upper_band = sma + self.std_multiplier * std
+        lower_band = sma - self.std_multiplier * std
+
+        rsi_value = _rsi(closes, self.rsi_period)
+        current = closes[-1]
+
+        # 하단 이탈 → 매수
+        if current < lower_band:
+            if rsi_value > self.rsi_overbought:
+                return Signal(
+                    action="hold",
+                    confidence=Decimal("0.3"),
+                    reason=(
+                        f"하단 밴드 이탈, RSI 과매수({rsi_value}) 모순 — 매수 보류"
+                    ),
+                )
+            distance_ratio = (
+                (lower_band - current) / std if std > 0 else Decimal(0)
+            )
+            confidence = min(
+                Decimal("0.9"),
+                Decimal("0.6") + distance_ratio * Decimal("0.15"),
+            )
+            if rsi_value < self.rsi_oversold:
+                confidence = min(Decimal("0.9"), confidence + Decimal("0.1"))
+            return Signal(
+                action="buy",
+                confidence=confidence,
+                reason=(
+                    f"하단 밴드 이탈 (price={current:.0f} < lower={lower_band:.0f}, "
+                    f"sma={sma:.0f}), RSI={rsi_value}"
+                ),
+            )
+
+        # 상단 이탈 → 매도
+        if current > upper_band:
+            if rsi_value < self.rsi_oversold:
+                return Signal(
+                    action="hold",
+                    confidence=Decimal("0.3"),
+                    reason=(
+                        f"상단 밴드 이탈, RSI 과매도({rsi_value}) 모순 — 매도 보류"
+                    ),
+                )
+            distance_ratio = (
+                (current - upper_band) / std if std > 0 else Decimal(0)
+            )
+            confidence = min(
+                Decimal("0.9"),
+                Decimal("0.6") + distance_ratio * Decimal("0.15"),
+            )
+            if rsi_value > self.rsi_overbought:
+                confidence = min(Decimal("0.9"), confidence + Decimal("0.1"))
+            return Signal(
+                action="sell",
+                confidence=confidence,
+                reason=(
+                    f"상단 밴드 이탈 (price={current:.0f} > upper={upper_band:.0f}, "
+                    f"sma={sma:.0f}), RSI={rsi_value}"
+                ),
+            )
+
+        return Signal(
+            action="hold",
+            confidence=Decimal("0.5"),
+            reason=(
+                f"밴드 내부 (price={current:.0f}, sma={sma:.0f}, "
+                f"±{self.std_multiplier}σ), RSI={rsi_value}"
+            ),
+        )
+
+
 def create_strategy(strategy_type: str, params: dict) -> BaseStrategy:
     """전략 타입에 따라 전략 인스턴스 생성."""
     if strategy_type == "ma_crossover":
         return MACrossoverStrategy.from_params(params)
+    if strategy_type == "mean_reversion":
+        return MeanReversionStrategy.from_params(params)
     raise ValueError(f"Unknown strategy type: {strategy_type}")

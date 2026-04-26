@@ -33,7 +33,7 @@ import type {
   TradingStrategyUpdateRequest,
 } from "@/types/trading";
 import { strategyTypeLabels } from "@/types/trading";
-import { formatMaskedKrw } from "@/lib/format";
+import { formatMaskedKrw, findTickerName } from "@/lib/format";
 import { useAppStore } from "@/stores/appStore";
 
 const MAX_TICKERS = 50;
@@ -297,11 +297,19 @@ export function StrategyFormDialog({
                 <span>{strategyTypeLabels[watchType]}</span>
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(strategyTypeLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
+                {Object.entries(strategyTypeLabels).map(([value, label]) => {
+                  const isDisabled = value === "custom";
+                  return (
+                    <SelectItem
+                      key={value}
+                      value={value}
+                      disabled={isDisabled}
+                    >
+                      {label}
+                      {isDisabled ? " (준비 중)" : ""}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>
@@ -699,11 +707,31 @@ function AutoTickerPanel({
             )
           </p>
           <p className="mt-1">
-            현재 자동 선정 종목 ({last.tickers.length}개):{" "}
-            <span className="font-mono">
-              {last.tickers.join(", ") || "없음"}
-            </span>
+            현재 자동 선정 종목 ({last.tickers.length}개):
           </p>
+          {last.tickers.length === 0 ? (
+            <p className="text-muted-foreground">없음</p>
+          ) : (
+            <ul className="list-disc pl-4 mt-0.5 space-y-0.5">
+              {last.tickers.map((t) => {
+                const name = findTickerName(t, last.details);
+                return (
+                  <li key={t}>
+                    {name ? (
+                      <>
+                        {name}{" "}
+                        <span className="font-mono text-muted-foreground">
+                          ({t})
+                        </span>
+                      </>
+                    ) : (
+                      <span className="font-mono">{t}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">
