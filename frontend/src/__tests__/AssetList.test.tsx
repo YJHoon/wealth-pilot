@@ -169,8 +169,9 @@ describe("AssetList", () => {
       screen.queryByRole("button", { name: /현대차 액션 메뉴/ }),
     ).not.toBeInTheDocument();
 
-    // 자산 추가 버튼은 살아있어야 함 (검증용)
+    // 자산 추가 버튼은 KIS 행 존재와 무관하게 동작해야 함
     await user.click(screen.getByRole("button", { name: /자산 추가/ }));
+    expect(mockHandlers.onAddClick).toHaveBeenCalledTimes(1);
     expect(mockHandlers.onEditClick).not.toHaveBeenCalled();
     expect(mockHandlers.onSellClick).not.toHaveBeenCalled();
     expect(mockHandlers.onDeleteClick).not.toHaveBeenCalled();

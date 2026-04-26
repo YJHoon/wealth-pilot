@@ -4,8 +4,18 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useAppStore } from "@/stores/appStore";
-import { formatMaskedKrw } from "@/lib/format";
+import { formatMaskedKrw, formatMaskedKrwSigned } from "@/lib/format";
 import { AccountFormDialog } from "@/components/trading/AccountFormDialog";
 import type {
   TradingAccount,
@@ -43,6 +53,19 @@ export function TradingAccountSection({
   const [accountFormOpen, setAccountFormOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pendingDeactivate, setPendingDeactivate] = useState<TradingAccount | null>(null);
+  const [isDeactivating, setIsDeactivating] = useState(false);
+
+  const handleDeactivateConfirm = async () => {
+    if (!pendingDeactivate || isDeactivating) return;
+    setIsDeactivating(true);
+    try {
+      await onDeactivateAccount(pendingDeactivate.id);
+      setPendingDeactivate(null);
+    } finally {
+      setIsDeactivating(false);
+    }
+  };
 
   const handleSubmit = async (data: TradingAccountCreateRequest) => {
     setIsSubmitting(true);
@@ -139,7 +162,7 @@ export function TradingAccountSection({
                       variant="ghost"
                       size="icon"
                       className="size-6 text-muted-foreground hover:text-destructive"
-                      onClick={() => onDeactivateAccount(account.id)}
+                      onClick={() => setPendingDeactivate(account)}
                       aria-label="계좌 비활성화"
                     >
                       <Trash2 className="size-3.5" />
@@ -174,9 +197,7 @@ export function TradingAccountSection({
                                 : ""
                         }`}
                       >
-                        {isMasked
-                          ? "●●●●●●원"
-                          : `${totalPnl >= 0 ? "+" : ""}${totalPnl.toLocaleString()}원`}
+                        {formatMaskedKrwSigned(totalPnl, isMasked)}
                       </span>
                     </div>
                   )}
@@ -193,6 +214,34 @@ export function TradingAccountSection({
         onSubmit={handleSubmit}
         isSubmitting={isSubmitting}
       />
+
+      <AlertDialog
+        open={!!pendingDeactivate}
+        onOpenChange={(open) => {
+          if (!open && !isDeactivating) setPendingDeactivate(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>계좌 비활성화</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeactivate
+                ? `${tradingModeLabels[pendingDeactivate.mode]} 계좌를 비활성화하시겠습니까? 연결된 보유 종목과 예수금 자산이 매도(SOLD) 처리되며, 다시 연결하려면 새 인증이 필요합니다.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeactivating}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleDeactivateConfirm()}
+              disabled={isDeactivating}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeactivating ? "처리 중..." : "비활성화"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

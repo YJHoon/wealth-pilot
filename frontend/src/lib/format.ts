@@ -126,3 +126,10 @@ export function formatMaskedKrw(value: number, isMasked: boolean): string {
   if (isMasked) return `${MASK}원`;
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
 }
+
+/** 마스킹 처리된 부호 포함 금액 (KRW) — 손익 등 부호 표기가 필요한 곳에 사용 */
+export function formatMaskedKrwSigned(value: number, isMasked: boolean): string {
+  if (isMasked) return `${MASK}원`;
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${Math.round(value).toLocaleString("ko-KR")}원`;
+}

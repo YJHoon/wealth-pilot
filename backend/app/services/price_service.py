@@ -29,8 +29,12 @@ EXCHANGE_RATE_SOURCE = "exchangerate-api"
 # 17종 하드코딩에서 동적 조회로 전환. 호출 실패 시 lowercase fallback 유지.
 _COINGECKO_TOP_PER_PAGE = 250
 _COINGECKO_MAP_TTL_SEC = 86400
+# 갱신 실패 시 짧은 백오프(5분) — 일시적 네트워크 오류는 빠르게 회복하되,
+# 매 호출마다 실패하는 외부 API에 thundering retry 가하지 않기 위한 절충값.
+_COINGECKO_MAP_FAILURE_BACKOFF_SEC = 300
 _coin_symbol_to_id: dict[str, str] = {}
 _coin_map_fetched_at: float | None = None
+_coin_map_last_failed_at: float | None = None
 _coin_map_lock = asyncio.Lock()
 
 
@@ -64,8 +68,14 @@ async def _resolve_coingecko_id(symbol: str) -> str:
     매핑에 없으면 소문자 fallback(과거 동작 유지).
     """
     upper = symbol.upper()
-    global _coin_map_fetched_at
+    global _coin_map_fetched_at, _coin_map_last_failed_at
     now_ts = time.monotonic()
+
+    def _in_failure_backoff() -> bool:
+        return (
+            _coin_map_last_failed_at is not None
+            and (now_ts - _coin_map_last_failed_at) < _COINGECKO_MAP_FAILURE_BACKOFF_SEC
+        )
 
     def _is_stale() -> bool:
         return (
@@ -74,19 +84,21 @@ async def _resolve_coingecko_id(symbol: str) -> str:
             or (now_ts - _coin_map_fetched_at) > _COINGECKO_MAP_TTL_SEC
         )
 
-    if _is_stale():
+    # 실패 백오프 윈도우 안이면 lowercase fallback으로 즉시 응답
+    if _is_stale() and not _in_failure_backoff():
         async with _coin_map_lock:
             now_ts = time.monotonic()
-            if _is_stale():
+            if _is_stale() and not _in_failure_backoff():
                 try:
                     new_map = await _refresh_coingecko_symbol_map()
                     _coin_symbol_to_id.clear()
                     _coin_symbol_to_id.update(new_map)
                     _coin_map_fetched_at = now_ts
+                    _coin_map_last_failed_at = None
                 except Exception as e:
-                    # negative cache: 갱신 실패 시 fetched_at을 갱신해 TTL 동안 재시도 차단.
-                    # 이 윈도우 동안 호출자는 lowercase fallback으로 즉시 응답.
-                    _coin_map_fetched_at = now_ts
+                    # 짧은 실패 백오프 윈도우 시작 — 이 동안 호출자는
+                    # lowercase fallback으로 즉시 응답하고 외부 API 재시도 차단.
+                    _coin_map_last_failed_at = now_ts
                     logger.warning(
                         "Failed to refresh CoinGecko symbol map: %s — falling back to lowercase",
                         e,
