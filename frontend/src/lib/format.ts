@@ -2,6 +2,17 @@ import type { Currency, AssetType, AssetStatus } from "@/types";
 
 export const MASK = "●●●●●●";
 
+/** 자동 선정 details에서 ticker로 종목명 조회. 없으면 null. */
+export function findTickerName(
+  ticker: string,
+  details: Array<Record<string, unknown>> | null | undefined,
+): string | null {
+  if (!details) return null;
+  const found = details.find((d) => String(d.ticker) === ticker);
+  const name = found?.name;
+  return typeof name === "string" && name.length > 0 ? name : null;
+}
+
 const currencyConfig: Record<Currency, { symbol: string; locale: string }> = {
   KRW: { symbol: "원", locale: "ko-KR" },
   USD: { symbol: "$", locale: "en-US" },

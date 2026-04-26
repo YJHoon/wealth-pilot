@@ -34,6 +34,7 @@ import type {
   TradingStrategy,
 } from "@/types/trading";
 import { tradingModeLabels, strategyTypeLabels } from "@/types/trading";
+import { findTickerName } from "@/lib/format";
 import Link from "next/link";
 import {
   Banknote,
@@ -504,14 +505,18 @@ export default function TradingPage() {
                           {autoSelected && autoSelected.tickers.length > 0 ? (
                             <>
                               <div className="flex flex-wrap gap-1">
-                                {autoSelected.tickers.map((t) => (
-                                  <span
-                                    key={t}
-                                    className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-background border border-border/50"
-                                  >
-                                    {t}
-                                  </span>
-                                ))}
+                                {autoSelected.tickers.map((t) => {
+                                  const name = findTickerName(t, autoSelected.details);
+                                  return (
+                                    <span
+                                      key={t}
+                                      title={name ? `${name} (${t})` : t}
+                                      className={`text-[11px] px-1.5 py-0.5 rounded bg-background border border-border/50 ${name ? "" : "font-mono"}`}
+                                    >
+                                      {name ?? t}
+                                    </span>
+                                  );
+                                })}
                               </div>
                               <p className="mt-1.5 text-[10px] text-muted-foreground">
                                 마지막 갱신 {formatTimestamp(autoSelected.generatedAt)} ·{" "}
