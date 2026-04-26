@@ -33,7 +33,7 @@ MarketFilter = Literal["KOSPI", "KOSDAQ", "ALL"]
 
 # 기본값 — 사용자가 미설정 시 적용.
 DEFAULT_TOP_N = 10
-DEFAULT_MIN_VOLUME_VALUE = 10_000_000_000  # 100억원
+DEFAULT_MIN_VOLUME_VALUE = 100  # 100억원
 DEFAULT_MARKET: MarketFilter = "ALL"
 MIN_TOP_N = 3
 MAX_TOP_N = 30
@@ -44,9 +44,9 @@ class StockCandidate:
     ticker: str
     name: str
     market: Market
-    price: Decimal        # 현재가 (전일 종가)
-    volume_value: int     # 거래대금 (KRW)
-    market_cap: int       # 시가총액 (KRW)
+    price: Decimal  # 현재가 (전일 종가)
+    volume_value: int  # 거래대금 (KRW)
+    market_cap: int  # 시가총액 (KRW)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +56,7 @@ class SelectedTicker:
     market: Market
     price: Decimal
     volume_value: int
-    score: float          # 0~1 정규화 (거래대금 기준)
+    score: float  # 0~1 정규화 (거래대금 기준)
     reason: str
 
 
@@ -64,7 +64,7 @@ class SelectedTicker:
 class ExcludedTicker:
     ticker: str
     name: str
-    reason: str           # "price_over_seed" | "blacklist" | "below_min_volume" | "preferred" | "spac"
+    reason: str  # "price_over_seed" | "blacklist" | "below_min_volume" | "preferred" | "spac"
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,7 +155,8 @@ def filter_universe_type(
 
 
 def filter_by_min_volume(
-    candidates: Sequence[StockCandidate], min_volume_value: int,
+    candidates: Sequence[StockCandidate],
+    min_volume_value: int,
 ) -> tuple[list[StockCandidate], list[ExcludedTicker]]:
     if min_volume_value <= 0:
         return list(candidates), []
@@ -163,9 +164,7 @@ def filter_by_min_volume(
     excluded: list[ExcludedTicker] = []
     for c in candidates:
         if c.volume_value < min_volume_value:
-            excluded.append(
-                ExcludedTicker(c.ticker, c.name, "below_min_volume")
-            )
+            excluded.append(ExcludedTicker(c.ticker, c.name, "below_min_volume"))
         else:
             kept.append(c)
     return kept, excluded
@@ -201,7 +200,8 @@ def filter_by_seed(
 
 
 def filter_by_blacklist(
-    candidates: Sequence[StockCandidate], blacklist: Sequence[str],
+    candidates: Sequence[StockCandidate],
+    blacklist: Sequence[str],
 ) -> tuple[list[StockCandidate], list[ExcludedTicker]]:
     if not blacklist:
         return list(candidates), []
@@ -217,7 +217,8 @@ def filter_by_blacklist(
 
 
 def rank_and_top(
-    candidates: Sequence[StockCandidate], top_n: int,
+    candidates: Sequence[StockCandidate],
+    top_n: int,
 ) -> list[SelectedTicker]:
     if top_n <= 0 or not candidates:
         return []
@@ -244,6 +245,7 @@ def rank_and_top(
 # ──────────────────────────────────────────────
 # 6. 파이프라인 오케스트레이션
 # ──────────────────────────────────────────────
+
 
 @dataclass(frozen=True, slots=True)
 class SelectorConfig:

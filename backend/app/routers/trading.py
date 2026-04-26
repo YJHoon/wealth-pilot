@@ -30,6 +30,7 @@ from app.models.trading import (
 )
 from app.models.user import User
 from app.schemas.trading import (
+    AccountCapitalSummary,
     AccountDepositRequest,
     AccountRebalanceRequest,
     AdaptiveRuleResponse,
@@ -296,6 +297,40 @@ async def update_trading_account(
         logger.warning("TRADING_ACCOUNT_UPDATE access logging failed", exc_info=True)
 
     return account_to_response(account)
+
+
+@router.get(
+    "/accounts/{account_id}/capital-summary",
+    response_model=AccountCapitalSummary,
+)
+@limiter.limit("100/minute")
+async def get_account_capital_summary(
+    account_id: UUID,
+    request: Request,
+    exclude_strategy_id: UUID | None = None,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """전략 자본 할당 가시화 — 계좌 총자본/이미 배정된 합/잔여.
+
+    `exclude_strategy_id`를 넘기면 해당 전략 자신은 합산에서 제외 (편집 화면에서
+    자기 자신 제외하고 잔여를 계산할 때 사용).
+    """
+    account = await _get_user_account(db, account_id, user.id)
+    account_total = decrypt_decimal(account.initial_capital)
+    _, remaining = await validate_account_allocation(
+        db,
+        account_id=account_id,
+        new_initial_capital=Decimal("0"),
+        account_total_capital=account_total,
+        exclude_strategy_id=exclude_strategy_id,
+    )
+    allocated = account_total - remaining
+    return AccountCapitalSummary(
+        account_total=account_total,
+        allocated=allocated,
+        available=remaining,
+    )
 
 
 @router.post(
@@ -664,6 +699,14 @@ async def get_account_balance(
             except KISClientError as e:
                 raise HTTPException(status_code=502, detail=str(e)) from None
             await _persist_kis_token(db, account, kis)
+            # 계좌 자본 필드를 최신 KIS 잔고로 갱신 — 전략 할당 검증이 stored
+            # initial_capital을 기준으로 하므로, 외부에서 입금되어 잔고가 늘어나면
+            # 사용자가 명시적 입금 다이얼로그를 거치지 않아도 다음 잔고 새로고침에서
+            # 반영되도록 한다.
+            account.initial_capital = encrypt_decimal(
+                balance["cash"] + balance["total_eval"]
+            )
+            account.cash_balance = encrypt_decimal(balance["cash"])
             # KIS 잔고 → Asset 동기화 (단일 트랜잭션)
             try:
                 await sync_kis_balance(db, account, balance)
