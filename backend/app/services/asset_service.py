@@ -44,7 +44,9 @@ async def process_asset_sale(
 
     Raises:
         AssetNotFoundError: 자산을 찾을 수 없는 경우
-        AssetForbiddenError: 이미 매도된 자산인 경우
+        AssetForbiddenError: 매도가 차단된 경우. 두 가지 사유:
+            - 이미 매도된 자산 (status == SOLD)
+            - KIS 동기화 자산 (source != MANUAL) — KIS 잔고 sync로만 변동
     """
     # rollback 시 expired 객체 접근 방지를 위해 스칼라 값 캐시
     user_id = user.id

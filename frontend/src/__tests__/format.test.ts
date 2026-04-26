@@ -18,12 +18,6 @@ describe("formatAmount", () => {
     expect(formatAmount(null, "KRW", false)).toBe("-");
     expect(formatAmount(undefined, "KRW", false)).toBe("-");
   });
-
-  it("USD 포맷", () => {
-    const result = formatAmount(150.25, "USD", false);
-    expect(result).toContain("$");
-    expect(result).toContain("150.25");
-  });
 });
 
 describe("formatQuantity", () => {

@@ -147,6 +147,35 @@ describe("AssetList", () => {
     expect(maskedElements.length).toBeGreaterThan(0);
   });
 
+  it("KIS 동기화 자산은 KIS 배지가 표시되고 액션 메뉴가 숨겨진다", async () => {
+    const kisAsset: Asset = {
+      ...mockAssets[0],
+      id: "kis1",
+      name: "현대차",
+      ticker: "005380",
+      source: "kis",
+      tradingAccountId: "acc1",
+      externalTicker: "005380",
+      lastSyncedAt: "2026-03-19T12:00:00Z",
+    };
+    const user = userEvent.setup();
+    renderList({ assets: [kisAsset] });
+
+    // KIS 배지가 표시 (모바일 + 데스크톱 둘 다 렌더되므로 getAllByText)
+    expect(screen.getAllByText("KIS").length).toBeGreaterThan(0);
+
+    // 액션 메뉴 트리거가 존재하지 않음 → 클릭 핸들러 호출 안 됨
+    expect(
+      screen.queryByRole("button", { name: /현대차 액션 메뉴/ }),
+    ).not.toBeInTheDocument();
+
+    // 자산 추가 버튼은 살아있어야 함 (검증용)
+    await user.click(screen.getByRole("button", { name: /자산 추가/ }));
+    expect(mockHandlers.onEditClick).not.toHaveBeenCalled();
+    expect(mockHandlers.onSellClick).not.toHaveBeenCalled();
+    expect(mockHandlers.onDeleteClick).not.toHaveBeenCalled();
+  });
+
   it("해외자산에 toKrw가 전달되면 원화 병기된다", () => {
     const foreignAsset: Asset = {
       id: "a3",

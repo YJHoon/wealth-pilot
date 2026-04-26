@@ -164,7 +164,15 @@ export function TradingAccountSection({
                     <div className="flex items-baseline justify-between text-xs mt-0.5">
                       <span className="text-muted-foreground">평가손익</span>
                       <span
-                        className={`font-medium ${totalPnl > 0 ? "text-emerald-500" : totalPnl < 0 ? "text-red-500" : ""}`}
+                        className={`font-medium ${
+                          isMasked
+                            ? "text-muted-foreground"
+                            : totalPnl > 0
+                              ? "text-emerald-500"
+                              : totalPnl < 0
+                                ? "text-red-500"
+                                : ""
+                        }`}
                       >
                         {isMasked
                           ? "●●●●●●원"

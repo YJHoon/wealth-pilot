@@ -667,15 +667,24 @@ async def get_account_balance(
             # KIS 잔고 → Asset 동기화 (단일 트랜잭션)
             try:
                 await sync_kis_balance(db, account, balance)
+                await db.commit()
             except Exception:
                 logger.exception(
                     "asset sync failed during balance inquiry: account=%s",
                     account_id,
                 )
-                # sync 실패는 잔고 응답을 막지 않음 — 다음 호출에서 재시도
-                await db.rollback()
-                await _persist_kis_token(db, account, kis)
-            await db.commit()
+                # sync 실패는 잔고 응답을 막지 않음 — 다음 호출에서 재시도.
+                # 복구 경로(rollback/토큰 재영속화/commit)에서 추가 예외가 발생해도
+                # balance 응답을 차단하지 않도록 모두 흡수한다.
+                try:
+                    await db.rollback()
+                    await _persist_kis_token(db, account, kis)
+                    await db.commit()
+                except Exception:
+                    logger.exception(
+                        "asset sync recovery failed: account=%s — token may be lost",
+                        account_id,
+                    )
             return balance
     finally:
         try:

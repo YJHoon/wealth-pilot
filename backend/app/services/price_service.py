@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -64,8 +65,7 @@ async def _resolve_coingecko_id(symbol: str) -> str:
     """
     upper = symbol.upper()
     global _coin_map_fetched_at
-    loop = asyncio.get_event_loop()
-    now_ts = loop.time()
+    now_ts = time.monotonic()
 
     def _is_stale() -> bool:
         return (
@@ -76,7 +76,7 @@ async def _resolve_coingecko_id(symbol: str) -> str:
 
     if _is_stale():
         async with _coin_map_lock:
-            now_ts = loop.time()
+            now_ts = time.monotonic()
             if _is_stale():
                 try:
                     new_map = await _refresh_coingecko_symbol_map()
@@ -84,6 +84,9 @@ async def _resolve_coingecko_id(symbol: str) -> str:
                     _coin_symbol_to_id.update(new_map)
                     _coin_map_fetched_at = now_ts
                 except Exception as e:
+                    # negative cache: 갱신 실패 시 fetched_at을 갱신해 TTL 동안 재시도 차단.
+                    # 이 윈도우 동안 호출자는 lowercase fallback으로 즉시 응답.
+                    _coin_map_fetched_at = now_ts
                     logger.warning(
                         "Failed to refresh CoinGecko symbol map: %s — falling back to lowercase",
                         e,

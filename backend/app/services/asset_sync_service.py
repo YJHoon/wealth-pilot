@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import Asset, AssetSource, AssetStatus, AssetType, Currency
 from app.models.trading import TradingAccount
-from app.services.crypto_service import encrypt_decimal
+from app.services.crypto_service import decrypt_decimal, encrypt_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +140,19 @@ async def sync_kis_balance(
 
     # 3) KIS에서 사라진 보유종목 → SOLD 처리
     # 현금은 잔액 0이어도 계좌가 살아있으면 유지(0원으로 갱신).
+    # 실제 매도가는 알 수 없으므로 current_price를 추정값으로 사용해 PnL 집계에 반영.
+    # current_price가 없으면 sold_price/realized_pnl을 NULL로 두어 집계에서 제외.
     for ticker, asset in by_ticker.items():
         if ticker not in seen_tickers:
             asset.status = AssetStatus.SOLD
             asset.sold_at = now
             asset.last_synced_at = now
+            if asset.current_price is not None:
+                est_sold_price = Decimal(asset.current_price)
+                qty = decrypt_decimal(asset.quantity)
+                avg_buy = decrypt_decimal(asset.purchase_price)
+                asset.sold_price = encrypt_decimal(est_sold_price)
+                asset.realized_pnl = encrypt_decimal((est_sold_price - avg_buy) * qty)
             result.closed += 1
 
     logger.info(
