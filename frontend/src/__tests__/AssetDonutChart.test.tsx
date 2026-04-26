@@ -24,7 +24,6 @@ const baseSummary: DashboardSummary = {
     crypto: { valueKrw: 0, ratio: 0 },
     real_estate: { valueKrw: 0, ratio: 0 },
   },
-  byGroup: {},
   pnl: { total: 0, realized: 0, unrealized: 0, totalRatio: 0 },
   previousDayChange: { amount: 0, ratio: 0 },
   updatedAt: "2026-03-19T12:00:00Z",

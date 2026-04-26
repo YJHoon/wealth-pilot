@@ -18,7 +18,6 @@ const baseSummary: DashboardSummary = {
     crypto: { valueKrw: 20_000_000, ratio: 13.3 },
     real_estate: { valueKrw: 10_000_000, ratio: 6.7 },
   },
-  byGroup: {},
   pnl: { total: 5_000_000, realized: 2_000_000, unrealized: 3_000_000, totalRatio: 3.45 },
   previousDayChange: { amount: 1_200_000, ratio: 0.81 },
   updatedAt: "2026-03-19T12:00:00Z",

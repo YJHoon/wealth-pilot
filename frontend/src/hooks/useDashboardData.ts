@@ -302,24 +302,9 @@ function buildSummary(assets: Asset[], updatedAt: string): DashboardSummary {
     byType[key].ratio = totalValueKrw > 0 ? (byType[key].valueKrw / totalValueKrw) * 100 : 0;
   }
 
-  const byGroup: DashboardSummary["byGroup"] = {};
-  for (const a of active) {
-    const gid = a.groupId ?? "ungrouped";
-    const krw = getKrwValue(a);
-    if (!byGroup[gid]) {
-      const group = MOCK_GROUPS.find((g) => g.id === gid);
-      byGroup[gid] = { name: group?.name ?? "미분류", valueKrw: 0, ratio: 0 };
-    }
-    byGroup[gid].valueKrw += krw;
-  }
-  for (const gid of Object.keys(byGroup)) {
-    byGroup[gid].ratio = totalValueKrw > 0 ? (byGroup[gid].valueKrw / totalValueKrw) * 100 : 0;
-  }
-
   return {
     totalValueKrw,
     byType,
-    byGroup,
     pnl: {
       total: realized + unrealized,
       realized,

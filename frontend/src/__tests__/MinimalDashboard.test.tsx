@@ -25,7 +25,6 @@ const mockSummary: DashboardSummary = {
     crypto: { valueKrw: 0, ratio: 0 },
     real_estate: { valueKrw: 0, ratio: 0 },
   },
-  byGroup: {},
   pnl: { total: 5_000_000, realized: 2_000_000, unrealized: 3_000_000, totalRatio: 5.26 },
   previousDayChange: { amount: 300_000, ratio: 0.3 },
   updatedAt: "2026-03-19T12:00:00Z",
