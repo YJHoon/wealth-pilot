@@ -95,6 +95,7 @@ export interface UseTradingReturn {
   // Strategy mutations
   createStrategy: (data: TradingStrategyCreateRequest) => Promise<TradingStrategy>;
   updateStrategy: (id: string, data: TradingStrategyUpdateRequest) => Promise<TradingStrategy>;
+  deleteStrategy: (id: string) => Promise<void>;
   // Auto ticker selection
   previewAutoTickers: (strategyId: string) => Promise<AutoTickerPreviewResponse>;
   refreshAutoTickers: (strategyId: string) => Promise<TradingStrategy>;
@@ -308,6 +309,18 @@ export function useTrading(): UseTradingReturn {
       });
       await fetchStrategies();
       return toTradingStrategy(res);
+    },
+    [canFetch, fetchOpts, fetchStrategies],
+  );
+
+  const deleteStrategy = useCallback(
+    async (id: string): Promise<void> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      await apiFetch<void>(`/api/trading/strategies/${id}`, {
+        method: "DELETE",
+        ...fetchOpts,
+      });
+      await fetchStrategies();
     },
     [canFetch, fetchOpts, fetchStrategies],
   );
@@ -599,6 +612,7 @@ export function useTrading(): UseTradingReturn {
     deactivateAccount,
     createStrategy,
     updateStrategy,
+    deleteStrategy,
     previewAutoTickers,
     refreshAutoTickers,
     fetchAutoTickerHistory,
