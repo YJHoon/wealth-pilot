@@ -713,10 +713,10 @@ function AutoTickerPanel({
             <p className="text-muted-foreground">없음</p>
           ) : (
             <ul className="list-disc pl-4 mt-0.5 space-y-0.5">
-              {last.tickers.map((t, i) => {
+              {last.tickers.map((t) => {
                 const name = findTickerName(t, last.details);
                 return (
-                  <li key={i}>
+                  <li key={t}>
                     {name ? (
                       <>
                         {name}{" "}

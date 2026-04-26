@@ -261,7 +261,7 @@ class MeanReversionStrategy(BaseStrategy):
     def __init__(
         self,
         lookback: int = 20,
-        std_multiplier: float | int | str = 2,
+        std_multiplier: float | int | str | Decimal = 2,
         rsi_period: int = 14,
         rsi_overbought: int = 70,
         rsi_oversold: int = 30,

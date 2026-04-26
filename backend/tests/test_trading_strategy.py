@@ -222,30 +222,28 @@ class TestMeanReversionStrategy:
         assert signal.action == "hold"
 
     def test_lower_breakout_with_rsi_overbought_holds(self):
-        """하단 이탈인데 RSI가 과매수면 매수 보류 (모순)"""
-        # 매우 인공적인 케이스: 단조 상승 후 마지막만 살짝 떨어뜨려 하단 이탈
-        # (실전 빈도는 낮지만 분기 검증용)
-        prices = [Decimal(str(1000 + i * 5)) for i in range(30)]  # 단조 상승
-        # 마지막 가격을 lookback 윈도우 평균 이하로 충분히 낮춤
-        prices.append(Decimal("900"))
+        """하단 이탈인데 RSI가 과매수면 매수 보류 (모순 케이스).
+
+        결정론적 시나리오: 짧은 lookback(=5)로 좁은 밴드를 만들고, 긴 RSI 기간(=30)
+        으로 RSI가 마지막 작은 하락에도 천천히 반응하게 해 모순을 만든다.
+        - 38일 강한 상승(+20씩) → RSI가 90+ 까지 치솟음
+        - 마지막 2일 작은 하락 → 짧은 lookback에서는 하단 밴드 이탈
+        """
+        prices = [1000 + i * 20 for i in range(39)]  # 1000, 1020, ..., 1760
+        prices.append(1740)  # 작은 하락
+        prices.append(1700)  # 좀 더 하락
 
         strategy = MeanReversionStrategy(
-            lookback=20, std_multiplier=Decimal("0.5"), rsi_period=14
+            lookback=5,
+            std_multiplier=Decimal("0.5"),
+            rsi_period=30,
+            rsi_overbought=70,
         )
-        history = [
-            {
-                "date": f"2024{i:04d}",
-                "close": p,
-                "high": p + Decimal("100"),
-                "low": p - Decimal("100"),
-                "volume": 1000,
-            }
-            for i, p in enumerate(prices)
-        ]
+        history = _make_price_history(prices)
         signal = strategy.evaluate("005930", history)
-        # 직전까지 단조 상승이라 RSI는 100에 가까움 → 모순 분기
-        if signal.action == "hold":
-            assert "RSI 과매수" in signal.reason
+
+        assert signal.action == "hold"
+        assert "RSI 과매수" in signal.reason
 
     def test_from_params(self):
         params = {
