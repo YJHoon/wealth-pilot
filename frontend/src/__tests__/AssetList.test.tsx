@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AssetList } from "@/components/assets/AssetList";
-import type { Asset, PortfolioGroup } from "@/types";
+import type { Asset } from "@/types";
 
 // Zustand appStore mock
 jest.mock("@/stores/appStore", () => ({
@@ -25,6 +25,10 @@ const mockAssets: Asset[] = [
     soldAt: null,
     soldPrice: null,
     realizedPnl: null,
+    source: "manual",
+    tradingAccountId: null,
+    externalTicker: null,
+    lastSyncedAt: null,
     createdAt: "2026-01-01",
     updatedAt: "2026-01-01",
   },
@@ -43,19 +47,12 @@ const mockAssets: Asset[] = [
     soldAt: null,
     soldPrice: null,
     realizedPnl: null,
+    source: "manual",
+    tradingAccountId: null,
+    externalTicker: null,
+    lastSyncedAt: null,
     createdAt: "2026-01-01",
     updatedAt: "2026-01-01",
-  },
-];
-
-const mockGroups: PortfolioGroup[] = [
-  {
-    id: "g1",
-    userId: "u1",
-    name: "장기투자",
-    description: null,
-    sortOrder: 0,
-    createdAt: "2026-01-01",
   },
 ];
 
@@ -71,7 +68,6 @@ function renderList(props: Partial<React.ComponentProps<typeof AssetList>> = {})
   return render(
     <AssetList
       assets={mockAssets}
-      groups={mockGroups}
       loading={false}
       {...mockHandlers}
       {...props}
@@ -93,11 +89,6 @@ describe("AssetList", () => {
     renderList();
     expect(screen.getByText("삼성전자")).toBeInTheDocument();
     expect(screen.getByText("카카오뱅크 예금")).toBeInTheDocument();
-  });
-
-  it("그룹명이 표시된다", () => {
-    renderList();
-    expect(screen.getByText("장기투자")).toBeInTheDocument();
   });
 
   it("로딩 상태일 때 로딩 메시지가 표시된다", () => {
@@ -156,6 +147,44 @@ describe("AssetList", () => {
     expect(maskedElements.length).toBeGreaterThan(0);
   });
 
+  it("수동 입력 자산은 액션 메뉴 트리거가 표시된다", () => {
+    renderList();
+    // 모바일 + 데스크톱 둘 다 렌더되므로 getAllByRole
+    expect(
+      screen.getAllByRole("button", { name: /삼성전자 액션 메뉴/ }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("KIS 동기화 자산은 KIS 배지가 표시되고 액션 메뉴가 숨겨진다", async () => {
+    const kisAsset: Asset = {
+      ...mockAssets[0],
+      id: "kis1",
+      name: "현대차",
+      ticker: "005380",
+      source: "kis",
+      tradingAccountId: "acc1",
+      externalTicker: "005380",
+      lastSyncedAt: "2026-03-19T12:00:00Z",
+    };
+    const user = userEvent.setup();
+    renderList({ assets: [kisAsset] });
+
+    // KIS 배지가 표시 (모바일 + 데스크톱 둘 다 렌더되므로 getAllByText)
+    expect(screen.getAllByText("KIS").length).toBeGreaterThan(0);
+
+    // 액션 메뉴 트리거가 존재하지 않음 → 클릭 핸들러 호출 안 됨
+    expect(
+      screen.queryByRole("button", { name: /현대차 액션 메뉴/ }),
+    ).not.toBeInTheDocument();
+
+    // 자산 추가 버튼은 KIS 행 존재와 무관하게 동작해야 함
+    await user.click(screen.getByRole("button", { name: /자산 추가/ }));
+    expect(mockHandlers.onAddClick).toHaveBeenCalledTimes(1);
+    expect(mockHandlers.onEditClick).not.toHaveBeenCalled();
+    expect(mockHandlers.onSellClick).not.toHaveBeenCalled();
+    expect(mockHandlers.onDeleteClick).not.toHaveBeenCalled();
+  });
+
   it("해외자산에 toKrw가 전달되면 원화 병기된다", () => {
     const foreignAsset: Asset = {
       id: "a3",
@@ -172,6 +201,10 @@ describe("AssetList", () => {
       soldAt: null,
       soldPrice: null,
       realizedPnl: null,
+      source: "manual",
+      tradingAccountId: null,
+      externalTicker: null,
+      lastSyncedAt: null,
       createdAt: "2026-01-01",
       updatedAt: "2026-01-01",
     };

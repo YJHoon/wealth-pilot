@@ -7,8 +7,6 @@ const currencyConfig: Record<Currency, { symbol: string; locale: string }> = {
   USD: { symbol: "$", locale: "en-US" },
   EUR: { symbol: "€", locale: "de-DE" },
   JPY: { symbol: "¥", locale: "ja-JP" },
-  BTC: { symbol: "BTC", locale: "en-US" },
-  ETH: { symbol: "ETH", locale: "en-US" },
 };
 
 /** 금액 포맷 (예: 195,000원, $150.00) */
@@ -24,9 +22,6 @@ export function formatAmount(
 
   if (currency === "KRW") {
     return `${value.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원`;
-  }
-  if (currency === "BTC" || currency === "ETH") {
-    return `${value.toLocaleString(config.locale, { minimumFractionDigits: 2, maximumFractionDigits: 8 })} ${config.symbol}`;
   }
   return `${config.symbol}${value.toLocaleString(config.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -112,13 +107,6 @@ export function formatPercent(value: number): string {
   return `${sign}${value.toFixed(2)}%`;
 }
 
-/** 변동 금액 포맷 (예: "+1,234,567원") */
-export function formatChangeKrw(value: number, isMasked: boolean): string {
-  if (isMasked) return `${MASK}원`;
-  const sign = value >= 0 ? "+" : "";
-  return `${sign}${Math.round(value).toLocaleString("ko-KR")}원`;
-}
-
 /** 수익률 색상 CSS 클래스 */
 export function pnlColorClass(value: number): string {
   if (value > 0) return "text-emerald-400";
@@ -130,4 +118,11 @@ export function pnlColorClass(value: number): string {
 export function formatMaskedKrw(value: number, isMasked: boolean): string {
   if (isMasked) return `${MASK}원`;
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
+}
+
+/** 마스킹 처리된 부호 포함 금액 (KRW) — 손익·변동 등 부호 표기가 필요한 곳에 사용 */
+export function formatMaskedKrwSigned(value: number, isMasked: boolean): string {
+  if (isMasked) return `${MASK}원`;
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${Math.round(value).toLocaleString("ko-KR")}원`;
 }

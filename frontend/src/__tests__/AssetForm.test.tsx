@@ -1,24 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AssetForm } from "@/components/assets/AssetForm";
-import type { PortfolioGroup } from "@/types";
 
 // next-auth mock
 jest.mock("next-auth/react", () => ({
   SessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useSession: () => ({ data: null, status: "unauthenticated" }),
 }));
-
-const mockGroups: PortfolioGroup[] = [
-  {
-    id: "g1",
-    userId: "u1",
-    name: "장기투자",
-    description: null,
-    sortOrder: 0,
-    createdAt: "2026-01-01",
-  },
-];
 
 const mockOnSubmit = jest.fn().mockResolvedValue(undefined);
 const mockOnOpenChange = jest.fn();
@@ -28,7 +16,6 @@ function renderForm(props: Partial<React.ComponentProps<typeof AssetForm>> = {})
     <AssetForm
       open={true}
       onOpenChange={mockOnOpenChange}
-      groups={mockGroups}
       onSubmit={mockOnSubmit}
       isSubmitting={false}
       {...props}
@@ -63,6 +50,10 @@ describe("AssetForm", () => {
         soldAt: null,
         soldPrice: null,
         realizedPnl: null,
+        source: "manual",
+        tradingAccountId: null,
+        externalTicker: null,
+        lastSyncedAt: null,
         createdAt: "2026-01-01",
         updatedAt: "2026-01-01",
       },

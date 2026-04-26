@@ -12,8 +12,11 @@ export type AssetType = (typeof ASSET_TYPE_VALUES)[number];
 // 자산 상태
 export type AssetStatus = "active" | "sold" | "delisted";
 
-// 통화
-export type Currency = "KRW" | "USD" | "EUR" | "JPY" | "BTC" | "ETH";
+// 자산 출처 (manual: 수동 등록 / kis: KIS 잔고 자동 동기화)
+export type AssetSource = "manual" | "kis";
+
+// 통화 (법정통화만 — 코인은 type='crypto'로 식별)
+export type Currency = "KRW" | "USD" | "EUR" | "JPY";
 
 // 자산
 export interface Asset {
@@ -31,6 +34,10 @@ export interface Asset {
   soldAt: string | null;
   soldPrice: number | null;
   realizedPnl: number | null;
+  source: AssetSource;
+  tradingAccountId: string | null;
+  externalTicker: string | null;
+  lastSyncedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,6 +71,10 @@ export interface AssetApiResponse {
   sold_at: string | null;
   sold_price: number | null;
   realized_pnl: number | null;
+  source: AssetSource;
+  trading_account_id: string | null;
+  external_ticker: string | null;
+  last_synced_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -133,6 +144,10 @@ export function toAsset(api: AssetApiResponse): Asset {
     soldAt: api.sold_at,
     soldPrice: api.sold_price,
     realizedPnl: api.realized_pnl,
+    source: api.source,
+    tradingAccountId: api.trading_account_id,
+    externalTicker: api.external_ticker,
+    lastSyncedAt: api.last_synced_at,
     createdAt: api.created_at,
     updatedAt: api.updated_at,
   };

@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.models.asset import AssetStatus, AssetType, Currency
+from app.models.asset import AssetSource, AssetStatus, AssetType, Currency
 from app.services.crypto_service import decrypt_decimal, decrypt_decimal_optional
 
 if TYPE_CHECKING:
@@ -59,6 +59,10 @@ class AssetResponse(BaseModel):
     sold_at: datetime | None
     sold_price: Decimal | None
     realized_pnl: Decimal | None
+    source: AssetSource
+    trading_account_id: UUID | None
+    external_ticker: str | None
+    last_synced_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -85,6 +89,10 @@ def asset_to_response(asset: AssetModel) -> AssetResponse:
         sold_at=asset.sold_at,
         sold_price=decrypt_decimal_optional(asset.sold_price),
         realized_pnl=decrypt_decimal_optional(asset.realized_pnl),
+        source=asset.source,
+        trading_account_id=asset.trading_account_id,
+        external_ticker=asset.external_ticker,
+        last_synced_at=asset.last_synced_at,
         created_at=asset.created_at,
         updated_at=asset.updated_at,
     )
