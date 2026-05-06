@@ -202,3 +202,42 @@ async def test_update_market_data_applies_to_all_strategies(db_session, mock_use
     # B: (130000-120000)*5  = 50000
     assert decrypt_decimal(positions[0].unrealized_pnl) == Decimal("300000")
     assert decrypt_decimal(positions[1].unrealized_pnl) == Decimal("50000")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_includes_advisory_positions(db_session, mock_user, account):
+    """전략합 + advisory합 = KIS 일치, mismatch 메시지에 분해 정보 포함."""
+    from app.services.advisory_position import apply_buy_fill_advisory
+
+    s = _new_strategy(mock_user.id, account.id, "S")
+    db_session.add(s)
+    await db_session.commit()
+
+    # 전략이 10주, advisory가 4주 보유 → 총 14주
+    await apply_buy_fill(
+        db_session, s, "005930", "삼성", Decimal("10"), Decimal("100000"),
+    )
+    await apply_buy_fill_advisory(
+        db_session, user_id=mock_user.id, account_id=account.id,
+        ticker="005930", ticker_name="삼성", fill_qty=Decimal("4"),
+        fill_price=Decimal("110000"),
+    )
+    await db_session.commit()
+
+    # KIS가 14주를 보고 → 일치
+    ok = await reconcile_with_kis(
+        db_session, account.id, {"005930": {"quantity": 14}},
+    )
+    assert ok == []
+
+    # KIS가 12주만 보고 → mismatch, 메시지에 strategy/advisory 분해 포함
+    mismatches = await reconcile_with_kis(
+        db_session, account.id, {"005930": {"quantity": 12}},
+    )
+    assert len(mismatches) == 1
+    msg = mismatches[0]
+    assert "005930" in msg
+    assert "전략=10" in msg
+    assert "advisory=4" in msg
+    assert "합계=14" in msg
+    assert "KIS=12" in msg

@@ -7,7 +7,7 @@ KIS 잔고는 정합성 검증과 current_price/unrealized_pnl 갱신에만 사�
 - apply_buy_fill: 매수 체결 시 호출 → 전략 포지션 증가, 평균매입가 가중평균 갱신
 - apply_sell_fill: 매도 체결 시 호출 → 전략 포지션 감소, 0 되면 삭제
 - get_strategy_position: 전략+종목 보유분 조회
-- reconcile_with_kis: Σ(전략 포지션) vs KIS 실잔고 정합성 체크
+- reconcile_with_kis: Σ(전략 포지션) + Σ(advisory 포지션) vs KIS 실잔고 정합성 체크
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.trading import TradingPosition, TradingStrategy
+from app.models.trading import AdvisoryPosition, TradingPosition, TradingStrategy
 from app.services.crypto_service import (
     decrypt_decimal,
     encrypt_decimal,
@@ -180,35 +180,48 @@ async def reconcile_with_kis(
     account_id: UUID,
     kis_holdings: dict[str, dict],
 ) -> list[str]:
-    """KIS 실잔고와 전략별 포지션 합계를 비교.
+    """KIS 실잔고와 (전략 포지션 합계 + advisory 포지션 합계) 를 비교.
+
+    정합성 식: KIS실잔고(ticker) = Σ TradingPosition(ticker) + Σ AdvisoryPosition(ticker)
 
     Args:
         kis_holdings: {ticker: {"quantity": int|Decimal, "current_price": ..., ...}}
 
     Returns:
         불일치 메시지 목록 (ticker별 1줄). 빈 리스트면 정합성 OK.
+        메시지에는 strategy/advisory 분해를 포함해 어느 도메인이 어긋났는지 추적 가능.
     """
-    # 계좌의 모든 전략 포지션을 ticker별로 집계
-    result = await db.execute(
+    # 전략 포지션 합계 (ticker별)
+    strat_rows = await db.execute(
         select(TradingPosition).where(TradingPosition.account_id == account_id)
     )
-    positions = result.scalars().all()
-
-    internal_qty: dict[str, Decimal] = {}
-    for pos in positions:
+    strat_qty: dict[str, Decimal] = {}
+    for pos in strat_rows.scalars().all():
         qty = decrypt_decimal(pos.quantity)
-        internal_qty[pos.ticker] = internal_qty.get(pos.ticker, Decimal("0")) + qty
+        strat_qty[pos.ticker] = strat_qty.get(pos.ticker, Decimal("0")) + qty
+
+    # advisory 포지션 합계 (ticker별)
+    adv_rows = await db.execute(
+        select(AdvisoryPosition).where(AdvisoryPosition.account_id == account_id)
+    )
+    adv_qty: dict[str, Decimal] = {}
+    for pos in adv_rows.scalars().all():
+        qty = decrypt_decimal(pos.quantity)
+        adv_qty[pos.ticker] = adv_qty.get(pos.ticker, Decimal("0")) + qty
 
     mismatches: list[str] = []
-    all_tickers = set(internal_qty.keys()) | set(kis_holdings.keys())
+    all_tickers = set(strat_qty.keys()) | set(adv_qty.keys()) | set(kis_holdings.keys())
 
     for ticker in all_tickers:
-        internal = internal_qty.get(ticker, Decimal("0"))
+        strat = strat_qty.get(ticker, Decimal("0"))
+        adv = adv_qty.get(ticker, Decimal("0"))
+        internal = strat + adv
         kis_raw = kis_holdings.get(ticker, {}).get("quantity", 0)
         kis_qty = Decimal(str(kis_raw))
         if internal != kis_qty:
             mismatches.append(
-                f"{ticker}: 내부합계={internal} vs KIS={kis_qty} (차이={internal - kis_qty})"
+                f"{ticker}: 전략={strat}, advisory={adv}, 합계={internal} "
+                f"vs KIS={kis_qty} (차이={internal - kis_qty})"
             )
 
     return mismatches

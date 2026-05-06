@@ -676,7 +676,11 @@ class AnalysisRun(Base):
         nullable=False,
     )
     status: Mapped[AnalysisRunStatus] = mapped_column(
-        Enum(AnalysisRunStatus, values_callable=lambda e: [x.value for x in e]),
+        Enum(
+            AnalysisRunStatus,
+            name="analysis_run_status",
+            values_callable=lambda e: [x.value for x in e],
+        ),
         default=AnalysisRunStatus.PENDING,
         nullable=False,
     )
@@ -742,11 +746,19 @@ class AnalysisRunItem(Base):
     ticker_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
 
     source: Mapped[AnalysisItemSource] = mapped_column(
-        Enum(AnalysisItemSource, values_callable=lambda e: [x.value for x in e]),
+        Enum(
+            AnalysisItemSource,
+            name="analysis_item_source",
+            values_callable=lambda e: [x.value for x in e],
+        ),
         nullable=False,
     )
     action: Mapped[AnalysisItemAction] = mapped_column(
-        Enum(AnalysisItemAction, values_callable=lambda e: [x.value for x in e]),
+        Enum(
+            AnalysisItemAction,
+            name="analysis_item_action",
+            values_callable=lambda e: [x.value for x in e],
+        ),
         nullable=False,
     )
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -757,7 +769,11 @@ class AnalysisRunItem(Base):
     suggested_qty: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     decision: Mapped[AnalysisItemDecision] = mapped_column(
-        Enum(AnalysisItemDecision, values_callable=lambda e: [x.value for x in e]),
+        Enum(
+            AnalysisItemDecision,
+            name="analysis_item_decision",
+            values_callable=lambda e: [x.value for x in e],
+        ),
         default=AnalysisItemDecision.PENDING,
         nullable=False,
     )
