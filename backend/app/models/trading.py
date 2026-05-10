@@ -249,6 +249,12 @@ class TradingOrder(Base):
         UUID(as_uuid=True), ForeignKey("trading_schedule_logs.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # 원클릭 분석·매매에서 발주된 주문이면 출처 항목 ID. 자동매매면 NULL.
+    analysis_run_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("analysis_run_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     side: Mapped[OrderSide] = mapped_column(
         Enum(OrderSide, values_callable=lambda e: [x.value for x in e]),
@@ -607,4 +613,232 @@ class AutoTickerSelection(Base):
 
     strategy = relationship(
         "TradingStrategy", back_populates="auto_ticker_selections",
+    )
+
+
+# ──────────────────────────────────────────────
+# 원클릭 분석·매매 (Advisory) — 자동매매와 분리된 도메인
+# ──────────────────────────────────────────────
+
+class AnalysisRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    ANALYZING = "analyzing"
+    READY = "ready"
+    EXECUTING = "executing"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class AnalysisItemSource(str, enum.Enum):
+    HOLDING = "holding"
+    AUTO_PICK = "auto_pick"
+
+
+class AnalysisItemAction(str, enum.Enum):
+    BUY = "buy"
+    SELL = "sell"
+    HOLD = "hold"
+
+
+class AnalysisItemDecision(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    SKIPPED = "skipped"
+    REJECTED = "rejected"
+
+
+class AnalysisRun(Base):
+    """원클릭 분석·매매 1회 실행 단위.
+
+    사용자가 버튼 클릭 → 보유 + 자동선정 후보를 LLM으로 분석.
+    종목별 결과는 AnalysisRunItem에, 발주는 TradingOrder에 기록되며
+    체결분은 자동매매 TradingPosition과 분리된 AdvisoryPosition에 누적된다.
+    """
+
+    __tablename__ = "analysis_runs"
+    __table_args__ = (
+        Index("ix_analysis_runs_user_started", "user_id", "started_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mode: Mapped[TradingMode] = mapped_column(
+        Enum(TradingMode, values_callable=lambda e: [x.value for x in e]),
+        nullable=False,
+    )
+    status: Mapped[AnalysisRunStatus] = mapped_column(
+        Enum(
+            AnalysisRunStatus,
+            name="analysis_run_status",
+            values_callable=lambda e: [x.value for x in e],
+        ),
+        default=AnalysisRunStatus.PENDING,
+        nullable=False,
+    )
+
+    # 사용자가 1회 run에 할당한 예산 (AES-256 암호화)
+    budget_krw: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # 후보풀 옵션 스냅샷: {top_n, market, min_volume_value, blacklist, include_holdings, ...}
+    candidate_pool_options: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict,
+        server_default=sa.text("'{}'::jsonb"),
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    # 결과 TTL — 경과 시 /execute 거절, 재분석 강제
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+
+    # 진행/요약 정보 (분석 종목 수, 차단 사유 카운트 등)
+    summary_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+        nullable=False,
+    )
+
+    items = relationship(
+        "AnalysisRunItem", back_populates="run", cascade="all, delete-orphan",
+    )
+
+
+class AnalysisRunItem(Base):
+    """원클릭 분석 결과 — 종목 1건."""
+
+    __tablename__ = "analysis_run_items"
+    __table_args__ = (
+        Index("ix_analysis_run_items_run", "run_id"),
+        UniqueConstraint(
+            "run_id", "ticker", name="uq_analysis_run_item_run_ticker",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    ticker: Mapped[str] = mapped_column(String(20), nullable=False)
+    ticker_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+
+    source: Mapped[AnalysisItemSource] = mapped_column(
+        Enum(
+            AnalysisItemSource,
+            name="analysis_item_source",
+            values_callable=lambda e: [x.value for x in e],
+        ),
+        nullable=False,
+    )
+    action: Mapped[AnalysisItemAction] = mapped_column(
+        Enum(
+            AnalysisItemAction,
+            name="analysis_item_action",
+            values_callable=lambda e: [x.value for x in e],
+        ),
+        nullable=False,
+    )
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 분석 시점 참조 가격 / 제안 수량 (AES-256 암호화)
+    ref_price: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_qty: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    decision: Mapped[AnalysisItemDecision] = mapped_column(
+        Enum(
+            AnalysisItemDecision,
+            name="analysis_item_decision",
+            values_callable=lambda e: [x.value for x in e],
+        ),
+        default=AnalysisItemDecision.PENDING,
+        nullable=False,
+    )
+    # 발주 시 연결되는 주문 (1:1, 부분체결 등은 order 레벨에서 관리)
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trading_orders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # confidence 미달/리스크 차단 사유
+    blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+        nullable=False,
+    )
+
+    run = relationship("AnalysisRun", back_populates="items")
+
+
+class AdvisoryPosition(Base):
+    """원클릭 매매로 매수한 수동 보유분 — 자동매매 TradingPosition과 완전 분리.
+
+    정합성 식: KIS실잔고(ticker) = Σ TradingPosition(ticker) + AdvisoryPosition(ticker)
+    """
+
+    __tablename__ = "advisory_positions"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "ticker", name="uq_advisory_position_account_ticker",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    ticker: Mapped[str] = mapped_column(String(20), nullable=False)
+    ticker_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+
+    # 보유 수량 / 평균 매입가 (AES-256 암호화)
+    quantity: Mapped[str] = mapped_column(Text, nullable=False)
+    avg_buy_price: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # 현재가 (공개 정보)
+    current_price: Mapped[float | None] = mapped_column(Numeric(20, 4), nullable=True)
+    # 평가 손익 (AES-256 암호화)
+    unrealized_pnl: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+        nullable=False,
     )
