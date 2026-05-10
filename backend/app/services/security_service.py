@@ -67,6 +67,11 @@ class AccessAction:
     WATCHLIST_VIEW = "watchlist_view"
     ANALYSIS_VIEW = "analysis_view"
     SIMULATION_RUN = "simulation_run"
+    ANALYSIS_RUN_CREATE = "analysis_run_create"
+    ANALYSIS_RUN_GET = "analysis_run_get"
+    ANALYSIS_RUN_LIST = "analysis_run_list"
+    ANALYSIS_RUN_DECISION = "analysis_run_decision"
+    ANALYSIS_RUN_EXECUTE = "analysis_run_execute"
 
 
 async def log_access(
