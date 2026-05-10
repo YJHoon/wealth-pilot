@@ -24,7 +24,7 @@ from fastapi import (
     Request,
     status,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -514,7 +514,15 @@ async def create_analysis_run(
     사용자당 진행 중(`pending|analyzing|executing`) run 1개 락.
     분석은 BackgroundTasks 로 실행되고, 결과는 GET /runs/{id} 폴링으로 확인.
     """
-    # 1) 사용자당 진행 중 run 락
+    # 1) per-user 직렬화 — postgres advisory transaction lock.
+    # 같은 트랜잭션 내에서 SELECT-then-INSERT 가 원자적으로 동작하도록
+    # 사용자 단위 락을 잡는다. 트랜잭션 종료 시 자동 해제.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:k)::bigint)")
+        .bindparams(k=f"advisory_run_create:{user.id}")
+    )
+
+    # 2) 사용자당 진행 중 run 체크 (락 보호 하)
     busy = await db.execute(
         select(AnalysisRun.id).where(
             AnalysisRun.user_id == user.id,
@@ -527,7 +535,7 @@ async def create_analysis_run(
             detail="이미 진행 중인 분석이 있습니다. 완료 후 재시도하세요.",
         )
 
-    # 2) 계좌 소유권 검증
+    # 3) 계좌 소유권 검증
     account = await _load_account_for_user(db, body.account_id, user.id)
     if account.mode != body.mode:
         raise HTTPException(
@@ -535,7 +543,7 @@ async def create_analysis_run(
             detail="요청 mode 와 계좌 mode 가 일치하지 않습니다.",
         )
 
-    # 3) AnalysisRun 영속화 (status=PENDING)
+    # 4) AnalysisRun 영속화 (status=PENDING)
     run = AnalysisRun(
         user_id=user.id,
         account_id=account.id,
@@ -555,7 +563,7 @@ async def create_analysis_run(
         logger.exception("ANALYSIS_RUN_CREATE persist failed")
         raise HTTPException(status_code=500, detail="분석 run 생성에 실패했습니다.")
 
-    # 4) BackgroundTasks 로 분석 실행
+    # 5) BackgroundTasks 로 분석 실행
     background_tasks.add_task(_run_analysis_background, run.id)
 
     return run_to_response(run, [], now=datetime.now(timezone.utc))
@@ -791,13 +799,31 @@ async def execute_run(
             status_code=400, detail="승인된 항목이 없습니다.",
         )
 
-    # 상태 EXECUTING 으로 락 효과
-    run.status = AnalysisRunStatus.EXECUTING
+    # 상태 EXECUTING 으로 원자적 전이 — 동시 /execute 요청 직렬화.
+    # `READY → EXECUTING` 조건부 UPDATE 로 한 요청만 발주권을 획득.
+    # 외부 호출(KIS) 직전에 commit 해서 다른 요청이 즉시 EXECUTING 을 보고 409.
+    transition = await db.execute(
+        update(AnalysisRun)
+        .where(
+            AnalysisRun.id == run.id,
+            AnalysisRun.user_id == user.id,
+            AnalysisRun.status == AnalysisRunStatus.READY,
+        )
+        .values(status=AnalysisRunStatus.EXECUTING)
+    )
+    if transition.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="이미 발주 중이거나 상태가 변경되었습니다.",
+        )
     try:
-        await db.flush()
+        await db.commit()
     except SQLAlchemyError:
         await db.rollback()
         raise HTTPException(status_code=500, detail="발주 시작에 실패했습니다.")
+    # 객체 동기화
+    run.status = AnalysisRunStatus.EXECUTING
 
     # 발주
     kis: KISClient | None = None
@@ -807,6 +833,8 @@ async def execute_run(
         place_order = kis.place_order
 
     try:
+        # executor 는 종목별로 자체 commit. 여기서 outer 트랜잭션은 종목 발주
+        # 후의 부수 영속화(토큰 갱신, run.status DONE, 액세스 로그) 만 담당.
         outcomes = await execute_approved_items(
             db,
             user_id=user.id,
@@ -814,7 +842,7 @@ async def execute_run(
             items=approved_items,
             place_order=place_order,
         )
-        # KIS 토큰 갱신 반영
+
         if kis is not None:
             await _persist_kis_token(db, account, kis)
 
@@ -825,11 +853,13 @@ async def execute_run(
         await db.commit()
     except Exception as e:  # noqa: BLE001
         await db.rollback()
-        # 발주 도중 치명적 예외 — run 을 FAILED 로 별도 트랜잭션에 기록
+        # 발주 자체는 종목별 commit 으로 이미 영속화. 여기서 잡히는 건 토큰
+        # 갱신 / DONE 마킹 / 액세스 로그 단계의 예외 또는 outer 인프라 예외.
+        # run.status 를 FAILED 로 별도 트랜잭션에 기록.
         async with AsyncSessionLocal() as fdb:
-            await fail_run(fdb, run.id, f"발주 중 예외: {type(e).__name__}")
+            await fail_run(fdb, run.id, f"발주 후처리 예외: {type(e).__name__}")
             await fdb.commit()
-        logger.exception("execute_run fatal: run=%s", run.id)
+        logger.exception("execute_run post-processing fatal: run=%s", run.id)
         raise HTTPException(status_code=500, detail="발주 처리 중 오류가 발생했습니다.")
     finally:
         if kis is not None:

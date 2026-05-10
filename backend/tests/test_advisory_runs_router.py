@@ -496,6 +496,38 @@ async def test_execute_paper_creates_order_and_advisory_position(
 
 
 @pytest.mark.asyncio
+async def test_execute_rejects_fractional_quantity(
+    auth_client: AsyncClient,
+    db_session: AsyncSession,
+    mock_user: User,
+    paper_account: TradingAccount,
+):
+    """분수 suggested_qty 는 silent 절사 대신 명시적으로 outcome 실패."""
+    run = _make_ready_run(mock_user.id, paper_account)
+    db_session.add(run)
+    await db_session.flush()
+    item = _make_item(
+        run.id,
+        decision=AnalysisItemDecision.APPROVED,
+        ref_price=Decimal("70000"),
+        suggested_qty=Decimal("3.5"),
+    )
+    db_session.add(item)
+    await db_session.commit()
+
+    with patch("app.routers.analysis._is_market_hours", return_value=True):
+        resp = await auth_client.post(
+            f"/api/analysis/runs/{run.id}/execute",
+            json={},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["executed"] == 0
+    assert data["failed"] == 1
+    assert "분수" in (data["results"][0]["error_message"] or "")
+
+
+@pytest.mark.asyncio
 async def test_execute_blocked_off_market_hours(
     auth_client: AsyncClient,
     db_session: AsyncSession,
