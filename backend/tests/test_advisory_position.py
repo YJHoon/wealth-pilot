@@ -114,6 +114,39 @@ async def test_sell_to_zero_deletes_row(db_session, mock_user, account):
 
 
 @pytest.mark.asyncio
+async def test_buy_rejects_non_positive_fill_price(db_session, mock_user, account):
+    """fill_price <= 0 은 가중평균을 왜곡하므로 거부."""
+    with pytest.raises(ValueError, match="fill_price must be positive"):
+        await apply_buy_fill_advisory(
+            db_session, user_id=mock_user.id, account_id=account.id,
+            ticker="005930", ticker_name="삼성", fill_qty=Decimal("1"),
+            fill_price=Decimal("0"),
+        )
+    with pytest.raises(ValueError, match="fill_price must be positive"):
+        await apply_buy_fill_advisory(
+            db_session, user_id=mock_user.id, account_id=account.id,
+            ticker="005930", ticker_name="삼성", fill_qty=Decimal("1"),
+            fill_price=Decimal("-100"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_sell_rejects_non_positive_fill_price(db_session, mock_user, account):
+    """fill_price <= 0 은 realized P&L 을 왜곡하므로 거부."""
+    await apply_buy_fill_advisory(
+        db_session, user_id=mock_user.id, account_id=account.id,
+        ticker="005930", ticker_name="삼성", fill_qty=Decimal("3"),
+        fill_price=Decimal("100000"),
+    )
+    await db_session.commit()
+    with pytest.raises(ValueError, match="fill_price must be positive"):
+        await apply_sell_fill_advisory(
+            db_session, account_id=account.id, ticker="005930",
+            fill_qty=Decimal("1"), fill_price=Decimal("0"),
+        )
+
+
+@pytest.mark.asyncio
 async def test_sell_more_than_holding_raises(db_session, mock_user, account):
     await apply_buy_fill_advisory(
         db_session, user_id=mock_user.id, account_id=account.id,

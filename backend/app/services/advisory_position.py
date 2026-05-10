@@ -65,6 +65,8 @@ async def apply_buy_fill_advisory(
     """
     if fill_qty <= 0:
         raise ValueError(f"fill_qty must be positive: {fill_qty}")
+    if fill_price <= 0:
+        raise ValueError(f"fill_price must be positive: {fill_price}")
 
     pos = await get_advisory_position(db, account_id, ticker)
 
@@ -112,6 +114,8 @@ async def apply_sell_fill_advisory(
     """
     if fill_qty <= 0:
         raise ValueError(f"fill_qty must be positive: {fill_qty}")
+    if fill_price <= 0:
+        raise ValueError(f"fill_price must be positive: {fill_price}")
 
     pos = await get_advisory_position(db, account_id, ticker)
     if pos is None:
