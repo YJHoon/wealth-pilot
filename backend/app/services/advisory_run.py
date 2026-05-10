@@ -4,7 +4,9 @@
 1. 종목별 시세 + LLM 호출을 동시성 제한과 타임아웃으로 실행
 2. 결과를 `AnalysisRunItem` 행으로 영속화
 3. min_confidence 미달은 자동 차단(decision=skipped)
-4. BUY 후보 합 > 예산이면 신뢰도 순으로 자르고 나머지를 skipped 처리
+4. 종목당 비중(`max_position_pct`)을 넘는 BUY 는 한도 내 정수 수량으로 cap.
+   1주 미만이면 skipped 처리
+5. BUY 후보 합 > 예산이면 신뢰도 순으로 자르고 나머지를 skipped 처리
 
 LLM 호출이 부분 실패해도 안전 폴백(hold)로 전체 잡을 진행시킨다.
 """
