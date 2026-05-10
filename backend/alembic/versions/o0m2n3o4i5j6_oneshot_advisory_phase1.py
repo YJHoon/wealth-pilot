@@ -214,9 +214,21 @@ def upgrade() -> None:
         remote_cols=["id"],
         ondelete="SET NULL",
     )
+    # FK 컬럼 인덱스 — advisory 출처 추적 조회 풀스캔 방지.
+    # NULL-heavy 컬럼이라 partial index 로 크기를 제한.
+    op.create_index(
+        "ix_trading_orders_analysis_run_item_id",
+        "trading_orders",
+        ["analysis_run_item_id"],
+        postgresql_where=sa.text("analysis_run_item_id IS NOT NULL"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_trading_orders_analysis_run_item_id",
+        table_name="trading_orders",
+    )
     op.drop_constraint(
         "fk_trading_orders_analysis_run_item",
         "trading_orders", type_="foreignkey",

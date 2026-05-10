@@ -341,6 +341,44 @@ async def test_run_status_and_expiry_set(db_session, run):
 
 
 @pytest.mark.asyncio
+async def test_budget_decrypt_failure_marks_run_failed(db_session, mock_user, account):
+    """예산 복호화 실패는 fatal — 폴백으로 0 처리해 모든 BUY가 통과되면 안 됨."""
+    r = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=account.id,
+        mode=TradingMode.PAPER,
+        budget_krw="garbage-not-valid-ciphertext",
+        candidate_pool_options={},
+    )
+    db_session.add(r)
+    await db_session.commit()
+
+    pool = _candidate_pool([
+        CandidateItem(
+            ticker="005930", ticker_name="삼성",
+            source=AnalysisItemSource.AUTO_PICK,
+            ref_price=Decimal("70000"),
+        ),
+    ])
+    llm = _llm_stub({
+        "005930": LLMDecision(
+            action="buy", confidence=99, reason="강한 신호",
+            suggested_quantity=10,
+        ),
+    })
+    await run_analysis(
+        db_session, r, candidates=pool, portfolio=_portfolio(),
+        price_fetcher=_stub_price, llm_caller=llm, min_confidence=70,
+    )
+    await db_session.commit()
+    await db_session.refresh(r)
+
+    assert r.status == AnalysisRunStatus.FAILED
+    assert r.error_message and "예산" in r.error_message
+
+
+@pytest.mark.asyncio
 async def test_llm_timeout_falls_back_to_hold(db_session, run):
     pool = _candidate_pool([
         CandidateItem(

@@ -395,12 +395,6 @@ async def run_analysis(
             summary.by_decision.get(decision_status.value, 0) + 1
         )
         if (
-            ev.blocked_reason is not None
-            or (decision_reason or "").startswith("LLM hold")
-            is False  # noqa: PLR2004 — placeholder for clarity
-        ):
-            pass
-        if (
             decision_status == AnalysisItemDecision.SKIPPED
             and decision_reason
             and decision_reason.startswith("신뢰도")
@@ -409,11 +403,21 @@ async def run_analysis(
         if ev.blocked_reason is not None:
             summary.failed += 1
 
-    # 4) 예산 컷 (BUY only)
+    # 4) 예산 컷 (BUY only) — 예산 복호화 실패는 fatal.
+    # 폴백으로 0 처리하면 cap 단계가 통째로 스킵돼 모든 BUY가 PENDING으로 통과,
+    # 사용자가 의도한 예산을 넘어선 발주가 가능해진다. cryptography.InvalidTag·
+    # InvalidOperation 등 어떤 예외든 위험하므로 광역으로 잡고 fail.
     try:
         budget = decrypt_decimal(run.budget_krw)
-    except (ValueError, ArithmeticError):
-        budget = Decimal("0")
+    except Exception as e:  # noqa: BLE001 — 어떤 예외든 fatal
+        logger.error("budget decryption failed for run %s: %s", run.id, e)
+        run.status = AnalysisRunStatus.FAILED
+        run.error_message = "예산 복호화 실패 — 분석 중단"
+        run.completed_at = now
+        summary.elapsed_seconds = time.monotonic() - started
+        run.summary_json = summary.to_dict()
+        return run
+
     over_budget_count = _apply_budget_cap(items, budget)
     summary.skipped_over_budget = over_budget_count
     if over_budget_count:

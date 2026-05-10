@@ -212,7 +212,8 @@ async def reconcile_with_kis(
     mismatches: list[str] = []
     all_tickers = set(strat_qty.keys()) | set(adv_qty.keys()) | set(kis_holdings.keys())
 
-    for ticker in all_tickers:
+    # set 은 비결정 순서 → 메시지/로그가 매 실행마다 달라지지 않도록 정렬
+    for ticker in sorted(all_tickers):
         strat = strat_qty.get(ticker, Decimal("0"))
         adv = adv_qty.get(ticker, Decimal("0"))
         internal = strat + adv

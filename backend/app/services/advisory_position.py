@@ -150,7 +150,7 @@ async def update_advisory_market_data(
     if pos is None:
         return
     cp = Decimal(str(current_price))
-    pos.current_price = float(current_price)
+    pos.current_price = float(cp)
     qty = decrypt_decimal(pos.quantity)
     avg = decrypt_decimal(pos.avg_buy_price)
     pnl = (cp - avg) * qty
