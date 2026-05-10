@@ -5,6 +5,7 @@ import {
   LineChart,
   Settings,
   Shield,
+  Sparkles,
   Star,
   Wallet,
 } from "lucide-react";
@@ -32,6 +33,7 @@ export const navSections: NavSection[] = [
     label: "투자",
     items: [
       { href: "/assets", label: "내 자산", icon: Wallet },
+      { href: "/advisory", label: "원클릭 분석", icon: Sparkles },
       { href: "/trading", label: "자동매매", icon: Bot },
       { href: "/orders", label: "매매 내역", icon: ClipboardList },
     ],
