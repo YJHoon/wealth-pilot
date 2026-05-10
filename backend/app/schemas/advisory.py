@@ -13,6 +13,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.config import settings
 from app.models.trading import (
     AnalysisItemAction,
     AnalysisItemDecision,
@@ -43,10 +44,13 @@ class RunCreateRequest(BaseModel):
     @field_validator("budget_krw")
     @classmethod
     def _budget_within_limit(cls, v: Decimal) -> Decimal:
-        # 1회 run 예산 상한 — 운영 사고 방지용 안전장치 (10억).
-        # config 화는 추후 분리. 지금은 코드 상수로 박는다.
-        if v > Decimal("1000000000"):
-            raise ValueError("1회 run 예산은 10억원을 초과할 수 없습니다.")
+        # 1회 run 예산 상한 — 운영 사고 방지용 안전장치.
+        # 절대 상한은 ADVISORY_MAX_RUN_BUDGET_KRW (env) 로 설정.
+        max_budget = settings.advisory_max_run_budget_krw
+        if v > max_budget:
+            raise ValueError(
+                f"1회 run 예산은 {max_budget}원을 초과할 수 없습니다."
+            )
         return v
 
 

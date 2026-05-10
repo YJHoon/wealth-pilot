@@ -326,9 +326,6 @@ _RUN_IN_PROGRESS_STATES = (
     AnalysisRunStatus.EXECUTING,
 )
 
-# 1회 run 종목 수 상한 (LLM 호출 비용 가드 — 워크플랜 §4)
-ADVISORY_MAX_CANDIDATES = 20
-
 
 async def _load_run_for_user(
     db: AsyncSession, run_id: UUID, user_id: UUID,
@@ -464,7 +461,8 @@ async def _run_analysis_background(run_id: UUID) -> None:
                     options=run.candidate_pool_options or {},
                     available_cash=available_cash,
                     total_eval=total_eval,
-                    max_candidates=ADVISORY_MAX_CANDIDATES,
+                    max_position_pct=settings.advisory_max_position_pct,
+                    max_candidates=settings.advisory_max_candidates,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.exception("build_candidate_pool failed for run=%s", run.id)
@@ -482,6 +480,8 @@ async def _run_analysis_background(run_id: UUID) -> None:
                     candidates=pool,
                     portfolio=portfolio,
                     price_fetcher=_price_fetcher,
+                    max_position_pct=settings.advisory_max_position_pct,
+                    ttl_minutes=settings.advisory_ttl_minutes,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.exception("run_analysis failed for run=%s", run.id)

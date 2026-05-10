@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -82,6 +84,16 @@ class Settings(BaseSettings):
     meta_analysis_max_rules: int = 5  # 한 번에 생성할 최대 규칙 수
     adaptive_rule_ttl_days: int = 14  # 규칙 기본 유효기간 (일)
 
+    # ── 원클릭 분석·매매 (Advisory) 안전 한도 ──
+    # 1회 run 당 사용자가 할당할 수 있는 예산의 절대 상한 (사고 반경 제한).
+    advisory_max_run_budget_krw: Decimal = Decimal("1000000000")
+    # 1회 run 후보 종목 수 상한 (LLM 호출 비용 가드).
+    advisory_max_candidates: int = 20
+    # 1종목당 평가자산 대비 매수 금액 비중 상한.
+    advisory_max_position_pct: Decimal = Decimal("0.20")
+    # 결과 TTL (분) — 경과 시 /execute 거절, 재분석 강제.
+    advisory_ttl_minutes: int = 5
+
     @field_validator("rag_top_k")
     @classmethod
     def _validate_rag_top_k(cls, v: int) -> int:
@@ -108,6 +120,34 @@ class Settings(BaseSettings):
     def _validate_ttl_days(cls, v: int) -> int:
         if v < 1:
             raise ValueError("adaptive_rule_ttl_days must be >= 1")
+        return v
+
+    @field_validator("advisory_max_run_budget_krw")
+    @classmethod
+    def _validate_advisory_budget(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("advisory_max_run_budget_krw must be > 0")
+        return v
+
+    @field_validator("advisory_max_candidates")
+    @classmethod
+    def _validate_advisory_candidates(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("advisory_max_candidates must be >= 1")
+        return v
+
+    @field_validator("advisory_max_position_pct")
+    @classmethod
+    def _validate_advisory_position_pct(cls, v: Decimal) -> Decimal:
+        if not (Decimal("0") < v <= Decimal("1")):
+            raise ValueError("advisory_max_position_pct must be in (0, 1]")
+        return v
+
+    @field_validator("advisory_ttl_minutes")
+    @classmethod
+    def _validate_advisory_ttl(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("advisory_ttl_minutes must be >= 1")
         return v
 
     def kis_credentials(self, mode: str) -> dict:

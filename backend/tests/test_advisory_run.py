@@ -379,6 +379,147 @@ async def test_budget_decrypt_failure_marks_run_failed(db_session, mock_user, ac
 
 
 @pytest.mark.asyncio
+async def test_per_ticker_pct_caps_quantity(db_session, mock_user, account):
+    """종목당 비중 상한이 BUY 수량을 줄인다 — 예산은 충분."""
+    r = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("100000000")),  # 1억 — 비중 cap 만 작동
+        candidate_pool_options={},
+    )
+    db_session.add(r)
+    await db_session.commit()
+
+    # total_eval 1,000,000, max_position_pct 0.20 → 종목당 한도 = 200,000원.
+    # ref_price=100,000, suggested_qty=5 → cost 500,000 (한도 초과)
+    # 새 qty = floor(200,000 / 100,000) = 2
+    pool = _candidate_pool([
+        CandidateItem(
+            ticker="005930", ticker_name="삼성",
+            source=AnalysisItemSource.AUTO_PICK,
+            ref_price=Decimal("100000"),
+        ),
+    ])
+    llm = _llm_stub({
+        "005930": LLMDecision(
+            action="buy", confidence=90, reason="강한 추세",
+            suggested_quantity=5,
+        ),
+    })
+    await run_analysis(
+        db_session, r, candidates=pool,
+        portfolio=PortfolioContext(
+            cash=Decimal("1000000"), total_eval=Decimal("1000000"), holdings=[],
+        ),
+        price_fetcher=_stub_price, llm_caller=llm,
+        min_confidence=70, max_position_pct=Decimal("0.20"),
+    )
+    await db_session.commit()
+
+    it = (await _items_for_run(db_session, r.id))[0]
+    assert it.decision == AnalysisItemDecision.PENDING
+    assert decrypt_decimal(it.suggested_qty) == Decimal("2")
+    assert "비중" in (it.blocked_reason or "")
+    assert r.summary_json["capped_per_ticker_pct"] == 1
+    assert r.summary_json["skipped_per_ticker_pct"] == 0
+
+
+@pytest.mark.asyncio
+async def test_per_ticker_pct_skips_when_under_one_share(
+    db_session, mock_user, account,
+):
+    """비중 한도로 1주 미만이면 SKIPPED 마킹."""
+    r = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("100000000")),
+        candidate_pool_options={},
+    )
+    db_session.add(r)
+    await db_session.commit()
+
+    # total_eval 1,000,000 * 0.20 = 200,000 한도
+    # ref_price = 500,000 → 한도 안에서 살 수 있는 정수 주식 0주 → SKIPPED
+    pool = _candidate_pool([
+        CandidateItem(
+            ticker="EXPENSIVE", ticker_name="고가",
+            source=AnalysisItemSource.AUTO_PICK,
+            ref_price=Decimal("500000"),
+        ),
+    ])
+    llm = _llm_stub({
+        "EXPENSIVE": LLMDecision(
+            action="buy", confidence=95, reason="강함",
+            suggested_quantity=1,
+        ),
+    })
+    await run_analysis(
+        db_session, r, candidates=pool,
+        portfolio=PortfolioContext(
+            cash=Decimal("1000000"), total_eval=Decimal("1000000"), holdings=[],
+        ),
+        price_fetcher=_stub_price, llm_caller=llm,
+        min_confidence=70, max_position_pct=Decimal("0.20"),
+    )
+    await db_session.commit()
+
+    it = (await _items_for_run(db_session, r.id))[0]
+    assert it.decision == AnalysisItemDecision.SKIPPED
+    assert "1주 미만" in (it.blocked_reason or "")
+    assert r.summary_json["skipped_per_ticker_pct"] == 1
+
+
+@pytest.mark.asyncio
+async def test_per_ticker_pct_within_limit_unchanged(
+    db_session, mock_user, account,
+):
+    """이미 한도 내인 BUY 는 수량 변경 없음."""
+    r = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("100000000")),
+        candidate_pool_options={},
+    )
+    db_session.add(r)
+    await db_session.commit()
+
+    # total_eval 10,000,000 * 0.20 = 2,000,000 한도
+    # cost = 70,000 * 10 = 700,000 — 한도 내
+    pool = _candidate_pool([
+        CandidateItem(
+            ticker="005930", ticker_name="삼성",
+            source=AnalysisItemSource.AUTO_PICK,
+            ref_price=Decimal("70000"),
+        ),
+    ])
+    llm = _llm_stub({
+        "005930": LLMDecision(
+            action="buy", confidence=88, reason="추세",
+            suggested_quantity=10,
+        ),
+    })
+    await run_analysis(
+        db_session, r, candidates=pool,
+        portfolio=PortfolioContext(
+            cash=Decimal("10000000"), total_eval=Decimal("10000000"), holdings=[],
+        ),
+        price_fetcher=_stub_price, llm_caller=llm,
+        min_confidence=70, max_position_pct=Decimal("0.20"),
+    )
+    await db_session.commit()
+
+    it = (await _items_for_run(db_session, r.id))[0]
+    assert decrypt_decimal(it.suggested_qty) == Decimal("10")
+    assert r.summary_json["capped_per_ticker_pct"] == 0
+
+
+@pytest.mark.asyncio
 async def test_llm_timeout_falls_back_to_hold(db_session, run):
     pool = _candidate_pool([
         CandidateItem(

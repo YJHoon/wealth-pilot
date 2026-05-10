@@ -184,6 +184,32 @@ async def test_create_run_blocked_when_in_progress(
 
 
 @pytest.mark.asyncio
+async def test_create_run_rejects_budget_above_settings_max(
+    auth_client: AsyncClient,
+    paper_account: TradingAccount,
+    monkeypatch,
+):
+    """예산이 settings.advisory_max_run_budget_krw 초과면 422."""
+    from app.config import settings as app_settings
+    monkeypatch.setattr(
+        app_settings, "advisory_max_run_budget_krw", Decimal("500000"),
+    )
+
+    with patch(
+        "app.routers.analysis._run_analysis_background", new=AsyncMock(),
+    ):
+        resp = await auth_client.post(
+            "/api/analysis/runs",
+            json={
+                "account_id": str(paper_account.id),
+                "mode": "paper",
+                "budget_krw": "1000000",  # 500,000 초과
+            },
+        )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_create_run_account_mode_mismatch(
     auth_client: AsyncClient,
     paper_account: TradingAccount,

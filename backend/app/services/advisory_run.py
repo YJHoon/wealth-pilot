@@ -16,7 +16,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Awaitable, Callable
 from uuid import UUID
 
@@ -35,6 +35,7 @@ from app.models.trading import (
 from app.services.advisory_candidate import CandidateItem, CandidatePool
 from app.services.crypto_service import (
     decrypt_decimal,
+    encrypt_decimal,
     encrypt_decimal_optional,
 )
 from app.services.llm_advisor import (
@@ -79,6 +80,8 @@ class AnalysisRunSummary:
     by_decision: dict[str, int] = field(default_factory=dict)
     skipped_low_confidence: int = 0
     skipped_over_budget: int = 0
+    skipped_per_ticker_pct: int = 0
+    capped_per_ticker_pct: int = 0
     failed: int = 0
     elapsed_seconds: float | None = None
     rule_version: str | None = None
@@ -91,6 +94,8 @@ class AnalysisRunSummary:
             "by_decision": self.by_decision,
             "skipped_low_confidence": self.skipped_low_confidence,
             "skipped_over_budget": self.skipped_over_budget,
+            "skipped_per_ticker_pct": self.skipped_per_ticker_pct,
+            "capped_per_ticker_pct": self.capped_per_ticker_pct,
             "failed": self.failed,
             "elapsed_seconds": self.elapsed_seconds,
             "rule_version": self.rule_version,
@@ -222,6 +227,76 @@ def _normalize_qty(
     return Decimal(decision.suggested_quantity)
 
 
+def _apply_per_ticker_cap(
+    items: list[AnalysisRunItem],
+    total_eval: Decimal,
+    max_position_pct: Decimal,
+) -> tuple[int, int]:
+    """BUY 종목당 비중을 max_position_pct 로 cap.
+
+    cost = ref_price * qty 이 max_position_pct * total_eval 을 넘으면
+    qty 를 한도 내 최대 정수로 줄인다. 1주 미만이면 SKIPPED 마킹.
+
+    예산 cap 보다 먼저 적용해야 — 비중 cap 으로 줄어든 cost 가 예산 합산에
+    반영되어야 마지막 신뢰도 컷이 정확히 작동한다.
+
+    Returns:
+        (capped_count, skipped_count) — 수량 조정 항목 수, 1주 미만으로
+        SKIPPED 처리된 항목 수.
+    """
+    if total_eval is None or total_eval <= 0:
+        return 0, 0
+    if max_position_pct is None or max_position_pct <= 0:
+        return 0, 0
+
+    max_position_value = total_eval * max_position_pct
+    capped = 0
+    skipped = 0
+    pct_label = (max_position_pct * Decimal("100")).quantize(Decimal("1"))
+
+    for item in items:
+        if item.action != AnalysisItemAction.BUY:
+            continue
+        if item.decision != AnalysisItemDecision.PENDING:
+            continue
+        if item.ref_price is None or item.suggested_qty is None:
+            continue
+        try:
+            ref_price = decrypt_decimal(item.ref_price)
+            qty = decrypt_decimal(item.suggested_qty)
+        except (ValueError, ArithmeticError):
+            continue
+        if ref_price <= 0 or qty <= 0:
+            continue
+        cost = ref_price * qty
+        if cost <= max_position_value:
+            continue
+
+        # 한도 내 최대 정수 주식 수 (소수 매매는 KIS 미지원)
+        new_qty = (max_position_value / ref_price).to_integral_value(
+            rounding=ROUND_DOWN,
+        )
+        if new_qty < 1:
+            item.decision = AnalysisItemDecision.SKIPPED
+            tag = f"종목당 비중 한도({pct_label}%) 초과 — 1주 미만"
+            item.blocked_reason = (
+                tag if item.blocked_reason is None
+                else f"{item.blocked_reason}; {tag}"
+            )
+            skipped += 1
+            continue
+
+        item.suggested_qty = encrypt_decimal(new_qty)
+        tag = f"종목당 비중 한도({pct_label}%)로 수량 조정 {qty} → {new_qty}"
+        item.blocked_reason = (
+            tag if item.blocked_reason is None
+            else f"{item.blocked_reason}; {tag}"
+        )
+        capped += 1
+
+    return capped, skipped
+
+
 def _apply_budget_cap(
     items: list[AnalysisRunItem],
     budget: Decimal,
@@ -276,6 +351,7 @@ async def run_analysis(
     price_fetcher: PriceFetcher,
     llm_caller: LLMCaller = get_llm_decision,
     min_confidence: int | None = None,
+    max_position_pct: Decimal | None = None,
     price_concurrency: int = DEFAULT_PRICE_CONCURRENCY,
     llm_concurrency: int = DEFAULT_LLM_CONCURRENCY,
     price_timeout: float = DEFAULT_PRICE_TIMEOUT,
@@ -297,6 +373,11 @@ async def run_analysis(
         min_confidence
         if min_confidence is not None
         else settings.llm_advisor_min_confidence
+    )
+    max_pos_pct = (
+        max_position_pct
+        if max_position_pct is not None
+        else settings.advisory_max_position_pct
     )
 
     if not candidates.items:
@@ -403,7 +484,15 @@ async def run_analysis(
         if ev.blocked_reason is not None:
             summary.failed += 1
 
-    # 4) 예산 컷 (BUY only) — 예산 복호화 실패는 fatal.
+    # 4) 종목당 비중 cap (BUY only) — 예산 cap 보다 먼저 적용해야 한다.
+    # 비중 cap 으로 줄어든 cost 가 예산 합산에 반영되어야 신뢰도 컷이 정확.
+    capped_pct, skipped_pct = _apply_per_ticker_cap(
+        items, portfolio.total_eval, max_pos_pct,
+    )
+    summary.capped_per_ticker_pct = capped_pct
+    summary.skipped_per_ticker_pct = skipped_pct
+
+    # 5) 예산 컷 (BUY only) — 예산 복호화 실패는 fatal.
     # 폴백으로 0 처리하면 cap 단계가 통째로 스킵돼 모든 BUY가 PENDING으로 통과,
     # 사용자가 의도한 예산을 넘어선 발주가 가능해진다. cryptography.InvalidTag·
     # InvalidOperation 등 어떤 예외든 위험하므로 광역으로 잡고 fail.
@@ -420,15 +509,15 @@ async def run_analysis(
 
     over_budget_count = _apply_budget_cap(items, budget)
     summary.skipped_over_budget = over_budget_count
-    if over_budget_count:
-        # 결정 카운트 재집계 (예산 컷으로 PENDING → SKIPPED 변경된 항목 반영)
+    if over_budget_count or skipped_pct:
+        # 결정 카운트 재집계 (cap 으로 PENDING → SKIPPED 변경된 항목 반영)
         summary.by_decision = {}
         for it in items:
             summary.by_decision[it.decision.value] = (
                 summary.by_decision.get(it.decision.value, 0) + 1
             )
 
-    # 5) 마무리
+    # 6) 마무리
     run.status = AnalysisRunStatus.READY
     run.completed_at = now
     run.expires_at = now + timedelta(minutes=ttl_minutes)
