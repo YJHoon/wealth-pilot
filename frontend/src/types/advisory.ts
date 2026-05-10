@@ -285,7 +285,8 @@ export const itemActionLabels: Record<AnalysisItemAction, string> = {
 export const itemDecisionLabels: Record<AnalysisItemDecision, string> = {
   pending: "대기",
   approved: "승인",
-  skipped: "차단",
+  // "차단" 은 blocked_reason 의미와 충돌해 UI 혼동을 일으킨다 — 자동 마킹된 항목은 "스킵".
+  skipped: "스킵",
   rejected: "거절",
 };
 

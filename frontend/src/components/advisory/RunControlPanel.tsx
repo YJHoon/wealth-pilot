@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,10 +41,11 @@ export function RunControlPanel({
   inFlightStatusLabel,
   onSubmit,
 }: RunControlPanelProps) {
+  // 안전 기본값으로 paper 우선 — 사용자가 명시적으로 live 를 골라야 실거래 흐름.
   const liveAccount = accounts.find((a) => a.mode === "live" && a.isActive);
   const paperAccount = accounts.find((a) => a.mode === "paper" && a.isActive);
   const initialAccount =
-    liveAccount ?? paperAccount ?? accounts.find((a) => a.isActive) ?? accounts[0] ?? null;
+    paperAccount ?? liveAccount ?? accounts.find((a) => a.isActive) ?? accounts[0] ?? null;
 
   const [accountId, setAccountId] = useState<string>(initialAccount?.id ?? "");
   const [mode, setMode] = useState<TradingMode>(initialAccount?.mode ?? "paper");
@@ -53,6 +54,15 @@ export function RunControlPanel({
   const [market, setMarket] = useState<"KOSPI" | "KOSDAQ" | "ALL">("ALL");
   const [minVolume, setMinVolume] = useState<string>(String(DEFAULT_MIN_VOLUME_VALUE));
   const [blacklistText, setBlacklistText] = useState<string>("");
+
+  // useTrading 의 비동기 로드로 accounts 가 뒤늦게 도착할 수 있다.
+  // 사용자가 아직 손대지 않았을 때(accountId === "") 만 기본값을 채워 사용자 편집을 덮어쓰지 않는다.
+  useEffect(() => {
+    if (accountId === "" && initialAccount) {
+      setAccountId(initialAccount.id);
+      setMode(initialAccount.mode);
+    }
+  }, [initialAccount, accountId]);
 
   const handleSelectAccount = (id: string | null) => {
     if (!id) return;
@@ -110,29 +120,29 @@ export function RunControlPanel({
           {/* 계좌 */}
           <div className="space-y-1.5">
             <Label className="text-xs">계좌</Label>
-            <Select value={accountId} onValueChange={handleSelectAccount}>
+            <Select
+              value={accountId}
+              onValueChange={handleSelectAccount}
+              disabled={accounts.length === 0}
+            >
               <SelectTrigger className="w-full">
                 <span>
-                  {accountId
-                    ? tradingModeLabels[
-                        accounts.find((a) => a.id === accountId)?.mode ?? "paper"
-                      ]
-                    : "계좌 선택"}
+                  {accounts.length === 0
+                    ? "등록된 계좌 없음"
+                    : accountId
+                      ? tradingModeLabels[
+                          accounts.find((a) => a.id === accountId)?.mode ?? "paper"
+                        ]
+                      : "계좌 선택"}
                 </span>
               </SelectTrigger>
               <SelectContent>
-                {accounts.length === 0 ? (
-                  <SelectItem value="" disabled>
-                    등록된 계좌 없음
+                {accounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {tradingModeLabels[a.mode]}
+                    {!a.isActive ? " (비활성)" : ""}
                   </SelectItem>
-                ) : (
-                  accounts.map((a) => (
-                    <SelectItem key={a.id} value={a.id}>
-                      {tradingModeLabels[a.mode]}
-                      {!a.isActive ? " (비활성)" : ""}
-                    </SelectItem>
-                  ))
-                )}
+                ))}
               </SelectContent>
             </Select>
             <p className="text-[11px] text-muted-foreground">

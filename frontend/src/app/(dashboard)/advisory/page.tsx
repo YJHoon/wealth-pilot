@@ -72,9 +72,15 @@ export default function AdvisoryPage() {
           candidate_pool_options: data.options,
         });
         toast.success("분석을 시작했습니다.");
-        await advisory.refreshHistory();
       } catch (e) {
         toastError("분석 시작에 실패했습니다.", e);
+        return;
+      }
+      // 이력 갱신은 본 작업 성공 후의 부수 동작이므로 실패해도 본 결과를 덮어쓰지 않는다.
+      try {
+        await advisory.refreshHistory();
+      } catch (e) {
+        console.error("refreshHistory after createRun failed", e);
       }
     },
     [advisory],
@@ -113,18 +119,27 @@ export default function AdvisoryPage() {
   const handleExecuteConfirm = useCallback(
     async (totpCode?: string) => {
       if (!run) return;
+      let executed: { executed: number; failed: number } | null = null;
       try {
         const res = await advisory.executeRun(run.id, { totp_code: totpCode });
+        executed = { executed: res.executed, failed: res.failed };
         setExecuteOpen(false);
         if (res.failed === 0) {
           toast.success(`발주 완료: ${res.executed}건`);
         } else {
           toast.warning(`발주 ${res.executed}건 성공 / ${res.failed}건 실패`);
         }
-        await advisory.refreshHistory();
       } catch (e) {
         toastError("발주에 실패했습니다.", e);
+        return;
       }
+      // 이력 갱신은 부수 동작 — 실패해도 발주 결과 메시지를 덮어쓰지 않는다.
+      try {
+        await advisory.refreshHistory();
+      } catch (e) {
+        console.error("refreshHistory after executeRun failed", e);
+      }
+      void executed; // 향후 텔레메트리/리포트 연결용 placeholder
     },
     [run, advisory],
   );
@@ -327,7 +342,9 @@ export default function AdvisoryPage() {
             activeRunId={run?.id ?? null}
             onSelect={handleSelectHistory}
             onRefresh={() => {
-              advisory.refreshHistory().catch(() => {});
+              advisory.refreshHistory().catch((err) => {
+                toastError("이력을 불러오는데 실패했습니다.", err);
+              });
             }}
           />
         </TabsContent>

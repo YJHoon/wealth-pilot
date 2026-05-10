@@ -82,7 +82,7 @@ export function ResultCardList({
                   disabled={!isCheckable}
                   checked={checked}
                   onChange={(e) => onToggle(item.id, e.target.checked)}
-                  aria-label={`${item.tickerName ?? item.ticker} 선택`}
+                  aria-label={`${item.tickerName || item.ticker} 선택`}
                 />
 
                 <div className="flex-1 min-w-0 space-y-1.5">

@@ -3,12 +3,13 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { AnalysisRunSummary } from "@/types/advisory";
+import type { AnalysisRunStatus, AnalysisRunSummary } from "@/types/advisory";
 import { runStatusLabels } from "@/types/advisory";
 import { tradingModeLabels } from "@/types/trading";
 import { History, RefreshCw } from "lucide-react";
 
-const STATUS_CLASS: Record<string, string> = {
+// Partial 로 선언해 새로운 AnalysisRunStatus 추가 시 컴파일러 경고를 받게 한다.
+const STATUS_CLASS: Partial<Record<AnalysisRunStatus, string>> = {
   done: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
   failed: "bg-red-500/20 text-red-300 border-red-500/30",
   ready: "bg-sky-500/20 text-sky-300 border-sky-500/30",

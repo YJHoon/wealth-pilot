@@ -77,7 +77,9 @@ export function useAdvisory(): UseAdvisoryReturn {
         fetchOpts,
       );
       const next = toAnalysisRun(res);
-      setRun((prev) => (prev?.id === next.id || !prev ? next : prev));
+      // 호출자가 명시적으로 특정 run 로드를 요청했으므로 (이력 탭 선택 포함)
+      // 항상 활성 run 으로 교체한다. 폴링은 status 가 진행 중일 때만 재가동된다.
+      setRun(next);
       return next;
     },
     [canFetch, fetchOpts],
@@ -101,6 +103,8 @@ export function useAdvisory(): UseAdvisoryReturn {
         );
         if (cancelled) return;
         const next = toAnalysisRun(res);
+        // 직전 폴링에서 발생한 일시적 오류 메시지를 성공 시 비운다.
+        setError(null);
         setRun((prev) => (prev?.id === id ? next : prev));
         if (isRunInProgress(next.status)) {
           handle = setTimeout(tick, POLL_INTERVAL_MS);
@@ -229,9 +233,13 @@ export function useAdvisory(): UseAdvisoryReturn {
     [canFetch, fetchOpts],
   );
 
-  // 최초 로드 — 진행 중 run 자동 복귀
+  // 최초 로드 — 진행 중 run 자동 복귀.
+  // 토큰 갱신 등으로 fetchOpts 가 다시 만들어져도 한 세션에서 단 한 번만 실행해
+  // 사용자가 선택한 활성 run 을 덮어쓰지 않게 한다.
+  const autoRestoredRef = useRef(false);
   useEffect(() => {
     if (!canFetch) return;
+    if (autoRestoredRef.current) return;
     let cancelled = false;
     (async () => {
       setLoadingRun(true);
@@ -258,6 +266,7 @@ export function useAdvisory(): UseAdvisoryReturn {
             /* 무시 */
           }
         }
+        autoRestoredRef.current = true;
       } catch {
         /* 무시 — 이력 비어있을 수 있음 */
       } finally {
