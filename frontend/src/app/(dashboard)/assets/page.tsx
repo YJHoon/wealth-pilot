@@ -221,6 +221,7 @@ export default function AssetsPage() {
       <AssetList
         assets={assetsHook.assets}
         loading={assetsHook.loading}
+        breakdown={assetsHook.breakdown}
         onAddClick={handleAddClick}
         onEditClick={handleEditClick}
         onSellClick={handleSellClick}

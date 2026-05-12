@@ -72,6 +72,24 @@ class AssetListResponse(BaseModel):
     total: int
 
 
+class HoldingBreakdownItemResponse(BaseModel):
+    """종목별 보유 분해 — 전략 N주 + 수동 M주 + KIS 실잔고 + 정합성 차이."""
+
+    account_id: UUID
+    ticker: str
+    ticker_name: str
+    strategy_qty: Decimal
+    advisory_qty: Decimal
+    kis_qty: Decimal | None
+    mismatch_qty: Decimal
+    has_mismatch: bool
+
+
+class HoldingBreakdownResponse(BaseModel):
+    items: list[HoldingBreakdownItemResponse]
+    mismatches: list[str]
+
+
 def asset_to_response(asset: AssetModel) -> AssetResponse:
     """Asset 모델 → AssetResponse 변환 (암호화 필드 복호화)."""
     return AssetResponse(

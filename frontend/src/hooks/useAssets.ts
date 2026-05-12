@@ -14,7 +14,10 @@ import {
   SellRequest,
   AssetListApiResponse,
   AssetApiResponse,
+  HoldingBreakdown,
+  HoldingBreakdownApiResponse,
   toAsset,
+  toHoldingBreakdown,
 } from "@/types";
 
 interface UseAssetsOptions {
@@ -28,6 +31,7 @@ interface UseAssetsReturn {
   total: number;
   loading: boolean;
   error: string | null;
+  breakdown: HoldingBreakdown;
   refetch: () => Promise<void>;
   createAsset: (data: AssetCreateRequest) => Promise<Asset>;
   updateAsset: (id: string, data: AssetUpdateRequest) => Promise<Asset>;
@@ -35,12 +39,15 @@ interface UseAssetsReturn {
   sellAsset: (id: string, data: SellRequest) => Promise<Asset>;
 }
 
+const EMPTY_BREAKDOWN: HoldingBreakdown = { items: [], mismatches: [] };
+
 export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
   const { data: session } = useSession();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [breakdown, setBreakdown] = useState<HoldingBreakdown>(EMPTY_BREAKDOWN);
 
   const accessToken = (session as { accessToken?: string } | null)?.accessToken;
   const canFetch = AUTH_DISABLED || !!accessToken;
@@ -49,6 +56,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
     if (!canFetch) {
       setAssets([]);
       setTotal(0);
+      setBreakdown(EMPTY_BREAKDOWN);
       setError(null);
       setLoading(false);
       return;
@@ -61,12 +69,19 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
       if (options.status) params.set("status", options.status);
       if (options.groupId) params.set("group_id", options.groupId);
       const qs = params.toString();
-      const res = await apiFetch<AssetListApiResponse>(
-        `/api/assets${qs ? `?${qs}` : ""}`,
-        { ...(accessToken && { accessToken }) },
-      );
-      setAssets(res.assets.map(toAsset));
-      setTotal(res.total);
+      const [listRes, breakdownRes] = await Promise.all([
+        apiFetch<AssetListApiResponse>(
+          `/api/assets${qs ? `?${qs}` : ""}`,
+          { ...(accessToken && { accessToken }) },
+        ),
+        apiFetch<HoldingBreakdownApiResponse>(
+          `/api/assets/holdings/breakdown`,
+          { ...(accessToken && { accessToken }) },
+        ).catch(() => null),
+      ]);
+      setAssets(listRes.assets.map(toAsset));
+      setTotal(listRes.total);
+      setBreakdown(breakdownRes ? toHoldingBreakdown(breakdownRes) : EMPTY_BREAKDOWN);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "자산 목록을 불러오는데 실패했습니다.");
       throw err;
@@ -138,6 +153,7 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsReturn {
     total,
     loading,
     error,
+    breakdown,
     refetch: fetchAssets,
     createAsset,
     updateAsset,
