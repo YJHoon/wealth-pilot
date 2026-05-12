@@ -151,7 +151,7 @@ function AssetActionMenu({
   );
 }
 
-function BreakdownBreakdownCell({
+function HoldingBreakdownCell({
   asset,
   item,
   isMasked,
@@ -444,7 +444,7 @@ export function AssetList({
                           </Badge>
                         )}
                         {asset.ticker && (
-                          <BreakdownBreakdownCell
+                          <HoldingBreakdownCell
                             asset={asset}
                             item={breakdownByTicker.get(asset.ticker)}
                             isMasked={isMasked}
@@ -567,7 +567,7 @@ export function AssetList({
                           )}
                         </div>
                         {asset.ticker && (
-                          <BreakdownBreakdownCell
+                          <HoldingBreakdownCell
                             asset={asset}
                             item={breakdownByTicker.get(asset.ticker)}
                             isMasked={isMasked}
