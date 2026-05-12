@@ -39,10 +39,26 @@ import {
   ArrowDownToLine,
   RefreshCw,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { Asset, AssetType, AssetStatus, DataFreshness } from "@/types";
+import type {
+  Asset,
+  AssetType,
+  AssetStatus,
+  DataFreshness,
+  HoldingBreakdown,
+  HoldingBreakdownItem,
+} from "@/types";
 import { useAppStore } from "@/stores/appStore";
 import {
   formatAmount,
@@ -77,6 +93,7 @@ const freshnessConfig: Record<DataFreshness, { icon: string; label: string }> = 
 interface AssetListProps {
   assets: Asset[];
   loading: boolean;
+  breakdown?: HoldingBreakdown;
   onAddClick: () => void;
   onEditClick: (asset: Asset) => void;
   onSellClick: (asset: Asset) => void;
@@ -134,9 +151,115 @@ function AssetActionMenu({
   );
 }
 
+function BreakdownBreakdownCell({
+  asset,
+  item,
+  isMasked,
+  onMismatchClick,
+}: {
+  asset: Asset;
+  item: HoldingBreakdownItem | undefined;
+  isMasked: boolean;
+  onMismatchClick: (item: HoldingBreakdownItem) => void;
+}) {
+  if (!item || (item.strategyQty === 0 && item.advisoryQty === 0)) {
+    return null;
+  }
+  const quantityLabel = (qty: number) =>
+    isMasked ? "●●●●" : qty.toLocaleString("ko-KR", { maximumFractionDigits: 8 });
+  return (
+    <div className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
+      <span className="font-mono">
+        {`전략 ${quantityLabel(item.strategyQty)}주`}
+      </span>
+      <span>+</span>
+      <span className="font-mono">
+        {`수동 ${quantityLabel(item.advisoryQty)}주`}
+      </span>
+      {item.hasMismatch && (
+        <button
+          type="button"
+          onClick={() => onMismatchClick(item)}
+          className="ml-1 inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-600 hover:bg-amber-500/25 dark:text-amber-400"
+          aria-label={`${asset.name} 보유량 불일치 상세 보기`}
+        >
+          <AlertTriangle className="size-3" />
+          불일치
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MismatchDialog({
+  item,
+  open,
+  onOpenChange,
+  isMasked,
+  assetName,
+}: {
+  item: HoldingBreakdownItem | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  isMasked: boolean;
+  assetName: string;
+}) {
+  if (!item) return null;
+  const quantityLabel = (qty: number | null) => {
+    if (qty == null) return "-";
+    if (isMasked) return "●●●●";
+    return qty.toLocaleString("ko-KR", { maximumFractionDigits: 8 });
+  };
+  const internalSum = item.strategyQty + item.advisoryQty;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="size-4 text-amber-500" />
+            보유량 정합성 불일치
+          </DialogTitle>
+          <DialogDescription>
+            {assetName} ({item.ticker}) — 내부 합계와 KIS 실잔고가 일치하지 않습니다.
+            동기화 또는 외부 거래 영향일 수 있습니다.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 rounded-lg border border-border p-3 text-sm">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">전략 보유</span>
+            <span className="font-mono">{quantityLabel(item.strategyQty)}주</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">수동 보유</span>
+            <span className="font-mono">{quantityLabel(item.advisoryQty)}주</span>
+          </div>
+          <div className="flex justify-between border-t pt-2 text-muted-foreground">
+            <span>내부 합계</span>
+            <span className="font-mono">{quantityLabel(internalSum)}주</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">KIS 실잔고</span>
+            <span className="font-mono">{quantityLabel(item.kisQty)}주</span>
+          </div>
+          <div className="flex justify-between border-t pt-2 font-medium text-amber-600 dark:text-amber-400">
+            <span>차이 (내부 − KIS)</span>
+            <span className="font-mono">{quantityLabel(item.mismatchQty)}주</span>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            닫기
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function AssetList({
   assets,
   loading,
+  breakdown,
   onAddClick,
   onEditClick,
   onSellClick,
@@ -150,6 +273,20 @@ export function AssetList({
   const isMasked = useAppStore((s) => s.isMasked);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [mismatchItem, setMismatchItem] = useState<HoldingBreakdownItem | null>(null);
+
+  const breakdownByTicker = useMemo(() => {
+    const map = new Map<string, HoldingBreakdownItem>();
+    for (const item of breakdown?.items ?? []) {
+      // 같은 ticker가 여러 계좌에 있으면 mismatch 있는 쪽을 우선 표시.
+      const existing = map.get(item.ticker);
+      if (!existing || (!existing.hasMismatch && item.hasMismatch)) {
+        map.set(item.ticker, item);
+      }
+    }
+    return map;
+  }, [breakdown]);
+  const mismatchCount = breakdown?.items.filter((i) => i.hasMismatch).length ?? 0;
 
   const filtered = useMemo(() => {
     return assets.filter((a) => {
@@ -210,6 +347,23 @@ export function AssetList({
           </Button>
         </div>
       </div>
+
+      {mismatchCount > 0 && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300"
+        >
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div className="space-y-1">
+            <p className="font-medium">
+              {mismatchCount}개 종목의 내부 보유량이 KIS 실잔고와 일치하지 않습니다.
+            </p>
+            <p className="text-amber-700/80 dark:text-amber-300/80">
+              종목별 &quot;불일치&quot; 배지를 클릭해 상세 차이를 확인하세요. 잔고를 다시 동기화하거나 수동 매매가 있었는지 점검해 주세요.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* 필터 */}
       <div className="flex flex-wrap items-center gap-3">
@@ -288,6 +442,14 @@ export function AssetList({
                           <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 h-4">
                             KIS
                           </Badge>
+                        )}
+                        {asset.ticker && (
+                          <BreakdownBreakdownCell
+                            asset={asset}
+                            item={breakdownByTicker.get(asset.ticker)}
+                            isMasked={isMasked}
+                            onMismatchClick={setMismatchItem}
+                          />
                         )}
                       </div>
                     </div>
@@ -404,6 +566,14 @@ export function AssetList({
                             </Badge>
                           )}
                         </div>
+                        {asset.ticker && (
+                          <BreakdownBreakdownCell
+                            asset={asset}
+                            item={breakdownByTicker.get(asset.ticker)}
+                            isMasked={isMasked}
+                            onMismatchClick={setMismatchItem}
+                          />
+                        )}
                       </TableCell>
                       <TableCell className="text-right font-mono">
                         {formatQuantity(asset.quantity, isMasked)}
@@ -485,6 +655,22 @@ export function AssetList({
           {filtered.length !== assets.length && ` (전체 ${assets.length}개)`}
         </p>
       )}
+
+      <MismatchDialog
+        open={!!mismatchItem}
+        onOpenChange={(open) => {
+          if (!open) setMismatchItem(null);
+        }}
+        item={mismatchItem}
+        isMasked={isMasked}
+        assetName={
+          mismatchItem
+            ? assets.find((a) => a.ticker === mismatchItem.ticker)?.name ??
+              mismatchItem.tickerName ??
+              mismatchItem.ticker
+            : ""
+        }
+      />
     </div>
   );
 }

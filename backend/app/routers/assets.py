@@ -17,6 +17,8 @@ from app.schemas.asset import (
     AssetListResponse,
     AssetResponse,
     AssetUpdate,
+    HoldingBreakdownItemResponse,
+    HoldingBreakdownResponse,
     SellRequest,
     asset_to_response,
 )
@@ -27,6 +29,7 @@ from app.services.asset_service import (
 )
 from app.services.crypto_service import encrypt_decimal
 from app.services.group_service import GroupNotFoundError, ensure_group_owned_by
+from app.services.holding_breakdown import build_user_holding_breakdown
 from app.services.security_service import AccessAction, log_access
 
 logger = logging.getLogger(__name__)
@@ -71,6 +74,49 @@ async def list_assets(
     return AssetListResponse(
         assets=[asset_to_response(a) for a in assets],
         total=len(assets),
+    )
+
+
+@router.get("/holdings/breakdown", response_model=HoldingBreakdownResponse)
+async def get_holdings_breakdown(
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """종목별 보유량 분해: 전략 N주 + 수동 M주 + KIS 실잔고 + 정합성 차이.
+
+    자동매매(`TradingPosition`)와 원클릭 매매(`AdvisoryPosition`)는 격리된 포지션이며,
+    KIS는 둘을 구분 못 한 합계만 본다. 자산 화면에서 두 출처를 분리 표기하고,
+    내부 합계 ≠ KIS 실잔고면 mismatch 메시지를 함께 반환한다.
+    """
+    breakdown = await build_user_holding_breakdown(db, user.id)
+
+    try:
+        await log_access(db, user.id, AccessAction.ASSET_VIEW, request)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning(
+            "ASSET_VIEW (breakdown) access logging failed",
+            exc_info=True,
+            extra={"user_id": str(user.id)},
+        )
+
+    return HoldingBreakdownResponse(
+        items=[
+            HoldingBreakdownItemResponse(
+                account_id=item.account_id,
+                ticker=item.ticker,
+                ticker_name=item.ticker_name,
+                strategy_qty=item.strategy_qty,
+                advisory_qty=item.advisory_qty,
+                kis_qty=item.kis_qty,
+                mismatch_qty=item.mismatch_qty,
+                has_mismatch=item.has_mismatch,
+            )
+            for item in breakdown.items
+        ],
+        mismatches=breakdown.mismatches,
     )
 
 

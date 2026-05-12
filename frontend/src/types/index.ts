@@ -84,6 +84,60 @@ export interface AssetListApiResponse {
   total: number;
 }
 
+// ── Phase 6: 종목별 보유 분해 (전략 N주 + 수동 M주 + KIS 잔고) ──
+
+export interface HoldingBreakdownItemApi {
+  account_id: string;
+  ticker: string;
+  ticker_name: string;
+  strategy_qty: string;
+  advisory_qty: string;
+  kis_qty: string | null;
+  mismatch_qty: string;
+  has_mismatch: boolean;
+}
+
+export interface HoldingBreakdownApiResponse {
+  items: HoldingBreakdownItemApi[];
+  mismatches: string[];
+}
+
+export interface HoldingBreakdownItem {
+  accountId: string;
+  ticker: string;
+  tickerName: string;
+  strategyQty: number;
+  advisoryQty: number;
+  kisQty: number | null;
+  mismatchQty: number;
+  hasMismatch: boolean;
+}
+
+export interface HoldingBreakdown {
+  items: HoldingBreakdownItem[];
+  mismatches: string[];
+}
+
+export function toHoldingBreakdownItem(api: HoldingBreakdownItemApi): HoldingBreakdownItem {
+  return {
+    accountId: api.account_id,
+    ticker: api.ticker,
+    tickerName: api.ticker_name,
+    strategyQty: Number(api.strategy_qty),
+    advisoryQty: Number(api.advisory_qty),
+    kisQty: api.kis_qty == null ? null : Number(api.kis_qty),
+    mismatchQty: Number(api.mismatch_qty),
+    hasMismatch: api.has_mismatch,
+  };
+}
+
+export function toHoldingBreakdown(api: HoldingBreakdownApiResponse): HoldingBreakdown {
+  return {
+    items: api.items.map(toHoldingBreakdownItem),
+    mismatches: api.mismatches,
+  };
+}
+
 export interface GroupApiResponse {
   id: string;
   user_id?: string;
