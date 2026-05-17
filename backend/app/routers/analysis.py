@@ -405,34 +405,71 @@ async def _persist_kis_token(
     account.token_expires_at = kis.token_expires_at
 
 
+async def _mark_failed_safely(run_id: UUID, error_message: str) -> None:
+    """outer 안전망에서 사용 — 깨진 세션을 폐기하고 새 세션으로 FAILED 마킹/commit.
+
+    기존 세션에서 raise가 발생하면 그 세션은 broken transaction 일 수 있어
+    재사용이 위험하다. 별도 세션으로 status=FAILED 만 보장한다.
+    """
+    try:
+        async with AsyncSessionLocal() as fdb:
+            await fail_run(fdb, run_id, error_message)
+            await fdb.commit()
+    except Exception:  # noqa: BLE001 — 최종 안전망 — 더 이상 escalate 불가
+        logger.exception(
+            "failed to mark run FAILED after unexpected error run=%s", run_id,
+        )
+
+
 async def _run_analysis_background(run_id: UUID) -> None:
     """BackgroundTasks 진입점 — 별도 세션/KIS 클라이언트로 분석 실행.
 
     실패 시 fail_run 으로 FAILED 마킹. 정상 종료 시 commit 책임도 여기.
-    """
-    async with AsyncSessionLocal() as db:
-        run = (
-            await db.execute(select(AnalysisRun).where(AnalysisRun.id == run_id))
-        ).scalar_one_or_none()
-        if run is None:
-            logger.error("background analysis: run not found id=%s", run_id)
-            return
-        account = (
-            await db.execute(
-                select(TradingAccount).where(TradingAccount.id == run.account_id)
-            )
-        ).scalar_one_or_none()
-        if account is None:
-            await fail_run(db, run.id, "계좌를 찾을 수 없습니다.")
-            await db.commit()
-            return
 
-        kis = _build_kis_client(account)
-        try:
+    어떤 예외도 background task 밖으로 새지 않도록 outer try 가 모든 경로를
+    감싼다 — 그렇지 않으면 run.status 가 ANALYZING/PENDING 으로 stuck 되어
+    프론트 폴링이 영원히 진행 중으로 표시된다.
+    """
+    kis: KISClient | None = None
+    try:
+        async with AsyncSessionLocal() as db:
+            run = (
+                await db.execute(
+                    select(AnalysisRun).where(AnalysisRun.id == run_id)
+                )
+            ).scalar_one_or_none()
+            if run is None:
+                logger.error("background analysis: run not found id=%s", run_id)
+                return
+            account = (
+                await db.execute(
+                    select(TradingAccount).where(
+                        TradingAccount.id == run.account_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if account is None:
+                await fail_run(db, run.id, "계좌를 찾을 수 없습니다.")
+                await db.commit()
+                return
+
+            try:
+                kis = _build_kis_client(account)
+            except Exception as e:  # noqa: BLE001 — KIS 클라이언트 생성 자체 실패
+                logger.exception("kis client build failed for run=%s", run.id)
+                await fail_run(db, run.id, f"KIS 클라이언트 생성 실패: {type(e).__name__}")
+                await db.commit()
+                return
+
             try:
                 balance = await kis.get_balance()
             except KISClientError as e:
                 await fail_run(db, run.id, f"잔고 조회 실패: {e}")
+                await db.commit()
+                return
+            except Exception as e:  # noqa: BLE001 — KIS 외 예외도 동일 처리
+                logger.exception("get_balance failed for run=%s", run.id)
+                await fail_run(db, run.id, f"잔고 조회 실패: {type(e).__name__}")
                 await db.commit()
                 return
 
@@ -489,11 +526,34 @@ async def _run_analysis_background(run_id: UUID) -> None:
                 await db.commit()
                 return
 
-            # KIS 토큰 갱신 반영
-            await _persist_kis_token(db, account, kis)
-            await db.commit()
-        finally:
-            await kis.close()
+            # KIS 토큰 갱신 실패는 분석 결과를 덮어쓰지 않는다 — 토큰 갱신은
+            # 부수 효과이고, 분석 결과(run.status=READY)는 보존되어야 한다.
+            try:
+                await _persist_kis_token(db, account, kis)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "persist kis token failed for run=%s: %s", run.id, e,
+                )
+
+            try:
+                await db.commit()
+            except Exception as e:  # noqa: BLE001 — commit 자체 실패
+                logger.exception("db.commit failed for run=%s", run.id)
+                # 메모리 상 status=READY 가 DB에 반영 못 됨 — 별도 세션으로 FAILED 마킹
+                await _mark_failed_safely(
+                    run_id, f"결과 저장 실패: {type(e).__name__}",
+                )
+    except Exception as e:  # noqa: BLE001 — outer 최종 안전망
+        logger.exception(
+            "unexpected error in _run_analysis_background run=%s", run_id,
+        )
+        await _mark_failed_safely(run_id, f"예기치 못한 오류: {type(e).__name__}")
+    finally:
+        if kis is not None:
+            try:
+                await kis.close()
+            except Exception:  # noqa: BLE001 — close 실패는 격리
+                logger.exception("kis client close failed for run=%s", run_id)
 
 
 @router.post(
