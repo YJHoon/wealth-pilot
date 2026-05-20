@@ -269,9 +269,6 @@ class KISClient:
                             "retry %d/%d (waiting %.1fs)",
                             tr_id, rt_cd, msg, attempt + 1, retries, wait,
                         )
-                        last_exc = KISClientError(
-                            msg, status_code=resp.status_code, response_data=data,
-                        )
                         await asyncio.sleep(wait)
                         continue
                     logger.error(
