@@ -151,6 +151,104 @@ class TestRequest:
         result = await client._request("GET", "/test", tr_id="TEST")
         assert result["rt_cd"] == "0"
 
+    @pytest.mark.asyncio
+    async def test_rate_limit_message_is_retried_then_succeeds(self):
+        """KIS rate limit 류 메시지(rt_cd != 0)는 backoff 후 재시도되어 회복된다."""
+        client = _make_client(
+            access_token="tok",
+            token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        rate_limit_resp = MagicMock()
+        rate_limit_resp.json.return_value = {
+            "rt_cd": "1", "msg1": "초당 거래건수를 초과하였습니다.",
+        }
+        rate_limit_resp.status_code = 200
+
+        success_resp = MagicMock()
+        success_resp.json.return_value = {"rt_cd": "0", "output": {"ok": True}}
+        success_resp.status_code = 200
+
+        client._client = AsyncMock()
+        client._client.get = AsyncMock(
+            side_effect=[rate_limit_resp, success_resp],
+        )
+
+        with patch("app.services.kis_client.asyncio.sleep", new=AsyncMock()):
+            result = await client._request(
+                "GET", "/test", tr_id="TEST", retries=2,
+            )
+        assert result["rt_cd"] == "0"
+        assert client._client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_egw_gateway_error_is_retried(self):
+        """rt_cd 가 EGW* 인 게이트웨이 일시 에러도 재시도 대상."""
+        client = _make_client(
+            access_token="tok",
+            token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        egw_resp = MagicMock()
+        egw_resp.json.return_value = {
+            "rt_cd": "EGW00201", "msg1": "게이트웨이 일시 오류",
+        }
+        egw_resp.status_code = 200
+
+        success_resp = MagicMock()
+        success_resp.json.return_value = {"rt_cd": "0", "output": {"ok": True}}
+        success_resp.status_code = 200
+
+        client._client = AsyncMock()
+        client._client.get = AsyncMock(side_effect=[egw_resp, success_resp])
+
+        with patch("app.services.kis_client.asyncio.sleep", new=AsyncMock()):
+            result = await client._request(
+                "GET", "/test", tr_id="TEST", retries=2,
+            )
+        assert result["rt_cd"] == "0"
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_kis_error_raises_immediately(self):
+        """rate limit 가 아닌 일반 KIS 에러는 retry 없이 즉시 raise (회귀 방지)."""
+        client = _make_client(
+            access_token="tok",
+            token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        biz_err_resp = MagicMock()
+        biz_err_resp.json.return_value = {
+            "rt_cd": "1", "msg1": "주문가능금액 부족",
+        }
+        biz_err_resp.status_code = 200
+        client._client = AsyncMock()
+        client._client.get = AsyncMock(return_value=biz_err_resp)
+
+        with pytest.raises(KISClientError, match="주문가능금액 부족"):
+            await client._request("GET", "/test", tr_id="TEST", retries=3)
+        # retry 없이 1회만 호출돼야 함
+        assert client._client.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_exhausted_eventually_raises(self):
+        """retry 한도까지 모두 rate limit 이면 마지막엔 KISClientError raise."""
+        client = _make_client(
+            access_token="tok",
+            token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        rate_limit_resp = MagicMock()
+        rate_limit_resp.json.return_value = {
+            "rt_cd": "1", "msg1": "초당 거래건수를 초과하였습니다.",
+        }
+        rate_limit_resp.status_code = 200
+        client._client = AsyncMock()
+        client._client.get = AsyncMock(return_value=rate_limit_resp)
+
+        with patch("app.services.kis_client.asyncio.sleep", new=AsyncMock()):
+            with pytest.raises(KISClientError, match="초당 거래건수"):
+                await client._request(
+                    "GET", "/test", tr_id="TEST", retries=2,
+                )
+        # 1 + retries=3 회 호출
+        assert client._client.get.await_count == 3
+
 
 class TestGetCurrentPrice:
     @pytest.mark.asyncio

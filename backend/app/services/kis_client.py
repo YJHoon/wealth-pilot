@@ -76,6 +76,25 @@ class KISClientError(Exception):
         self.response_data = response_data or {}
 
 
+# rt_cd 가 "0" 이 아닌 KIS 에러 중에서, 일시적이라 재시도가 의미 있는 것들.
+# 게이트웨이 코드(EGW...) 와 rate limit 류 메시지 키워드를 모두 cover.
+_RETRYABLE_KIS_MSG_KEYWORDS = ("초당", "분당", "거래건수", "초과", "rate", "limit")
+
+
+def _is_retryable_kis_error(rt_cd: str | None, msg: str) -> bool:
+    """KISClientError 중 backoff 후 재시도가 합리적인 케이스인지 판단.
+
+    - EGW 로 시작하는 게이트웨이 일시 에러는 모두 retry.
+    - 메시지에 rate limit 류 키워드 포함 시 retry.
+    """
+    if rt_cd and rt_cd.startswith("EGW"):
+        return True
+    if msg:
+        lowered = msg.lower()
+        return any(k.lower() in lowered for k in _RETRYABLE_KIS_MSG_KEYWORDS)
+    return False
+
+
 class KISClient:
     """한국투자증권 KIS Open API 클라이언트.
 
@@ -236,7 +255,29 @@ class KISClient:
                 rt_cd = data.get("rt_cd")
                 if rt_cd and rt_cd != "0":
                     msg = data.get("msg1", "Unknown KIS API error")
-                    logger.error("KIS API error: tr_id=%s, rt_cd=%s, msg=%s", tr_id, rt_cd, msg)
+                    # 일시적 rate limit / 게이트웨이 에러는 backoff 후 재시도.
+                    # 다중 종목 동시 시세 조회 시 KIS 가 "초당 거래건수 초과" 류
+                    # 메시지를 반환하는데, 이전엔 retry 없이 즉시 raise 되어
+                    # 뒤쪽 종목들이 줄줄이 실패하는 패턴이 보고됨.
+                    if (
+                        attempt < retries
+                        and _is_retryable_kis_error(rt_cd, msg)
+                    ):
+                        wait = min(2 ** attempt, 5)
+                        logger.warning(
+                            "KIS retryable error: tr_id=%s rt_cd=%s msg=%s, "
+                            "retry %d/%d (waiting %.1fs)",
+                            tr_id, rt_cd, msg, attempt + 1, retries, wait,
+                        )
+                        last_exc = KISClientError(
+                            msg, status_code=resp.status_code, response_data=data,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    logger.error(
+                        "KIS API error: tr_id=%s, rt_cd=%s, msg=%s",
+                        tr_id, rt_cd, msg,
+                    )
                     raise KISClientError(msg, status_code=resp.status_code, response_data=data)
 
                 return data
