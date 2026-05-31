@@ -29,9 +29,11 @@ from app.models.trading import (
 from app.services.alert_service import send_telegram_message
 from app.services.crypto_service import decrypt_decimal_optional
 from app.services.llm_advisor import (
-    ANTHROPIC_API_URL,
-    ANTHROPIC_API_VERSION,
+    LLMAPIError,
+    LLMConfigError,
     _parse_llm_json,
+    call_llm,
+    llm_provider_configured,
 )
 
 logger = logging.getLogger(__name__)
@@ -269,14 +271,17 @@ async def run_weekly_meta_analysis(
 
     1. 지난 7일 TradingDecision 조회
     2. 만료 규칙 비활성화
-    3. Claude API로 신규 규칙 생성
+    3. LLM API로 신규 규칙 생성
     4. DB 저장 + 텔레그램 알림
 
     Returns:
         생성된 AdaptiveRule 리스트 (빈 리스트 가능)
     """
-    if not settings.anthropic_api_key:
-        logger.warning("Meta-analysis skipped: ANTHROPIC_API_KEY not set")
+    if not llm_provider_configured():
+        logger.warning(
+            "Meta-analysis skipped: LLM provider %r key not set",
+            settings.llm_provider,
+        )
         return []
 
     # 1. 만료 규칙 비활성화 (의사결정 유무와 무관하게 항상 실행)
@@ -308,48 +313,39 @@ async def run_weekly_meta_analysis(
     # 3. 현재 활성 규칙 조회 (프롬프트에 중복 방지용)
     active_rules = await get_active_rules(db, strategy.id)
 
-    # 4. Claude API 호출
+    # 4. LLM API 호출
     max_rules = settings.meta_analysis_max_rules
     system_prompt = META_SYSTEM_PROMPT.format(max_rules=max_rules)
     user_msg = _build_meta_analysis_message(
         decisions, active_rules, strategy.name,
     )
 
-    body = {
-        "model": settings.meta_analysis_model,
-        "max_tokens": 1024,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_msg}],
-    }
-    headers = {
-        "x-api-key": settings.anthropic_api_key,
-        "anthropic-version": ANTHROPIC_API_VERSION,
-        "content-type": "application/json",
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(ANTHROPIC_API_URL, json=body, headers=headers)
+        response = await call_llm(
+            system_prompt=system_prompt,
+            user_message=user_msg,
+            model=settings.meta_analysis_model,
+            max_tokens=1024,
+            timeout_seconds=30.0,
+        )
+    except LLMConfigError as e:
+        logger.warning(
+            "Meta-analysis config error: strategy=%s err=%s", strategy.id, e,
+        )
+        return []
+    except LLMAPIError as e:
+        logger.warning(
+            "Meta-analysis API error: strategy=%s status=%s",
+            strategy.id, e.status_code,
+        )
+        return []
     except httpx.HTTPError as e:
         logger.warning("Meta-analysis HTTP error: strategy=%s err=%s", strategy.id, e)
         return []
 
-    if resp.status_code != 200:
-        logger.warning(
-            "Meta-analysis API error: strategy=%s status=%s",
-            strategy.id, resp.status_code,
-        )
-        return []
-
     # 5. 응답 파싱
     try:
-        payload = resp.json()
-        content_blocks = payload.get("content", [])
-        text = "".join(
-            b.get("text", "") for b in content_blocks if b.get("type") == "text"
-        )
-        # 배열을 직접 파싱 시도, 실패하면 _parse_llm_json으로 폴백
-        parsed = _parse_meta_response(text)
+        parsed = _parse_meta_response(response.text)
     except (ValueError, KeyError, json.JSONDecodeError) as e:
         logger.warning(
             "Meta-analysis parse error: strategy=%s err=%s", strategy.id, e,
