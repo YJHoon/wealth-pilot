@@ -212,7 +212,7 @@ export function RunControlPanel({
               type="number"
               inputMode="numeric"
               min={0}
-              step={1000000000}
+              step={10000}
               value={minVolume}
               onChange={(e) => setMinVolume(e.target.value)}
             />
