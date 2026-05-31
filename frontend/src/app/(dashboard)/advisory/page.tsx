@@ -20,7 +20,17 @@ import {
   runStatusLabels,
   type AnalysisItemDecision,
 } from "@/types/advisory";
-import { Bot, Hourglass, RotateCcw, Sparkles } from "lucide-react";
+import { Bot, Hourglass, Octagon, RotateCcw, Sparkles } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 function toastError(fallback: string, err: unknown) {
   const detail = err instanceof ApiError ? err.message : null;
@@ -34,11 +44,15 @@ export default function AdvisoryPage() {
   const [tab, setTab] = useState<"runner" | "history">("runner");
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [executeOpen, setExecuteOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   const run = advisory.run;
   const inProgress = !!run && isRunInProgress(run.status);
   const isReady = !!run && run.status === "ready" && !run.expired;
   const isExpired = !!run && run.expired;
+  // EXECUTING 은 KIS 발주가 진행 중일 수 있어 강제 중단 차단(백엔드와 일치)
+  const isCancellable =
+    !!run && (run.status === "pending" || run.status === "analyzing");
 
   // run 이 바뀌면 선택 초기화
   useEffect(() => {
@@ -161,6 +175,23 @@ export default function AdvisoryPage() {
     setSelectedItemIds(new Set());
   }, [advisory]);
 
+  const handleCancelConfirm = useCallback(async () => {
+    if (!run) return;
+    try {
+      await advisory.cancelRun(run.id);
+      toast.success("분석을 중단했습니다.");
+      setCancelOpen(false);
+    } catch (e) {
+      toastError("분석 중단에 실패했습니다.", e);
+      return;
+    }
+    try {
+      await advisory.refreshHistory();
+    } catch (e) {
+      console.error("refreshHistory after cancelRun failed", e);
+    }
+  }, [run, advisory]);
+
   const approvedItems = useMemo(() => {
     if (!run) return [];
     return run.items.filter(
@@ -235,6 +266,28 @@ export default function AdvisoryPage() {
               {run && (
                 <>
                   <RunProgress run={run} />
+
+                  {/* 진행 중 — 강제 중단 버튼 (PENDING/ANALYZING 만) */}
+                  {inProgress && (
+                    <Card>
+                      <CardContent className="pt-3 pb-3 flex items-center justify-between gap-3">
+                        <div className="text-xs text-muted-foreground">
+                          {isCancellable
+                            ? "분석이 너무 오래 걸리거나 멈춘 것 같으면 강제로 중단할 수 있습니다."
+                            : "발주 중에는 강제 중단이 차단됩니다. 발주 완료를 기다려주세요."}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={!isCancellable || advisory.loading.cancelling}
+                          onClick={() => setCancelOpen(true)}
+                        >
+                          <Octagon className="size-3.5 mr-1" />
+                          {advisory.loading.cancelling ? "중단 중..." : "강제 중단"}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
 
                   {/* 만료/실패 안내 */}
                   {(isExpired || run.status === "failed") && (
@@ -363,6 +416,35 @@ export default function AdvisoryPage() {
           onConfirm={handleExecuteConfirm}
         />
       )}
+
+      {/* 강제 중단 확인 다이얼로그 */}
+      <AlertDialog
+        open={cancelOpen}
+        onOpenChange={(open) => {
+          if (!advisory.loading.cancelling) setCancelOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>진행 중인 분석을 중단할까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              현재 실행 중인 분석을 즉시 실패 상태로 마킹하고 새 분석을 시작할 수 있게 합니다.
+              백그라운드 작업은 즉시 중단되지 않을 수 있지만 결과는 더 이상 반영되지 않습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={advisory.loading.cancelling}>
+              취소
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCancelConfirm}
+              disabled={advisory.loading.cancelling}
+            >
+              {advisory.loading.cancelling ? "중단 중..." : "강제 중단"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

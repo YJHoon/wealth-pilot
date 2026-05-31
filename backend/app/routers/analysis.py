@@ -326,6 +326,13 @@ _RUN_IN_PROGRESS_STATES = (
     AnalysisRunStatus.EXECUTING,
 )
 
+# 사용자 수동 강제 중단 허용 상태.
+# EXECUTING 은 KIS 발주가 진행 중일 수 있어 제외 — 중복/취소 사고 방지.
+_RUN_CANCELABLE_STATES = (
+    AnalysisRunStatus.PENDING,
+    AnalysisRunStatus.ANALYZING,
+)
+
 
 async def _load_run_for_user(
     db: AsyncSession, run_id: UUID, user_id: UUID,
@@ -768,6 +775,70 @@ async def submit_run_decisions(
         logger.exception("ANALYSIS_RUN_DECISION persist failed")
         raise HTTPException(status_code=500, detail="결정 저장에 실패했습니다.")
 
+    items = await _list_run_items(db, run.id)
+    return run_to_response(run, items, now=datetime.now(timezone.utc))
+
+
+@router.post("/runs/{run_id}/cancel", response_model=AnalysisRunResponse)
+@limiter.limit("100/minute")
+async def cancel_analysis_run(
+    run_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """진행 중 run 강제 중단.
+
+    백그라운드 분석 태스크가 죽거나 무한 대기에 빠져 status 가
+    PENDING/ANALYZING 으로 stuck 된 경우 사용자가 직접 해제하기 위한 엔드포인트.
+
+    조건부 UPDATE 로 race-free 전이 — 백그라운드 태스크가 같은 순간 READY/
+    FAILED 로 마킹했다면 이 호출은 409 로 떨어진다.
+
+    EXECUTING 상태는 KIS 발주가 진행 중일 수 있어 차단(409). 만약 발주가 멈췄다면
+    종목별 commit 으로 이미 영속화된 결과를 보존하면서 후처리 단계에서 자체적으로
+    FAILED 마킹된다.
+    """
+    run = await _load_run_for_user(db, run_id, user.id)
+
+    if run.status not in _RUN_CANCELABLE_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"중단 가능한 상태가 아닙니다 (status={run.status.value})."
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    transition = await db.execute(
+        update(AnalysisRun)
+        .where(
+            AnalysisRun.id == run.id,
+            AnalysisRun.user_id == user.id,
+            AnalysisRun.status.in_(_RUN_CANCELABLE_STATES),
+        )
+        .values(
+            status=AnalysisRunStatus.FAILED,
+            error_message="사용자에 의해 강제 중단됨",
+            completed_at=now,
+        )
+    )
+    if transition.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="상태가 변경되어 중단할 수 없습니다.",
+        )
+
+    try:
+        await log_access(db, user.id, AccessAction.ANALYSIS_RUN_CANCEL, request)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.exception("ANALYSIS_RUN_CANCEL persist failed")
+        raise HTTPException(status_code=500, detail="중단 처리에 실패했습니다.")
+
+    await db.refresh(run)
     items = await _list_run_items(db, run.id)
     return run_to_response(run, items, now=datetime.now(timezone.utc))
 

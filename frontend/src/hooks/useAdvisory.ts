@@ -32,6 +32,7 @@ export interface UseAdvisoryReturn {
     creating: boolean;
     submittingDecisions: boolean;
     executing: boolean;
+    cancelling: boolean;
   };
   error: string | null;
 
@@ -43,6 +44,7 @@ export interface UseAdvisoryReturn {
     body: DecisionsRequest,
   ) => Promise<AnalysisRun>;
   executeRun: (runId: string, body?: ExecuteRequest) => Promise<ExecuteResponse>;
+  cancelRun: (runId: string) => Promise<AnalysisRun>;
   refreshHistory: (limit?: number, offset?: number) => Promise<void>;
 }
 
@@ -56,6 +58,7 @@ export function useAdvisory(): UseAdvisoryReturn {
   const [creating, setCreating] = useState(false);
   const [submittingDecisions, setSubmittingDecisions] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const accessToken = (session as { accessToken?: string } | null)?.accessToken;
   const canFetch = AUTH_DISABLED || !!accessToken;
@@ -207,6 +210,29 @@ export function useAdvisory(): UseAdvisoryReturn {
     [canFetch, fetchOpts, loadRun],
   );
 
+  const cancelRun = useCallback(
+    async (runId: string): Promise<AnalysisRun> => {
+      if (!canFetch) throw new Error("인증이 필요합니다.");
+      setCancelling(true);
+      setError(null);
+      try {
+        const res = await apiFetch<AnalysisRunApi>(
+          `/api/analysis/runs/${runId}/cancel`,
+          {
+            method: "POST",
+            ...fetchOpts,
+          },
+        );
+        const next = toAnalysisRun(res);
+        setRun((prev) => (prev?.id === runId ? next : prev));
+        return next;
+      } finally {
+        setCancelling(false);
+      }
+    },
+    [canFetch, fetchOpts],
+  );
+
   const refreshHistory = useCallback(
     async (limit: number = 20, offset: number = 0): Promise<void> => {
       if (!canFetch) {
@@ -291,6 +317,7 @@ export function useAdvisory(): UseAdvisoryReturn {
       creating,
       submittingDecisions,
       executing,
+      cancelling,
     },
     error,
     createRun,
@@ -298,6 +325,7 @@ export function useAdvisory(): UseAdvisoryReturn {
     setActiveRun,
     submitDecisions,
     executeRun,
+    cancelRun,
     refreshHistory,
   };
 }
