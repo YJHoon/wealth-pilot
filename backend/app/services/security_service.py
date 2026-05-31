@@ -72,6 +72,7 @@ class AccessAction:
     ANALYSIS_RUN_LIST = "analysis_run_list"
     ANALYSIS_RUN_DECISION = "analysis_run_decision"
     ANALYSIS_RUN_EXECUTE = "analysis_run_execute"
+    ANALYSIS_RUN_CANCEL = "analysis_run_cancel"
 
 
 async def log_access(

@@ -443,6 +443,209 @@ async def test_decisions_rejects_invalid_value(
 
 
 # ──────────────────────────────────────────────
+# POST /runs/{id}/cancel
+# ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_cancel_pending_run_marks_failed(
+    auth_client: AsyncClient,
+    db_session: AsyncSession,
+    mock_user: User,
+    paper_account: TradingAccount,
+):
+    """PENDING 상태 run 을 cancel — FAILED + 사용자 중단 메시지."""
+    run = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=paper_account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("1000000")),
+        candidate_pool_options={},
+        status=AnalysisRunStatus.PENDING,
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    resp = await auth_client.post(f"/api/analysis/runs/{run.id}/cancel")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "failed"
+    assert data["error_message"] == "사용자에 의해 강제 중단됨"
+    assert data["completed_at"] is not None
+
+    await db_session.refresh(run)
+    assert run.status == AnalysisRunStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_cancel_analyzing_run_marks_failed(
+    auth_client: AsyncClient,
+    db_session: AsyncSession,
+    mock_user: User,
+    paper_account: TradingAccount,
+):
+    """ANALYZING 상태도 강제 중단 허용."""
+    run = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=paper_account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("1000000")),
+        candidate_pool_options={},
+        status=AnalysisRunStatus.ANALYZING,
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    resp = await auth_client.post(f"/api/analysis/runs/{run.id}/cancel")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_cancel_unblocks_new_run(
+    auth_client: AsyncClient,
+    db_session: AsyncSession,
+    mock_user: User,
+    paper_account: TradingAccount,
+):
+    """cancel 후엔 새 run 생성이 풀려야 한다 (락 해제 확인)."""
+    stuck = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=paper_account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("1000000")),
+        candidate_pool_options={},
+        status=AnalysisRunStatus.ANALYZING,
+    )
+    db_session.add(stuck)
+    await db_session.commit()
+
+    cancel_resp = await auth_client.post(f"/api/analysis/runs/{stuck.id}/cancel")
+    assert cancel_resp.status_code == 200
+
+    with patch(
+        "app.routers.analysis._run_analysis_background", new=AsyncMock(),
+    ):
+        create_resp = await auth_client.post(
+            "/api/analysis/runs",
+            json={
+                "account_id": str(paper_account.id),
+                "mode": "paper",
+                "budget_krw": "1000000",
+            },
+        )
+    assert create_resp.status_code == 201, create_resp.text
+
+
+@pytest.mark.asyncio
+async def test_cancel_blocked_when_ready(
+    auth_client: AsyncClient,
+    db_session: AsyncSession,
+    mock_user: User,
+    paper_account: TradingAccount,
+):
+    """READY 상태는 cancel 차단 (409) — 결과 검토/발주 단계."""
+    run = _make_ready_run(mock_user.id, paper_account)
+    db_session.add(run)
+    await db_session.commit()
+
+    resp = await auth_client.post(f"/api/analysis/runs/{run.id}/cancel")
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_cancel_blocked_when_executing(
+    auth_client: AsyncClient,
+    db_session: AsyncSession,
+    mock_user: User,
+    paper_account: TradingAccount,
+):
+    """EXECUTING 은 KIS 발주 진행 중일 수 있어 차단 (409)."""
+    run = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=paper_account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("1000000")),
+        candidate_pool_options={},
+        status=AnalysisRunStatus.EXECUTING,
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    resp = await auth_client.post(f"/api/analysis/runs/{run.id}/cancel")
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_cancel_blocked_when_failed(
+    auth_client: AsyncClient,
+    db_session: AsyncSession,
+    mock_user: User,
+    paper_account: TradingAccount,
+):
+    """이미 FAILED 인 run 은 cancel 차단 (409)."""
+    run = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=mock_user.id,
+        account_id=paper_account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("1000000")),
+        candidate_pool_options={},
+        status=AnalysisRunStatus.FAILED,
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    resp = await auth_client.post(f"/api/analysis/runs/{run.id}/cancel")
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_cancel_other_user_404(
+    auth_client: AsyncClient,
+    db_session: AsyncSession,
+    other_user: User,
+):
+    """다른 사용자의 run cancel 시 404."""
+    other_account = TradingAccount(
+        id=uuid.uuid4(),
+        user_id=other_user.id,
+        mode=TradingMode.PAPER,
+        initial_capital=encrypt_decimal(Decimal("1000000")),
+    )
+    db_session.add(other_account)
+    await db_session.flush()
+    run = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=other_user.id,
+        account_id=other_account.id,
+        mode=TradingMode.PAPER,
+        budget_krw=encrypt_decimal(Decimal("1000000")),
+        candidate_pool_options={},
+        status=AnalysisRunStatus.ANALYZING,
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    try:
+        resp = await auth_client.post(f"/api/analysis/runs/{run.id}/cancel")
+        assert resp.status_code == 404
+    finally:
+        from sqlalchemy import text
+        await db_session.execute(
+            text("DELETE FROM analysis_runs WHERE id = :i"), {"i": str(run.id)},
+        )
+        await db_session.execute(
+            text("DELETE FROM trading_accounts WHERE id = :i"),
+            {"i": str(other_account.id)},
+        )
+        await db_session.commit()
+
+
+# ──────────────────────────────────────────────
 # POST /runs/{id}/execute
 # ──────────────────────────────────────────────
 
