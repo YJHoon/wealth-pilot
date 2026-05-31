@@ -4,7 +4,13 @@ export type TradingMode = "paper" | "live";
 export type StrategyType = "ma_crossover" | "mean_reversion" | "custom";
 export type OrderSide = "buy" | "sell";
 export type OrderType = "market" | "limit";
-export type OrderStatus = "pending" | "submitted" | "filled" | "partial" | "cancelled" | "rejected";
+export type OrderStatus =
+  | "pending"
+  | "submitted"
+  | "filled"
+  | "partial"
+  | "cancelled"
+  | "rejected";
 export type ScheduleLogStatus = "success" | "skipped" | "error";
 
 // ── API 응답 타입 (snake_case, 백엔드 매칭) ──
@@ -381,7 +387,7 @@ export interface AccountCapitalSummaryApi {
 }
 
 export function toAccountCapitalSummary(
-  api: AccountCapitalSummaryApi,
+  api: AccountCapitalSummaryApi
 ): AccountCapitalSummary {
   return {
     accountTotal: Number(api.account_total),
@@ -419,18 +425,20 @@ export function toTradingAccount(api: TradingAccountApi): TradingAccount {
   };
 }
 
-export function toAutoSelectConfig(api: AutoSelectConfigApi | null | undefined): AutoSelectConfig {
+export function toAutoSelectConfig(
+  api: AutoSelectConfigApi | null | undefined
+): AutoSelectConfig {
   return {
     enabled: api?.enabled ?? false,
     topN: api?.top_n ?? 10,
     market: api?.market ?? "ALL",
-    minVolumeValue: api?.min_volume_value ?? 10_000_000_000,
+    minVolumeValue: api?.min_volume_value ?? 10_000,
     blacklist: api?.blacklist ?? [],
   };
 }
 
 export function toAutoSelectedTickersInfo(
-  api: AutoSelectedTickersInfoApi | null | undefined,
+  api: AutoSelectedTickersInfoApi | null | undefined
 ): AutoSelectedTickersInfo | null {
   if (!api) return null;
   return {
@@ -441,7 +449,9 @@ export function toAutoSelectedTickersInfo(
   };
 }
 
-export function toAutoTickerHistory(api: AutoTickerSelectionHistoryApi): AutoTickerSelectionHistory {
+export function toAutoTickerHistory(
+  api: AutoTickerSelectionHistoryApi
+): AutoTickerSelectionHistory {
   return {
     id: api.id,
     generatedAt: api.generated_at,
@@ -453,7 +463,9 @@ export function toAutoTickerHistory(api: AutoTickerSelectionHistoryApi): AutoTic
   };
 }
 
-export function toAutoTickerPreview(api: AutoTickerPreviewResponseApi): AutoTickerPreviewResponse {
+export function toAutoTickerPreview(
+  api: AutoTickerPreviewResponseApi
+): AutoTickerPreviewResponse {
   return {
     ruleVersion: api.rule_version,
     selected: api.selected ?? [],
@@ -524,7 +536,9 @@ export function toTradingPosition(api: TradingPositionApi): TradingPosition {
   };
 }
 
-export function toTradingPerformance(api: TradingPerformanceApi): TradingPerformance {
+export function toTradingPerformance(
+  api: TradingPerformanceApi
+): TradingPerformance {
   return {
     totalTrades: api.total_trades,
     winningTrades: api.winning_trades,
@@ -551,8 +565,8 @@ export function toScheduleStatus(api: ScheduleStatusApi): ScheduleStatus {
 // ── 라벨맵 ──
 
 export const tradingModeLabels: Record<TradingMode, string> = {
-  paper: "모의투자",
   live: "실전",
+  paper: "모의투자",
 };
 
 export const strategyTypeLabels: Record<StrategyType, string> = {

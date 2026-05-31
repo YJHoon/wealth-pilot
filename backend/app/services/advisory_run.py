@@ -41,9 +41,10 @@ from app.services.crypto_service import (
     encrypt_decimal_optional,
 )
 from app.services.llm_advisor import (
+    BatchLLMItem,
     LLMDecision,
     PortfolioContext,
-    get_llm_decision,
+    get_batch_llm_decisions,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,16 +53,20 @@ logger = logging.getLogger(__name__)
 # 결과 TTL — `expires_at` 경과 시 /execute 차단, 재분석 강제
 DEFAULT_TTL_MINUTES = 5
 
-# 시세 조회 동시성 제한 (KIS rate limit 감안). LLM은 별도 limit.
+# 시세 조회 동시성 제한 (KIS rate limit 감안).
 DEFAULT_PRICE_CONCURRENCY = 4
-DEFAULT_LLM_CONCURRENCY = 4
 
 # per-call timeout
 DEFAULT_PRICE_TIMEOUT = 10.0
-DEFAULT_LLM_TIMEOUT = 30.0
+# 배치 LLM 호출 타임아웃 (단건이 아니라 N종목 단일 호출).
+DEFAULT_LLM_TIMEOUT = 60.0
 
 PriceFetcher = Callable[[str], Awaitable[list[dict]]]
-LLMCaller = Callable[..., Awaitable[LLMDecision]]
+# 배치 LLM caller — 후보 N건을 한 번에 평가해 ticker→decision 매핑 반환.
+BatchLLMCaller = Callable[
+    [list[BatchLLMItem], PortfolioContext],
+    Awaitable[dict[str, LLMDecision]],
+]
 
 
 @dataclass(slots=True)
@@ -127,40 +132,37 @@ async def _fetch_history_with_timeout(
     return ticker, history, None
 
 
-async def _call_llm_with_timeout(
-    caller: LLMCaller,
-    candidate: CandidateItem,
-    price_history: list[dict],
+async def _call_batch_llm_with_timeout(
+    caller: BatchLLMCaller,
+    candidates_with_history: list[tuple[CandidateItem, list[dict]]],
     portfolio: PortfolioContext,
     timeout: float,
-    semaphore: asyncio.Semaphore,
-) -> _ItemEvaluation:
-    """LLM 호출 — 타임아웃/실패 시 hold 폴백."""
-    async with semaphore:
-        try:
-            decision = await asyncio.wait_for(
-                caller(
-                    ticker=candidate.ticker,
-                    ticker_name=candidate.ticker_name,
-                    price_history=price_history,
-                    portfolio=portfolio,
-                ),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            return _ItemEvaluation(
-                candidate=candidate,
-                decision=_safe_hold_decision("LLM 타임아웃"),
-                blocked_reason="LLM 타임아웃",
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("LLM call failed for %s: %s", candidate.ticker, e)
-            return _ItemEvaluation(
-                candidate=candidate,
-                decision=_safe_hold_decision(f"LLM 호출 실패: {type(e).__name__}"),
-                blocked_reason=f"LLM 호출 실패: {type(e).__name__}",
-            )
-    return _ItemEvaluation(candidate=candidate, decision=decision)
+) -> dict[str, LLMDecision] | str:
+    """배치 LLM 호출 — 단일 호출로 후보 전체 평가.
+
+    Returns:
+        성공: ticker → LLMDecision 매핑
+        실패(타임아웃/예외): 사유 문자열 (호출자가 모든 후보를 hold 폴백)
+    """
+    items = [
+        BatchLLMItem(
+            ticker=c.ticker,
+            ticker_name=c.ticker_name,
+            price_history=hist,
+        )
+        for c, hist in candidates_with_history
+    ]
+    try:
+        return await asyncio.wait_for(
+            caller(items, portfolio),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("LLM batch timeout for %d candidates", len(items))
+        return "LLM 배치 타임아웃"
+    except Exception as e:  # noqa: BLE001
+        logger.warning("LLM batch failed: %s", e)
+        return f"LLM 배치 호출 실패: {type(e).__name__}"
 
 
 def _resolve_action(
@@ -351,11 +353,10 @@ async def run_analysis(
     candidates: CandidatePool,
     portfolio: PortfolioContext,
     price_fetcher: PriceFetcher,
-    llm_caller: LLMCaller = get_llm_decision,
+    llm_caller: BatchLLMCaller = get_batch_llm_decisions,
     min_confidence: int | None = None,
     max_position_pct: Decimal | None = None,
     price_concurrency: int = DEFAULT_PRICE_CONCURRENCY,
-    llm_concurrency: int = DEFAULT_LLM_CONCURRENCY,
     price_timeout: float = DEFAULT_PRICE_TIMEOUT,
     llm_timeout: float = DEFAULT_LLM_TIMEOUT,
     ttl_minutes: int = DEFAULT_TTL_MINUTES,
@@ -411,9 +412,9 @@ async def run_analysis(
         else:
             history_by_ticker[ticker] = history
 
-    # 2) LLM 병렬 호출 — 시세가 있는 종목만
-    llm_sem = asyncio.Semaphore(max(1, llm_concurrency))
-    llm_tasks = []
+    # 2) LLM 배치 호출 — 시세가 있는 후보 전체를 1회 호출로 평가
+    #    (free tier RPM/RPD 절약 + 후보 간 교차 판단 가능)
+    batch_inputs: list[tuple[CandidateItem, list[dict]]] = []
     skipped_items: list[_ItemEvaluation] = []
     for c in candidates.items:
         history = history_by_ticker.get(c.ticker)
@@ -427,14 +428,39 @@ async def run_analysis(
                 )
             )
             continue
-        llm_tasks.append(
-            _call_llm_with_timeout(
-                llm_caller, c, history, portfolio, llm_timeout, llm_sem,
-            )
+        batch_inputs.append((c, history))
+
+    llm_results: list[_ItemEvaluation] = list(skipped_items)
+    if batch_inputs:
+        batch_result = await _call_batch_llm_with_timeout(
+            llm_caller, batch_inputs, portfolio, llm_timeout,
         )
-    llm_results: list[_ItemEvaluation] = list(
-        await asyncio.gather(*llm_tasks)
-    ) + skipped_items
+        if isinstance(batch_result, str):
+            # 배치 전체 실패 — 모든 후보를 안전 폴백
+            for c, _ in batch_inputs:
+                llm_results.append(
+                    _ItemEvaluation(
+                        candidate=c,
+                        decision=_safe_hold_decision(batch_result),
+                        blocked_reason=batch_result,
+                    )
+                )
+        else:
+            for c, _ in batch_inputs:
+                decision = batch_result.get(
+                    c.ticker,
+                    _safe_hold_decision("배치 응답에 항목 없음"),
+                )
+                # _safe_hold_decision 으로 채워진 경우만 blocked_reason 설정
+                blocked = (
+                    decision.reason if decision.reason.startswith("[안전 폴백]")
+                    else None
+                )
+                llm_results.append(
+                    _ItemEvaluation(
+                        candidate=c, decision=decision, blocked_reason=blocked,
+                    )
+                )
 
     # 3) AnalysisRunItem 생성
     items: list[AnalysisRunItem] = []

@@ -67,11 +67,23 @@ class Settings(BaseSettings):
     trading_enabled: bool = False  # 자동매매 글로벌 킬 스위치
 
     # ── Stage 3: LLM 어드바이저 ──
+    # 프로바이더 선택: "gemini"(무료 티어 가능) | "anthropic"
+    llm_provider: str = "gemini"
     anthropic_api_key: str = ""
-    llm_advisor_model: str = "claude-sonnet-4-5"
+    gemini_api_key: str = ""
+    # 모델명은 선택된 프로바이더의 모델명을 그대로 사용한다.
+    # gemini: "gemini-2.0-flash"(비-thinking, free tier 한도 ↑) /
+    #         "gemini-2.5-flash"(thinking, 한도 ↓) /
+    # anthropic: "claude-sonnet-4-5" 등
+    llm_advisor_model: str = "gemini-2.0-flash"
     llm_advisor_min_confidence: int = 70  # 이 값 미만이면 발주 차단
     llm_advisor_timeout_seconds: float = 20.0
     llm_advisor_max_tokens: int = 1024
+    # advisory 배치 호출(1 run = 1 LLM call) 출력 토큰 한도.
+    # 후보 종목당 ~200 토큰 JSON 가정, 20종목까지 안전.
+    advisory_batch_max_tokens: int = 4096
+    # 배치 호출은 종목 수에 비례해 느릴 수 있어 별도 타임아웃.
+    advisory_batch_timeout_seconds: float = 60.0
 
     # ── Stage 3 Step 6: RAG 유사 케이스 회상 (모듈 D) ──
     embedding_model_name: str = "intfloat/multilingual-e5-small"
@@ -80,7 +92,8 @@ class Settings(BaseSettings):
     rag_min_similarity: float = 0.5  # 최소 코사인 유사도 임계값
 
     # ── Stage 3 Step 4: 주간 메타 분석 (모듈 C) ──
-    meta_analysis_model: str = "claude-sonnet-4-5"
+    # 모델명은 llm_provider 설정에 맞춰야 한다.
+    meta_analysis_model: str = "gemini-2.0-flash"
     meta_analysis_max_rules: int = 5  # 한 번에 생성할 최대 규칙 수
     adaptive_rule_ttl_days: int = 14  # 규칙 기본 유효기간 (일)
 
@@ -93,6 +106,14 @@ class Settings(BaseSettings):
     advisory_max_position_pct: Decimal = Decimal("0.20")
     # 결과 TTL (분) — 경과 시 /execute 거절, 재분석 강제.
     advisory_ttl_minutes: int = 5
+
+    @field_validator("llm_provider")
+    @classmethod
+    def _validate_llm_provider(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        if normalized not in ("anthropic", "gemini"):
+            raise ValueError("llm_provider must be 'anthropic' or 'gemini'")
+        return normalized
 
     @field_validator("rag_top_k")
     @classmethod

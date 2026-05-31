@@ -25,7 +25,7 @@ from app.models.user import User
 from app.services.advisory_candidate import CandidateItem, CandidatePool
 from app.services.advisory_run import run_analysis
 from app.services.crypto_service import decrypt_decimal, encrypt_decimal
-from app.services.llm_advisor import LLMDecision, PortfolioContext
+from app.services.llm_advisor import BatchLLMItem, LLMDecision, PortfolioContext
 
 
 @pytest_asyncio.fixture
@@ -75,10 +75,14 @@ async def _stub_price(_ticker: str) -> list[dict]:
 
 
 def _llm_stub(per_ticker: dict[str, LLMDecision]):
-    async def _caller(*, ticker, ticker_name, price_history, portfolio):  # noqa: ARG001
-        if ticker in per_ticker:
-            return per_ticker[ticker]
-        return LLMDecision(action="hold", confidence=0, reason="default")
+    async def _caller(items: list[BatchLLMItem], portfolio):  # noqa: ARG001
+        return {
+            it.ticker: per_ticker.get(
+                it.ticker,
+                LLMDecision(action="hold", confidence=0, reason="default"),
+            )
+            for it in items
+        }
     return _caller
 
 
@@ -301,7 +305,7 @@ async def test_llm_failure_falls_back_to_hold(db_session, run):
         ),
     ])
 
-    async def failing_llm(*, ticker, ticker_name, price_history, portfolio):  # noqa: ARG001
+    async def failing_llm(items, portfolio):  # noqa: ARG001
         raise RuntimeError("API 5xx")
 
     await run_analysis(
@@ -529,9 +533,12 @@ async def test_llm_timeout_falls_back_to_hold(db_session, run):
         ),
     ])
 
-    async def slow_llm(*, ticker, ticker_name, price_history, portfolio):  # noqa: ARG001
+    async def slow_llm(items, portfolio):  # noqa: ARG001
         await asyncio.sleep(2)
-        return LLMDecision(action="buy", confidence=99, reason="late")
+        return {
+            it.ticker: LLMDecision(action="buy", confidence=99, reason="late")
+            for it in items
+        }
 
     await run_analysis(
         db_session, run, candidates=pool, portfolio=_portfolio(),

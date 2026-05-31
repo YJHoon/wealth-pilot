@@ -1,6 +1,7 @@
 """LLM 어드바이저 — Stage 3 모듈 A 코어
 
-Anthropic Claude API에 구조화 입력을 보내고 매수/매도/홀드 의사결정을 받는다.
+LLM API(Anthropic Claude / Google Gemini)에 구조화 입력을 보내고
+매수/매도/홀드 의사결정을 받는다.
 - 출력은 엄격한 JSON 스키마. 파싱 실패 시 안전 모드(hold)로 폴백.
 
 비용/지연이 있는 외부 호출이므로 호출자가 결과를 TradingDecision 행으로
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
+GEMINI_API_URL_TEMPLATE = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+)
 
 # 안전 폴백 — API 키 미설정/네트워크 실패/파싱 실패 시 사용
 _SAFE_HOLD_REASON_PREFIX = "[안전 폴백] "
@@ -234,6 +238,169 @@ def _safe_hold(reason: str) -> LLMDecision:
     )
 
 
+@dataclass
+class LLMResponse:
+    """프로바이더 응답 정규화 — Anthropic/Gemini의 표면적 차이를 흡수."""
+
+    text: str
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+class LLMConfigError(ValueError):
+    """API 키 미설정/잘못된 프로바이더 등 설정 오류."""
+
+
+class LLMAPIError(RuntimeError):
+    """API non-200 응답."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"API status={status_code}")
+        self.status_code = status_code
+
+
+def _provider() -> str:
+    return (settings.llm_provider or "").strip().lower()
+
+
+def llm_provider_configured() -> bool:
+    """현재 프로바이더 키가 설정돼 있는지."""
+    p = _provider()
+    if p == "gemini":
+        return bool(settings.gemini_api_key)
+    if p == "anthropic":
+        return bool(settings.anthropic_api_key)
+    return False
+
+
+def missing_key_reason() -> str:
+    p = _provider()
+    if p == "gemini":
+        return "GEMINI_API_KEY 미설정"
+    if p == "anthropic":
+        return "ANTHROPIC_API_KEY 미설정"
+    return f"알 수 없는 LLM_PROVIDER: {p!r}"
+
+
+async def call_llm(
+    *,
+    system_prompt: str,
+    user_message: str,
+    model: str,
+    max_tokens: int,
+    timeout_seconds: float,
+) -> LLMResponse:
+    """프로바이더 설정에 따라 Anthropic 또는 Gemini를 호출.
+
+    Raises:
+        LLMConfigError: 키 미설정/잘못된 프로바이더
+        LLMAPIError: 200 이외 응답
+        httpx.HTTPError: 네트워크 오류
+    """
+    p = _provider()
+    if p == "gemini":
+        return await _call_gemini(
+            system_prompt, user_message, model, max_tokens, timeout_seconds,
+        )
+    if p == "anthropic":
+        return await _call_anthropic(
+            system_prompt, user_message, model, max_tokens, timeout_seconds,
+        )
+    raise LLMConfigError(f"알 수 없는 LLM_PROVIDER: {p!r}")
+
+
+async def _call_anthropic(
+    system_prompt: str,
+    user_message: str,
+    model: str,
+    max_tokens: int,
+    timeout_seconds: float,
+) -> LLMResponse:
+    if not settings.anthropic_api_key:
+        raise LLMConfigError("ANTHROPIC_API_KEY 미설정")
+
+    body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_message}],
+    }
+    headers = {
+        "x-api-key": settings.anthropic_api_key,
+        "anthropic-version": ANTHROPIC_API_VERSION,
+        "content-type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        resp = await client.post(ANTHROPIC_API_URL, json=body, headers=headers)
+    if resp.status_code != 200:
+        raise LLMAPIError(resp.status_code)
+
+    payload = resp.json()
+    content_blocks = payload.get("content", [])
+    text = "".join(
+        b.get("text", "") for b in content_blocks if b.get("type") == "text"
+    )
+    usage = payload.get("usage", {})
+    return LLMResponse(
+        text=text,
+        model=payload.get("model") or model,
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+    )
+
+
+async def _call_gemini(
+    system_prompt: str,
+    user_message: str,
+    model: str,
+    max_tokens: int,
+    timeout_seconds: float,
+) -> LLMResponse:
+    if not settings.gemini_api_key:
+        raise LLMConfigError("GEMINI_API_KEY 미설정")
+
+    url = GEMINI_API_URL_TEMPLATE.format(model=model)
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": user_message}]}],
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
+        "generationConfig": {
+            "maxOutputTokens": max_tokens,
+            "responseMimeType": "application/json",
+            # gemini-2.5 계열은 기본적으로 thinking 토큰을 소비해 maxOutputTokens를
+            # 잠식한다. 구조화 JSON 한 건만 받으면 되므로 thinking을 끈다.
+            # gemini-2.0 등 비thinking 모델은 이 필드를 무시한다.
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
+    }
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        # API 키는 헤더가 아닌 쿼리스트링이라 로그에 섞이지 않도록 params로 분리.
+        resp = await client.post(
+            url,
+            json=body,
+            headers={"content-type": "application/json"},
+            params={"key": settings.gemini_api_key},
+        )
+    if resp.status_code != 200:
+        raise LLMAPIError(resp.status_code)
+
+    payload = resp.json()
+    candidates = payload.get("candidates", [])
+    text = ""
+    if candidates:
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(
+            p.get("text", "") for p in parts if isinstance(p.get("text"), str)
+        )
+    usage = payload.get("usageMetadata", {})
+    return LLMResponse(
+        text=text,
+        model=payload.get("modelVersion") or model,
+        input_tokens=usage.get("promptTokenCount"),
+        output_tokens=usage.get("candidatesTokenCount"),
+    )
+
+
 async def get_llm_decision(
     ticker: str,
     ticker_name: str,
@@ -243,13 +410,13 @@ async def get_llm_decision(
     adaptive_rules: list[str] | None = None,
     similar_cases: str | None = None,
 ) -> LLMDecision:
-    """Claude API를 호출해 의사결정을 받는다.
+    """LLM API를 호출해 의사결정을 받는다.
 
     실패(API 키 없음, 네트워크 오류, 파싱 실패 등)는 모두 hold로 폴백한다.
     호출자(=trading_cycle)가 결과를 TradingDecision으로 저장한다.
     """
-    if not settings.anthropic_api_key:
-        return _safe_hold("ANTHROPIC_API_KEY 미설정")
+    if not llm_provider_configured():
+        return _safe_hold(missing_key_reason())
 
     if not price_history:
         return _safe_hold("시세 데이터 없음")
@@ -259,48 +426,223 @@ async def get_llm_decision(
         memory, adaptive_rules, similar_cases,
     )
 
-    body = {
-        "model": settings.llm_advisor_model,
-        "max_tokens": settings.llm_advisor_max_tokens,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user_msg}],
-    }
-    headers = {
-        "x-api-key": settings.anthropic_api_key,
-        "anthropic-version": ANTHROPIC_API_VERSION,
-        "content-type": "application/json",
-    }
-
     try:
-        async with httpx.AsyncClient(
-            timeout=settings.llm_advisor_timeout_seconds
-        ) as client:
-            resp = await client.post(ANTHROPIC_API_URL, json=body, headers=headers)
+        response = await call_llm(
+            system_prompt=SYSTEM_PROMPT,
+            user_message=user_msg,
+            model=settings.llm_advisor_model,
+            max_tokens=settings.llm_advisor_max_tokens,
+            timeout_seconds=settings.llm_advisor_timeout_seconds,
+        )
+    except LLMConfigError as e:
+        return _safe_hold(str(e))
+    except LLMAPIError as e:
+        # 키/시크릿이 본문에 섞여 있을 수 있어 코드만 로깅
+        logger.warning(
+            "LLM advisor non-200 for %s: status=%s", ticker, e.status_code,
+        )
+        return _safe_hold(str(e))
     except httpx.HTTPError as e:
         logger.warning("LLM advisor HTTP error for %s: %s", ticker, e)
         return _safe_hold(f"HTTP 오류: {type(e).__name__}")
 
-    if resp.status_code != 200:
-        # 키/시크릿이 본문에 섞여 있을 수 있어 코드만 로깅
-        logger.warning(
-            "LLM advisor non-200 for %s: status=%s", ticker, resp.status_code,
-        )
-        return _safe_hold(f"API status={resp.status_code}")
-
     try:
-        payload = resp.json()
-        content_blocks = payload.get("content", [])
-        text = "".join(
-            b.get("text", "") for b in content_blocks if b.get("type") == "text"
-        )
-        parsed = _parse_llm_json(text)
+        parsed = _parse_llm_json(response.text)
         decision = _validate_decision(parsed)
-        usage = payload.get("usage", {})
-        decision.model = payload.get("model")
-        decision.input_tokens = usage.get("input_tokens")
-        decision.output_tokens = usage.get("output_tokens")
-        decision.raw_response = text[:2000]
+        decision.model = response.model
+        decision.input_tokens = response.input_tokens
+        decision.output_tokens = response.output_tokens
+        decision.raw_response = response.text[:2000]
         return decision
     except (ValueError, KeyError, json.JSONDecodeError) as e:
         logger.warning("LLM advisor parse error for %s: %s", ticker, e)
         return _safe_hold(f"파싱 실패: {type(e).__name__}")
+
+
+# ──────────────────────────────────────────────
+# 배치 호출 — advisory 원클릭 분석 (1 run = 1 LLM call)
+# ──────────────────────────────────────────────
+
+BATCH_SYSTEM_PROMPT = """당신은 한국 주식 시장에서 10년 이상 경험을 쌓은 전문 트레이더이다.
+주어진 여러 후보 종목 각각에 대해, 시세 시계열·사용자의 포트폴리오·가용 자본을
+종합해 지금 매수(buy)/매도(sell)/홀드(hold) 중 무엇을 해야 하는지 결정한다.
+
+원칙:
+- 확신이 없으면 hold. 무리한 거래는 금물.
+- confidence 0~100. 70 미만은 시스템이 자동으로 발주를 차단한다.
+- 매수 제안 시 suggested_quantity는 가용 현금과 적절한 비중(보통 5~15%)을 고려.
+- 매도는 보유 중인 종목에만 가능. 보유 수량을 초과하지 마라.
+- 후보들이 같은 섹터·테마면 과집중을 피하라 (예: 반도체 5종 동시 매수 금지).
+  cross-candidate 판단으로 분산 효과를 고려해 confidence를 조정해도 된다.
+- 한국 시장 특성(개별 호재/공시 부재 시 추세 추종이 약함)을 감안하라.
+
+반드시 아래 JSON 배열로만 응답하라. 다른 텍스트 금지.
+각 항목은 입력으로 받은 ticker 와 1:1 매핑된다 — 입력에 없는 ticker 추가 금지.
+[
+  {
+    "ticker": "입력에서 받은 종목코드",
+    "action": "buy" | "sell" | "hold",
+    "confidence": 0~100 정수,
+    "reason": "한국어 간결한 근거 (1~2문장)",
+    "suggested_quantity": 정수 또는 null,
+    "market_regime": "uptrend" | "downtrend" | "sideways" | "volatile" | null
+  }
+]
+"""
+
+
+@dataclass
+class BatchLLMItem:
+    """배치 호출 입력 — 후보 1건."""
+
+    ticker: str
+    ticker_name: str
+    price_history: list[dict]
+
+
+def _build_batch_user_message(
+    items: list[BatchLLMItem],
+    portfolio: PortfolioContext,
+) -> str:
+    """배치 호출용 user 메시지."""
+    holdings_by_ticker = {h.get("ticker"): h for h in portfolio.holdings}
+
+    sections = [
+        f"## 계좌 상태\n현금: {portfolio.cash:,.0f}원\n총평가: {portfolio.total_eval:,.0f}원\n"
+        f"보유 종목 수: {len(portfolio.holdings)}",
+        f"## 분석 대상 ({len(items)}종목)",
+    ]
+
+    for item in items:
+        held = holdings_by_ticker.get(item.ticker)
+        holding_line = (
+            f"보유: {held['quantity']}주, 평단 {held['avg_buy_price']}원, "
+            f"현재가 {held.get('current_price','?')}원, 평가손익 {held.get('unrealized_pnl','?')}원"
+            if held
+            else "미보유"
+        )
+        sections.append(
+            f"### {item.ticker_name or item.ticker} ({item.ticker})\n"
+            f"{holding_line}\n"
+            f"일별 시세 (최근 30일):\n{_format_price_history(item.price_history)}"
+        )
+
+    sections.append(
+        "위 후보들 각각에 대해 어떻게 행동할지 JSON 배열로만 답하라. "
+        "배열 길이는 입력 종목 수와 정확히 같아야 한다."
+    )
+    return "\n\n".join(sections)
+
+
+def _parse_batch_response(text: str) -> list[dict[str, Any]]:
+    """배치 응답 JSON 배열 파싱.
+
+    Gemini가 responseMimeType=application/json 일 때 `[...]` 으로 시작하는 텍스트를
+    반환하지만, 객체 래핑(`{"decisions": [...]}`)으로 올 가능성도 방어한다.
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    if text.startswith("["):
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return parsed
+
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        obj = None
+    if isinstance(obj, dict):
+        for key in ("decisions", "results", "items"):
+            v = obj.get(key)
+            if isinstance(v, list):
+                return v
+
+    start = text.find("[")
+    end = text.rfind("]")
+    if start != -1 and end > start:
+        parsed = json.loads(text[start : end + 1])
+        if isinstance(parsed, list):
+            return parsed
+
+    raise ValueError("응답에 JSON 배열이 없음")
+
+
+async def get_batch_llm_decisions(
+    items: list[BatchLLMItem],
+    portfolio: PortfolioContext,
+) -> dict[str, LLMDecision]:
+    """여러 후보를 단일 LLM 호출로 평가 — advisory free tier RPM/RPD 절약.
+
+    Returns:
+        ticker → LLMDecision 매핑. 호출 실패/파싱 실패 시 모든 종목이 _safe_hold.
+        파싱은 성공했지만 특정 ticker만 빠지거나 항목별 검증이 실패한 경우 해당
+        ticker만 _safe_hold 로 채운다.
+    """
+    if not items:
+        return {}
+
+    if not llm_provider_configured():
+        reason = missing_key_reason()
+        return {it.ticker: _safe_hold(reason) for it in items}
+
+    user_msg = _build_batch_user_message(items, portfolio)
+
+    try:
+        response = await call_llm(
+            system_prompt=BATCH_SYSTEM_PROMPT,
+            user_message=user_msg,
+            model=settings.llm_advisor_model,
+            max_tokens=settings.advisory_batch_max_tokens,
+            timeout_seconds=settings.advisory_batch_timeout_seconds,
+        )
+    except LLMConfigError as e:
+        return {it.ticker: _safe_hold(str(e)) for it in items}
+    except LLMAPIError as e:
+        logger.warning("LLM batch non-200: status=%s", e.status_code)
+        return {it.ticker: _safe_hold(str(e)) for it in items}
+    except httpx.HTTPError as e:
+        logger.warning("LLM batch HTTP error: %s", e)
+        return {it.ticker: _safe_hold(f"HTTP 오류: {type(e).__name__}") for it in items}
+
+    try:
+        parsed_list = _parse_batch_response(response.text)
+    except (ValueError, json.JSONDecodeError) as e:
+        logger.warning("LLM batch parse error: %s", e)
+        return {it.ticker: _safe_hold(f"파싱 실패: {type(e).__name__}") for it in items}
+
+    # ticker 키로 인덱싱 — 누락/이상 항목은 안전 폴백
+    by_ticker_raw: dict[str, dict[str, Any]] = {}
+    for entry in parsed_list:
+        if not isinstance(entry, dict):
+            continue
+        t = str(entry.get("ticker", "")).strip()
+        if t:
+            by_ticker_raw[t] = entry
+
+    result: dict[str, LLMDecision] = {}
+    for it in items:
+        raw = by_ticker_raw.get(it.ticker)
+        if raw is None:
+            result[it.ticker] = _safe_hold("배치 응답에 항목 없음")
+            continue
+        try:
+            decision = _validate_decision(raw)
+            decision.model = response.model
+            # 토큰 정보는 배치 전체 합계 — 첫 항목에만 기록(통계용)
+            if not result:
+                decision.input_tokens = response.input_tokens
+                decision.output_tokens = response.output_tokens
+            decision.raw_response = json.dumps(raw, ensure_ascii=False)[:2000]
+            result[it.ticker] = decision
+        except (ValueError, KeyError) as e:
+            logger.warning("LLM batch item invalid for %s: %s", it.ticker, e)
+            result[it.ticker] = _safe_hold(f"항목 검증 실패: {type(e).__name__}")
+
+    return result
