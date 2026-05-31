@@ -18,7 +18,7 @@ import type { CandidatePoolOptions } from "@/types/advisory";
 import { Sparkles } from "lucide-react";
 
 const DEFAULT_TOP_N = 10;
-const DEFAULT_MIN_VOLUME_VALUE = 10_000_000_000; // 100억
+const DEFAULT_MIN_VOLUME_VALUE = 10_000; // 1만원
 const DEFAULT_BUDGET = 1_000_000;
 
 export interface RunControlPanelProps {
@@ -41,18 +41,24 @@ export function RunControlPanel({
   inFlightStatusLabel,
   onSubmit,
 }: RunControlPanelProps) {
-  // 안전 기본값으로 paper 우선 — 사용자가 명시적으로 live 를 골라야 실거래 흐름.
+  // 기본값은 실전(live) 계좌 우선 — 사용자 요청에 따라 실전 계좌가 먼저 선택된다.
   const liveAccount = accounts.find((a) => a.mode === "live" && a.isActive);
   const paperAccount = accounts.find((a) => a.mode === "paper" && a.isActive);
   const initialAccount =
-    paperAccount ?? liveAccount ?? accounts.find((a) => a.isActive) ?? accounts[0] ?? null;
+    liveAccount ??
+    paperAccount ??
+    accounts.find((a) => a.isActive) ??
+    accounts[0] ??
+    null;
 
   const [accountId, setAccountId] = useState<string>(initialAccount?.id ?? "");
-  const [mode, setMode] = useState<TradingMode>(initialAccount?.mode ?? "paper");
+  const [mode, setMode] = useState<TradingMode>(initialAccount?.mode ?? "live");
   const [budget, setBudget] = useState<string>(String(DEFAULT_BUDGET));
   const [topN, setTopN] = useState<string>(String(DEFAULT_TOP_N));
   const [market, setMarket] = useState<"KOSPI" | "KOSDAQ" | "ALL">("ALL");
-  const [minVolume, setMinVolume] = useState<string>(String(DEFAULT_MIN_VOLUME_VALUE));
+  const [minVolume, setMinVolume] = useState<string>(
+    String(DEFAULT_MIN_VOLUME_VALUE)
+  );
   const [blacklistText, setBlacklistText] = useState<string>("");
 
   // useTrading 의 비동기 로드로 accounts 가 뒤늦게 도착할 수 있다.
@@ -130,10 +136,10 @@ export function RunControlPanel({
                   {accounts.length === 0
                     ? "등록된 계좌 없음"
                     : accountId
-                      ? tradingModeLabels[
-                          accounts.find((a) => a.id === accountId)?.mode ?? "paper"
-                        ]
-                      : "계좌 선택"}
+                    ? tradingModeLabels[
+                        accounts.find((a) => a.id === accountId)?.mode ?? "live"
+                      ]
+                    : "계좌 선택"}
                 </span>
               </SelectTrigger>
               <SelectContent>
@@ -162,7 +168,8 @@ export function RunControlPanel({
               onChange={(e) => setBudget(e.target.value)}
             />
             <p className="text-[11px] text-muted-foreground">
-              승인된 매수 항목의 합이 이 예산을 넘지 않도록 분석 단계에서 컷됩니다.
+              승인된 매수 항목의 합이 이 예산을 넘지 않도록 분석 단계에서
+              컷됩니다.
             </p>
           </div>
 
